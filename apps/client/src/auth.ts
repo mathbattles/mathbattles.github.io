@@ -86,6 +86,8 @@ async function watchAuth(): Promise<void> {
         if (authState.token) void pushProfile(authState.token, p);
       }, 2000);
     });
+    // First sign-in on this account: keep what the player earned as a guest.
+    if (cloud && !cloud.profile && authState.token) void pushProfile(authState.token, profile);
     emit();
   });
 }
