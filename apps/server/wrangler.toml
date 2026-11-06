@@ -15,8 +15,7 @@ new_sqlite_classes = ["RoomObject", "MatchmakerObject"]
 [[d1_databases]]
 binding = "DB"
 database_name = "mathbattles"
-# Replaced with the real id when the database is created on first deploy.
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "36e3b37d-5c46-48c7-b0b6-6c7dbfe0f5a2"
 migrations_dir = "migrations"
 
 [triggers]
