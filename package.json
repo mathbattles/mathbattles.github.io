@@ -1,0 +1,20 @@
+{
+  "name": "mathbattles",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "dev": "npm run dev -w @mathbattles/client",
+    "dev:server": "npm run dev -w @mathbattles/server",
+    "build": "npm run build -w @mathbattles/client",
+    "test": "vitest run",
+    "typecheck": "tsc -p packages/sim --noEmit && tsc -p apps/client --noEmit && tsc -p apps/server --noEmit",
+    "e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
