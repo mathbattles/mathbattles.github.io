@@ -335,7 +335,8 @@ export class Stage {
       c.textAlign = 'center';
       c.textBaseline = 'bottom';
       c.fillStyle = color;
-      c.fillText(owner.name, x, y - SOLDIER_R - 9);
+      // Keep names inside the field near its edges and top.
+      c.fillText(owner.name, Math.max(34, Math.min(PLANE_W - 34, x)), Math.max(14, y - SOLDIER_R - 9));
     }
   }
 
