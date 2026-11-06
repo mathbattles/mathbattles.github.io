@@ -6,5 +6,7 @@ export * from './map';
 export * from './trajectory';
 export * from './rules';
 export * from './ai';
+export * from './solo';
+export * from './replay';
 export * from './progression';
 export * from './protocol';

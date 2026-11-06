@@ -1,0 +1,20 @@
+{
+  "name": "@mathbattles/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787 --local",
+    "migrate:local": "wrangler d1 migrations apply mathbattles --local",
+    "migrate:remote": "wrangler d1 migrations apply mathbattles --remote",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@mathbattles/sim": "*",
+    "jose": "^5.9.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241100.0",
+    "wrangler": "^3.90.0"
+  }
+}

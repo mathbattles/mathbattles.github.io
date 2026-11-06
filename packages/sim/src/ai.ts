@@ -5,10 +5,10 @@ import { currentPlayer, currentSoldier, isMirrored, livingTargets, terrainOf, ty
 import { simulateShot } from './trajectory';
 
 export const BOT_LEVELS = {
-  easy: { label: 'Easy', generations: 10 },
-  normal: { label: 'Normal', generations: 50 },
-  hard: { label: 'Hard', generations: 150 },
-  genius: { label: 'Genius', generations: 400 },
+  easy: { label: 'Easy', generations: 10, aimError: 0.3 },
+  normal: { label: 'Normal', generations: 50, aimError: 0.12 },
+  hard: { label: 'Hard', generations: 150, aimError: 0.03 },
+  genius: { label: 'Genius', generations: 400, aimError: 0 },
 } as const;
 export type BotLevel = keyof typeof BOT_LEVELS;
 
@@ -87,6 +87,8 @@ export interface BotMove {
 export interface ThinkOptions {
   generations: number;
   seed: number;
+  /** Random change to the final numbers, so lower levels miss like people do. */
+  aimError?: number;
   /** Stops evolving after this long and returns the best so far. */
   budgetMs?: number;
   now?: () => number;
@@ -186,5 +188,9 @@ export function chooseMove(state: MatchState, opts: ThinkOptions): BotMove {
   }
 
   const top = pop[0]!;
+  if (opts.aimError) {
+    top.params = top.params.map((p) => p * (1 + rng.gaussian() * opts.aimError!));
+    top.angle += rng.gaussian() * opts.aimError * 0.5;
+  }
   return { expr: exprOf(mode, top), angle: top.angle, dir: top.dir, expectedHit: top.score >= 1000 };
 }

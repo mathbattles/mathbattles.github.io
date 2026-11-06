@@ -1,0 +1,74 @@
+import type { DailyShot } from '@mathbattles/sim';
+
+/** Set after the server is first deployed. */
+const PROD_SERVER = 'https://mathbattles-server.mathbattles.workers.dev';
+
+export const SERVER_URL: string = (import.meta.env.VITE_SERVER_URL as string | undefined) ?? PROD_SERVER;
+export const WS_URL = SERVER_URL.replace(/^http/, 'ws');
+
+export interface DailyEntry {
+  name: string;
+  shots: number;
+  chars: number;
+}
+export interface LeaderRow {
+  name: string;
+  rating: number;
+}
+export interface RoomInfo {
+  code: string;
+  players: number;
+  kind: string;
+  mode: string;
+}
+
+async function call<T>(path: string, init?: RequestInit, token?: string | null): Promise<T | null> {
+  try {
+    const res = await fetch(`${SERVER_URL}${path}`, {
+      ...init,
+      headers: {
+        ...(init?.body ? { 'content-type': 'application/json' } : {}),
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+export async function serverReachable(): Promise<boolean> {
+  return (await call<{ ok: boolean }>('/api/health'))?.ok === true;
+}
+export function listRooms() {
+  return call<RoomInfo[]>('/api/rooms');
+}
+export function createRoom(isPublic: boolean) {
+  return call<{ code: string }>('/api/rooms', { method: 'POST', body: JSON.stringify({ public: isPublic }) });
+}
+export function fetchLeaderboard() {
+  return call<LeaderRow[]>('/api/leaderboard');
+}
+export function fetchDaily(day: number) {
+  return call<DailyEntry[]>(`/api/daily/${day}`);
+}
+export async function submitDaily(day: number, shots: DailyShot[]): Promise<{ board?: DailyEntry[]; error?: string }> {
+  const { profile } = await import('../store');
+  const { authState } = await import('../auth');
+  const r = await call<{ board: DailyEntry[] }>(
+    `/api/daily/${day}`,
+    { method: 'POST', body: JSON.stringify({ name: profile.name, guest: profile.guestToken, shots }) },
+    authState.token,
+  );
+  return r ? { board: r.board } : { error: 'The leaderboard is offline, so this score is saved on this device only.' };
+}
+export function pullProfile(token: string) {
+  return call<{ profile: unknown; rating: number }>('/api/profile', undefined, token);
+}
+export function pushProfile(token: string, profile: unknown) {
+  return call('/api/profile', { method: 'PUT', body: JSON.stringify(profile) }, token);
+}
+export function reportChat(code: string, reported: string, text: string) {
+  return call('/api/report', { method: 'POST', body: JSON.stringify({ code, reported, text }) });
+}

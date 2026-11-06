@@ -1,0 +1,21 @@
+{
+  "name": "@mathbattles/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@mathbattles/sim": "*",
+    "firebase": "^11.0.0",
+    "katex": "^0.16.11",
+    "preact": "^10.24.0"
+  },
+  "devDependencies": {
+    "@types/katex": "^0.16.7",
+    "vite": "^5.4.0"
+  }
+}

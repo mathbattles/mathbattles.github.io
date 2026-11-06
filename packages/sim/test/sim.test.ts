@@ -317,7 +317,7 @@ describe('bots', () => {
         { id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 2 },
       ]);
       m.circles.length = 0;
-      const move = chooseMove(m, { generations: 40, seed });
+      const move = chooseMove(m, { generations: 40, seed, budgetMs: 1500 });
       const r = fire(m, currentPlayer(m).id, { expr: move.expr, angle: move.angle, dir: move.dir });
       if (r.record.hits.length) hits++;
     }

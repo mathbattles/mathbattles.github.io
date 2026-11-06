@@ -26,7 +26,7 @@ export interface PlayerSetup {
   team: 1 | 2;
   ability?: AbilityId;
   isBot?: boolean;
-  botLevel?: number;
+  botLevel?: string;
 }
 
 export interface Player extends PlayerSetup {
