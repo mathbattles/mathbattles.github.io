@@ -262,8 +262,8 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
                     {[1, 2, 3, 4].map((n) => <option value={n}>{n}</option>)}
                   </select>
                 </label>
-                <label><input type="checkbox" disabled={!isHost} checked={st.abilities} onChange={(e) => set({ abilities: (e.target as HTMLInputElement).checked })} /> Abilities</label>
-                <label><input type="checkbox" disabled={!isHost} checked={st.showFunctions} onChange={(e) => set({ showFunctions: (e.target as HTMLInputElement).checked })} /> Show everyone's functions</label>
+                <label class="check"><input type="checkbox" disabled={!isHost} checked={st.abilities} onChange={(e) => set({ abilities: (e.target as HTMLInputElement).checked })} /> Abilities</label>
+                <label class="check"><input type="checkbox" disabled={!isHost} checked={st.showFunctions} onChange={(e) => set({ showFunctions: (e.target as HTMLInputElement).checked })} /> Show everyone's functions</label>
               </div>
             </div>
           )}

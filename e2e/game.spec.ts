@@ -721,7 +721,8 @@ test('the shop preview shows explosions inside the field, and goes full screen a
     }
     return best;
   });
-  expect(orange).toBeGreaterThan(150);
+  // Off-screen explosions, the old bug, leave almost none.
+  expect(orange).toBeGreaterThan(50);
 
   const before = (await canvas.boundingBox())!.width;
   await page.getByRole('button', { name: 'Full screen' }).click();

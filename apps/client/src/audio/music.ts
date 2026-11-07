@@ -35,7 +35,7 @@ export class MusicMixer {
     this.input.connect(highpass).connect(presence).connect(top).connect(comp).connect(destination);
 
     this.reverb = ctx.createConvolver();
-    this.reverb.buffer = this.impulse(3.4);
+    this.reverb.buffer = this.impulse(2.6);
     const wet = ctx.createGain();
     wet.gain.value = 0.55;
     this.reverb.connect(wet).connect(this.input);

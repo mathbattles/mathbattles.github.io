@@ -14,7 +14,13 @@ export function audioContext(): AudioContext | null {
   try {
     const Ctor = globalThis.AudioContext ?? (globalThis as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!Ctor) return null;
-    ctx = new Ctor();
+    // 32 kHz covers everything the game plays (the music is filtered above 14 kHz) for about
+    // a third less audio work, and a slightly larger buffer means fewer wake-ups.
+    try {
+      ctx = new Ctor({ sampleRate: 32000, latencyHint: 'balanced' });
+    } catch {
+      ctx = new Ctor();
+    }
     sfx = ctx.createGain();
     sfx.gain.value = curve(sfxLevel) * 1.25;
     sfx.connect(ctx.destination);

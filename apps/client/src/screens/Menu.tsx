@@ -9,7 +9,7 @@ function HeroDemo() {
   const ref = useRef<HTMLCanvasElement>(null);
   const caption = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
-    const stage = new Stage(ref.current!);
+    const stage = new Stage(ref.current!, 1.5);
     stage.themeId = profile.theme;
     stage.setRockStyle(cosmeticValue('obstacle'));
     stage.start();

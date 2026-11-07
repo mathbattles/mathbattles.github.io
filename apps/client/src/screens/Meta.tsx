@@ -79,7 +79,7 @@ function ShopPreview({ item }: { item: Cosmetic }) {
     stage.setRockStyle(value('obstacle'));
   };
   useEffect(() => {
-    const stage = new Stage(ref.current!);
+    const stage = new Stage(ref.current!, 1.5);
     stage.themeId = profile.theme;
     stageRef.current = stage;
     apply(stage);
@@ -145,7 +145,7 @@ function ShopPreview({ item }: { item: Cosmetic }) {
   );
 }
 
-const KIND_NAMES: Record<CosmeticKind, string> = { hat: 'Hats', trail: 'Shot trails', obstacle: 'Obstacles', blast: 'Explosions', title: 'Titles' };
+const KIND_NAMES: Record<CosmeticKind, string> = { hat: 'Hats', trail: 'Shot trails', obstacle: 'Obstacles', blast: 'Kill effects', title: 'Titles' };
 
 /** Cheapest first. Items that can only be earned have no price, so they go last. */
 function shopOrder(items: Cosmetic[]): Cosmetic[] {
@@ -187,7 +187,7 @@ export function Shop() {
   return (
     <div class="page">
       <TopBar title="Shop" />
-      <p>Everything here is cosmetic. All functions and modes are free to every player. Obstacle designs change what you see, and everyone else sees their own.</p>
+      <p>Everything here is cosmetic. All functions and modes are free to every player. Obstacle designs change what you see, and everyone else sees their own. Kill effects play where your shot knocks someone out.</p>
       {error && <p class="error" role="alert">{error}</p>}
       <div class="shop-layout">
         <ShopPreview item={previewing} />
@@ -307,14 +307,14 @@ export function Settings() {
       <div class="sheet">
         <h3>Sound and music</h3>
         <div class="sound-grid">
-          <label><input type="checkbox" checked={profile.muted} onChange={(e) => { profile.muted = (e.target as HTMLInputElement).checked; saveProfile(); }} /> Mute sound effects</label>
+          <label class="check"><input type="checkbox" checked={profile.muted} onChange={(e) => { profile.muted = (e.target as HTMLInputElement).checked; saveProfile(); }} /> Mute sound effects</label>
           <label class="slider">Effects volume
-            <input type="range" min={0} max={1} step={0.05} value={profile.sfxVolume} disabled={profile.muted}
+            <input type="range" min={0} max={1} step={0.05} value={profile.sfxVolume} disabled={profile.muted} style={{ '--val': `${profile.sfxVolume * 100}%` }}
               onInput={(e) => { profile.sfxVolume = Number((e.target as HTMLInputElement).value); saveProfile(); }} />
           </label>
-          <label><input type="checkbox" checked={profile.music} onChange={(e) => { profile.music = (e.target as HTMLInputElement).checked; saveProfile(); }} /> Play music</label>
+          <label class="check"><input type="checkbox" checked={profile.music} onChange={(e) => { profile.music = (e.target as HTMLInputElement).checked; saveProfile(); }} /> Play music</label>
           <label class="slider">Music volume
-            <input type="range" min={0} max={1} step={0.05} value={profile.musicVolume} disabled={!profile.music}
+            <input type="range" min={0} max={1} step={0.05} value={profile.musicVolume} disabled={!profile.music} style={{ '--val': `${profile.musicVolume * 100}%` }}
               onInput={(e) => { profile.musicVolume = Number((e.target as HTMLInputElement).value); saveProfile(); }} />
           </label>
         </div>
@@ -328,7 +328,7 @@ export function Settings() {
       </div>
       <div class="sheet">
         <h3>Chat</h3>
-        <label><input type="checkbox" checked={profile.chatOff} onChange={(e) => { profile.chatOff = (e.target as HTMLInputElement).checked; saveProfile(); }} /> Hide chat</label>
+        <label class="check"><input type="checkbox" checked={profile.chatOff} onChange={(e) => { profile.chatOff = (e.target as HTMLInputElement).checked; saveProfile(); }} /> Hide chat</label>
       </div>
       <div class="sheet">
         <h3>Analytics</h3>
@@ -350,10 +350,10 @@ export function Leaderboard() {
       <TopBar title="Leaderboard" />
       <div class="sheet">
         {rows === 'loading' ? <p>Loading the ladder.</p> : rows === null ? <p>The leaderboard is offline right now. Try again soon.</p> : rows.length === 0 ? <p>Nobody has played ranked yet. <a href="#/ranked">Be the first</a>.</p> : (
-          <table>
+          <div class="table-wrap"><table>
             <thead><tr><th>Place</th><th>Player</th><th>Rank</th><th>Rating</th></tr></thead>
             <tbody>{rows.map((r, i) => <tr><td>{i + 1}</td><td><a href={`#/player/${encodeURIComponent(r.name)}`}>{r.name}</a></td><td>{rankFor(r.rating)}</td><td>{r.rating}</td></tr>)}</tbody>
-          </table>
+          </table></div>
         )}
       </div>
     </div>

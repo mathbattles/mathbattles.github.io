@@ -80,20 +80,27 @@ function tone(ctx: AudioContext, type: OscillatorType, from: number, to: number,
   osc.stop(t + dur);
 }
 
+let noiseBuffer: AudioBuffer | null = null;
+
+/** A burst of filtered noise that fades out. One shared second of noise serves every sound. */
 function noise(ctx: AudioContext, dur: number, vol: number, cutoff: number, delay = 0): void {
-  const size = Math.floor(ctx.sampleRate * dur);
-  const buffer = ctx.createBuffer(1, size, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < size; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / size);
+  if (!noiseBuffer || noiseBuffer.sampleRate !== ctx.sampleRate) {
+    noiseBuffer = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  }
+  const t = ctx.currentTime + delay;
   const src = ctx.createBufferSource();
-  src.buffer = buffer;
+  src.buffer = noiseBuffer;
   const filter = ctx.createBiquadFilter();
   filter.type = 'lowpass';
   filter.frequency.value = cutoff;
   const gain = ctx.createGain();
-  gain.gain.value = vol;
+  gain.gain.setValueAtTime(vol, t);
+  gain.gain.linearRampToValueAtTime(0, t + dur);
   src.connect(filter).connect(gain).connect(out ?? ctx.destination);
-  src.start(ctx.currentTime + delay);
+  // A random starting point, so repeated sounds don't sound identical.
+  src.start(t, Math.random() * Math.max(0, 1 - dur), dur);
 }
 
 export function sound(kind: SoundKind, muted: boolean): void {

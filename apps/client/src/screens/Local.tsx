@@ -96,7 +96,7 @@ export function LocalSetup() {
                   {[1, 2, 3, 4].map((n) => <option value={n}>{n}</option>)}
                 </select>
               </label>
-              <label><input type="checkbox" checked={abilities} onChange={(e) => setAbilities((e.target as HTMLInputElement).checked)} /> Abilities</label>
+              <label class="check"><input type="checkbox" checked={abilities} onChange={(e) => setAbilities((e.target as HTMLInputElement).checked)} /> Abilities</label>
             </div>
           </div>
           <div>

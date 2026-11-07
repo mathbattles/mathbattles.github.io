@@ -261,16 +261,29 @@ export interface PastView {
 }
 
 const MAX_PARTICLES = 700;
-const reducedMotion = () => !!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+const motionQuery = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)');
+let motionReduced = !!motionQuery?.matches;
+motionQuery?.addEventListener?.('change', (e) => { motionReduced = e.matches; });
+const reducedMotion = () => motionReduced;
+
+/** Frame pacing: about 60 per second while things move, about 30 while the field is calm. */
+const BUSY_FRAME_MS = 15;
+const CALM_FRAME_MS = 32;
 
 /** Draws the field. Holds its own display copy so kills appear as the curve reaches them. */
 export class Stage {
   private ctx: CanvasRenderingContext2D;
   private terrainLayer: HTMLCanvasElement;
+  /** The grid, axes and obstacles, drawn once and copied each frame. */
+  private baseLayer: HTMLCanvasElement;
+  private baseKey = '';
   private terrainDirty = true;
   private raf = 0;
   private running = false;
   private lastNow = 0;
+  private lastDraw = 0;
+  private onScreen = true;
+  private watcher: IntersectionObserver | null = null;
 
   state: MatchState | null = null;
   themeId: ThemeId = 'paper';
@@ -304,21 +317,37 @@ export class Stage {
   /** Called when the field needs a big callout, such as the final knockout. */
   onFinalKill?: () => void;
 
-  constructor(private canvas: HTMLCanvasElement) {
+  /** maxScale caps the drawing resolution. Decorative demos use less than a real match. */
+  constructor(private canvas: HTMLCanvasElement, private maxScale = 2) {
     this.ctx = canvas.getContext('2d')!;
     this.terrainLayer = document.createElement('canvas');
+    this.baseLayer = document.createElement('canvas');
     this.resize();
   }
 
   resize(): void {
     const dpr = Math.min(2, globalThis.devicePixelRatio || 1);
     const cssW = this.canvas.clientWidth || PLANE_W;
-    const scale = Math.max(1, Math.min(2.5, (cssW / PLANE_W) * dpr));
-    this.canvas.width = Math.round(PLANE_W * scale);
-    this.canvas.height = Math.round(PLANE_H * scale);
-    this.terrainLayer.width = this.canvas.width;
-    this.terrainLayer.height = this.canvas.height;
+    // Past twice the field's size, extra pixels cost a lot of drawing and look the same.
+    const scale = Math.max(1, Math.min(this.maxScale, (cssW / PLANE_W) * dpr));
+    const w = Math.round(PLANE_W * scale);
+    const h = Math.round(PLANE_H * scale);
+    // Setting a canvas size clears it, so only do it when the size really changes.
+    if (this.canvas.width === w && this.canvas.height === h && this.baseLayer.width === w) return;
+    this.canvas.width = w;
+    this.canvas.height = h;
+    this.terrainLayer.width = w;
+    this.terrainLayer.height = h;
+    this.baseLayer.width = w;
+    this.baseLayer.height = h;
     this.terrainDirty = true;
+  }
+
+  /** True while anything on the field is moving quickly. */
+  private busy(): boolean {
+    return !!this.shot || this.particles.length > 0 || this.flyers.length > 0 || this.rings.length > 0
+      || this.fireballs.length > 0 || this.floaters.length > 0 || this.shake > 0.3 || this.flash > 0.01
+      || Math.abs(this.zoom.s - this.zoom.target) > 0.002;
   }
 
   /** Copies the match to the display when nothing is animating. */
@@ -362,10 +391,21 @@ export class Stage {
     this.running = true;
     this.lastNow = performance.now();
     document.addEventListener('visibilitychange', this.onVisibility);
+    // A field scrolled out of view isn't drawn, unless a shot has to finish playing.
+    if (typeof IntersectionObserver !== 'undefined') {
+      this.watcher = new IntersectionObserver((entries) => {
+        for (const e of entries) this.onScreen = e.isIntersecting;
+      });
+      this.watcher.observe(this.canvas);
+    }
     const frame = (now: number) => {
       if (!this.running) return;
-      this.draw(now);
       this.raf = requestAnimationFrame(frame);
+      if (!this.onScreen && !this.shot) return;
+      // Fast screens (120 Hz and up) don't need more frames than 60 Hz ones.
+      if (now - this.lastDraw < (this.busy() ? BUSY_FRAME_MS : CALM_FRAME_MS)) return;
+      this.lastDraw = now;
+      this.draw(now);
     };
     this.raf = requestAnimationFrame(frame);
   }
@@ -374,6 +414,9 @@ export class Stage {
     this.running = false;
     cancelAnimationFrame(this.raf);
     document.removeEventListener('visibilitychange', this.onVisibility);
+    this.watcher?.disconnect();
+    this.watcher = null;
+    this.onScreen = true;
     // Anything waiting on a shot must not wait forever once this view is gone.
     this.finishShotNow();
   }
@@ -518,6 +561,11 @@ export class Stage {
     }
     c.globalCompositeOperation = 'source-over';
     this.terrainDirty = false;
+    const base = this.baseLayer.getContext('2d')!;
+    base.setTransform(this.baseLayer.width / PLANE_W, 0, 0, this.baseLayer.height / PLANE_H, 0, 0);
+    this.drawBackground(base, theme);
+    base.drawImage(this.terrainLayer, 0, 0, PLANE_W, PLANE_H);
+    this.baseKey = `${this.themeId}|${this.mirror}`;
   }
 
   private drawBackground(c: CanvasRenderingContext2D, theme: Theme): void {
@@ -661,6 +709,8 @@ export class Stage {
     });
     this.burst(s.x, s.y, 18, '#ffd33d', 'star', 2);
     this.burst(s.x, s.y, 16, color, 'spark', 3);
+    // The shooter's kill effect plays where the soldier falls.
+    this.rings.push({ x: s.x, y: s.y, r: BLAST_R, at: now, color: shot.color, style: shot.blast });
     this.shake = Math.max(this.shake, 9);
     this.flash = Math.max(this.flash, 0.3);
     const words = ['KO!', 'DOUBLE!', 'TRIPLE!', 'QUAD!'];
@@ -681,7 +731,8 @@ export class Stage {
     this.holes.push({ x, y, r });
     this.terrainDirty = true;
     if (!reducedMotion()) this.fireballs.push({ x, y, r: big ? r * 0.8 : Math.max(r * 1.3, 17), at: now });
-    this.rings.push({ x, y, r, at: now, color: shot.color, style: shot.blast });
+    // Where the shot ends, everyone gets the same explosion. Kill effects are only for kills.
+    this.rings.push({ x, y, r, at: now, color: shot.color, style: 'ring' });
     this.shake = Math.max(this.shake, big ? 14 : 8);
     this.flash = Math.max(this.flash, big ? 0.38 : 0.18);
     for (const id of shot.record.blastKills ?? []) {
@@ -907,7 +958,7 @@ export class Stage {
     const baseY = this.canvas.height / PLANE_H;
     c.setTransform(base, 0, 0, baseY, 0, 0);
     this.stepEffects(dt);
-    if (this.terrainDirty) this.drawTerrain(theme);
+    if (this.terrainDirty || this.baseKey !== `${this.themeId}|${this.mirror}`) this.drawTerrain(theme);
 
     // Camera: zoom and shake apply to everything on the field.
     c.save();
@@ -919,8 +970,7 @@ export class Stage {
     }
     if (this.shake > 0.3) c.translate((Math.random() - 0.5) * this.shake, (Math.random() - 0.5) * this.shake);
 
-    this.drawBackground(c, theme);
-    c.drawImage(this.terrainLayer, 0, 0, PLANE_W, PLANE_H);
+    c.drawImage(this.baseLayer, 0, 0, PLANE_W, PLANE_H);
 
     if (this.previewPath && !this.past) {
       c.save();

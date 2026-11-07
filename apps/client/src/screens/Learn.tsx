@@ -268,7 +268,7 @@ function SlidersBlock({ block }: { block: Sliders }) {
         {block.params.map((p) => (
           <label class="slider">
             <span>{p.label}: <strong>{p.name === 'angle' ? `${((values[p.name]! * 180) / Math.PI).toFixed(0)}°` : Number(values[p.name]!.toFixed(3))}</strong></span>
-            <input type="range" min={p.min} max={p.max} step={p.step} value={values[p.name]} onInput={(e) => setValues({ ...values, [p.name]: Number((e.target as HTMLInputElement).value) })} />
+            <input type="range" min={p.min} max={p.max} step={p.step} value={values[p.name]} style={{ '--val': `${((values[p.name]! - p.min) / (p.max - p.min)) * 100}%` }} onInput={(e) => setValues({ ...values, [p.name]: Number((e.target as HTMLInputElement).value) })} />
           </label>
         ))}
       </div>
