@@ -691,13 +691,14 @@ test('the shop previews items before buying, including obstacle designs', async 
 test('shop items run from cheapest to most expensive, with earned items last', async ({ browser }) => {
   const page = await newPlayer(browser, 'Sorter');
   await page.goto('/#/shop');
+  // Season pass rewards are only earned, so the shop doesn't list them.
+  await expect(page.getByText('Smite', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Knit beanie', { exact: true })).toHaveCount(0);
   const sections = page.locator('.shop-items .sheet');
   await expect(sections).toHaveCount(5);
   for (let i = 0; i < 5; i++) {
     const prices = await sections.nth(i).locator('.item').evaluateAll((items) => items.map((el) => {
-      // Season pass rewards come last of all, after achievement rewards.
-      if (el.textContent?.includes('Season 0 pass')) return 2e9;
-      if (el.textContent?.includes('Earn:')) return 1e9;
+      if (el.textContent?.includes('Earn:')) return Infinity;
       const m = el.textContent?.match(/Buy for (\d+)/);
       // Free items, and owned ones, which here are only the free starters.
       return m ? Number(m[1]) : 0;

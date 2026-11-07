@@ -150,8 +150,7 @@ const KIND_NAMES: Record<CosmeticKind, string> = { hat: 'Hats', trail: 'Shot tra
 
 /** Cheapest first. Items that can only be earned have no price, so they go last. */
 function shopOrder(items: Cosmetic[]): Cosmetic[] {
-  // Season rewards come after achievement rewards, in pass order.
-  const price = (c: Cosmetic) => (c.season ? 1e9 + c.season.level : c.earn ? 1e8 : c.cost);
+  const price = (c: Cosmetic) => (c.earn ? Infinity : c.cost);
   return items.slice().sort((a, b) => price(a) - price(b));
 }
 
@@ -191,7 +190,7 @@ export function Shop() {
   return (
     <div class="page">
       <TopBar title="Shop" />
-      <p>Everything here is cosmetic. All functions and modes are free to every player. Obstacle designs change what you see, and everyone else sees their own. Kill effects play where your shot knocks someone out.</p>
+      <p>Season pass rewards aren't sold here: earn them on your profile's season pass, and find them in your Inventory. Everything here is cosmetic. All functions and modes are free to every player. Obstacle designs change what you see, and everyone else sees their own. Kill effects play where your shot knocks someone out.</p>
       {error && <p class="error" role="alert">{error}</p>}
       <div class="shop-layout">
         <ShopPreview item={previewing} />
@@ -199,7 +198,7 @@ export function Shop() {
           {(Object.keys(KIND_NAMES) as CosmeticKind[]).map((k) => (
             <div class="sheet">
               <h3>{KIND_NAMES[k]}</h3>
-              <div class="shop">{shopOrder(COSMETICS.filter((c) => c.kind === k)).map(item)}</div>
+              <div class="shop">{shopOrder(COSMETICS.filter((c) => c.kind === k && !c.season)).map(item)}</div>
             </div>
           ))}
         </div>
