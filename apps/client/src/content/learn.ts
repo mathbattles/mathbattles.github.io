@@ -378,75 +378,6 @@ export const UNITS: Unit[] = [
     ],
   },
   {
-    title: "y' mode",
-    blurb: 'Describe the slope, and let the game work out the curve.',
-    lessons: [
-      {
-        id: 'first-order',
-        title: "What y' means",
-        blurb: 'A new way of thinking about a shot.',
-        blocks: [
-          { t: 'p', text: "Some matches use `y'` mode. Instead of the curve's height, you type its slope at every point: how steep it should be, right here. The game then flies along those directions, starting from your soldier." },
-          { t: 'p', text: "A constant slope makes a straight line. So `y' = 0.5` is the same shot as `y = x/2`. You can use `x` and `y` in your rule, and that's where it gets interesting." },
-          { t: 'play', note: "These are all y' rules.", mode: 'ode1', from: [-20, 0], start: '0.5', examples: [
-            { expr: '0.5', note: 'A straight line up' },
-            { expr: 'x/15', note: 'The slope changes as x grows' },
-            { expr: '2*sin(x/2)', note: 'The slope waves' },
-          ] },
-          { t: 'quiz', id: 'first-q', q: "Which y' rule gives a flat shot?", options: ['`1`', '`0`', '`x`'], answer: 1, why: 'A slope of 0 means no climbing at all, anywhere.' },
-          { t: 'challenge', id: 'first-1', title: 'A constant slope', task: 'Hit the target with a constant slope.', mode: 'ode1', solution: '0.5', from: [-16, -4], hits: [4], preview: true, hints: ['Just type a single number.', 'Up 10 over 20 across.', 'Type 0.5'] },
-        ],
-      },
-      {
-        id: 'y-rules',
-        title: 'Rules that use y',
-        blurb: 'Curves that steer themselves.',
-        blocks: [
-          { t: 'p', text: "Using `y` in the rule makes the shot react to its own height. `-y/3` always steers toward y = 0: high up, the slope points down, and low down, it points up. `y/8` does the opposite, and speeds away from 0." },
-          { t: 'sliders', note: 'Negative pulls the shot toward y = 0. Positive pushes it away.', mode: 'ode1', from: [-20, 8], template: '{a}*y', params: [{ name: 'a', label: 'Strength', min: -0.8, max: 0.3, step: 0.02, value: -0.3 }] },
-          { t: 'challenge', id: 'rules-1', title: 'Pulled to the center', task: 'Start high, and settle toward the middle of the board.', mode: 'ode1', solution: '-y/3', from: [-18, 9], hits: [2], preview: true, hints: ['Use y in your rule, with a minus sign.', 'Divide it by about 3.', 'Type -y/3'] },
-          { t: 'challenge', id: 'rules-2', title: 'A slope that changes', task: 'Use x to make the slope grow as you go.', mode: 'ode1', solution: 'x/15', from: [-15, 3], hits: [10], preview: true, hints: ['Your rule only needs x, divided by a number.', 'Try numbers from 10 to 20.', 'Type x/15'] },
-        ],
-      },
-    ],
-  },
-  {
-    title: "y'' mode",
-    blurb: 'Aim with an angle, and steer with acceleration.',
-    lessons: [
-      {
-        id: 'second-order',
-        title: 'Angle and gravity',
-        blurb: 'Lob your shot like a thrown ball.',
-        blocks: [
-          { t: 'p', text: "In `y''` mode, you set a firing angle, using the Up and Down arrow keys or buttons. Your function says how the slope changes along the way. A negative number works like gravity." },
-          { t: 'sliders', note: 'Raise the angle and adjust gravity. This is how you lob a shot.', mode: 'ode2', from: [-20, -6], template: '{g}', params: [
-            { name: 'g', label: 'Gravity', min: -0.3, max: 0.3, step: 0.01, value: -0.1 },
-            { name: 'angle', label: 'Angle', min: -1.2, max: 1.4, step: 0.02, value: 0.7 },
-          ] },
-          { t: 'tip', text: "This is the only mode where the angle does anything. In the other modes, your soldier's angle is ignored." },
-          { t: 'challenge', id: 'second-1', title: 'A lob', task: 'Angle up, and let gravity bring it down onto the target. Try `-0.1`, then find the angle.', mode: 'ode2', solution: '-0.1', angle: 0.7, from: [-18, -6], hits: [2], preview: true, hints: ['Type -0.1 in the box.', 'Then hold the Up button until the dashed curve touches the target.', 'About 40 degrees.'] },
-          { t: 'challenge', id: 'second-2', title: 'Over the rock', task: 'Lob it high enough to clear the rock.', mode: 'ode2', solution: '-0.12', angle: 0.75, from: [-20, -6], hits: [0], rocks: [[-10, -4, 2.8]], preview: true, hints: ['Use gravity of about -0.12.', 'Raise the angle to about 43 degrees.'] },
-        ],
-      },
-      {
-        id: 'springs',
-        title: 'Springs and drag',
-        blurb: "Using y and y' in the rule.",
-        blocks: [
-          { t: 'p', text: "`-y/4` is a spring: the further the shot is from y = 0, the harder it's pulled back. It swings like a wave. `-y'/4` is drag: it fights the slope, so the shot flattens out." },
-          { t: 'play', note: 'Compare a spring with drag.', mode: 'ode2', from: [-20, 3], angle: 0.5, start: '-y/4', examples: [
-            { expr: '-y/4', note: 'A spring', angle: 0.5 },
-            { expr: "-y'/4", note: 'Drag flattens out', angle: 0.9 },
-            { expr: "-y/4-y'/10", note: 'A spring that fades', angle: 0.5 },
-          ] },
-          { t: 'challenge', id: 'springs-1', title: 'Swing through both', task: 'Use a spring to swing through both targets.', mode: 'ode2', solution: '-y/4', angle: 0.3, from: [-20, 3], hits: [-8, 8], preview: true, hints: ['Use y with a minus sign, divided by about 4.', 'A low angle, about 17 degrees.'] },
-          { t: 'quiz', id: 'springs-q', q: "What does `-y'/4` do to a shot?", options: ['Makes it swing', 'Slows the slope, so it flattens out', 'Pulls it toward y = 0'], answer: 1, why: "It works against the slope itself, like air resistance." },
-        ],
-      },
-    ],
-  },
-  {
     title: 'Real matches',
     blurb: 'Everything else you need to win.',
     lessons: [
@@ -510,10 +441,6 @@ export const UNITS: Unit[] = [
             ['m*x+a*sin(x)', 'Climbing wave'],
             ['a/(1+exp(-3*(x-b)))', 'Step of height a at x = b'],
             ['sqrt(abs(x))', 'A square root that works at negative x'],
-            ["y' = -y/3", 'Drifts toward y = 0'],
-            ["y'' = -0.1", 'Gravity. Raise your angle and lob it'],
-            ["y'' = -y/4", 'A spring, which swings'],
-            ["y'' = -y'/4", 'Drag, which flattens out'],
           ] },
         ],
       },
@@ -533,8 +460,8 @@ export const UNITS: Unit[] = [
           { t: 'challenge', id: 'final-2', title: 'Over the top', task: 'Something is in the way. Arc over it.', mode: 'fn', solution: '-(x+3)^2/50', from: [-16, -6], hits: [10], rocks: [[-3, -4, 2.5]], blocksStraight: true, hints: ['An upside-down parabola, with its top near x = -3.', 'Type -(x+3)^2/50'] },
           { t: 'challenge', id: 'final-3', title: 'Don\'t hit your friend', task: 'Take both targets without touching your teammate.', mode: 'fn', solution: 'x/4+3*sin(x/2)', from: [-20, -5], hits: [-8, 9], friends: [[0, 5]], hints: ['A line plus a wave.', 'Try x/4 for the climb.', 'Type x/4+3*sin(x/2)'] },
           { t: 'challenge', id: 'final-4', title: 'The wall', task: 'A wall stands in the way. Step up over it.', mode: 'fn', solution: '9/(1+exp(-3*(x+1)))', from: [-18, -6], hits: [14], rocks: [[6, -5.5, 4.5]], blocksStraight: true, hints: ['Use a smooth step of about 9, at about x = -1.', 'Type 9/(1+exp(-3*(x+1)))'] },
-          { t: 'challenge', id: 'final-5', title: "In y' mode", task: "This match is in y' mode. Drift toward the center.", mode: 'ode1', solution: '-y/4', from: [-18, 8], hits: [0], hints: ['Use y, with a minus sign.', 'Type -y/4'] },
-          { t: 'challenge', id: 'final-6', title: "In y'' mode", task: 'Lob it over the rock.', mode: 'ode2', solution: '-0.1', angle: 0.8, from: [-20, -6], hits: [2], rocks: [[-8, -4, 2.5]], hints: ['Gravity of -0.1.', 'An angle of about 46 degrees.'] },
+          { t: 'challenge', id: 'final-5', title: 'Under and up', task: 'Dip under the rock, then rise to the target.', mode: 'fn', solution: '(x+4)^2/45', from: [-18, 6], hits: [12], rocks: [[-4, 5, 3]], blocksStraight: true, hints: ['A parabola with its lowest point near x = -4.', 'Divide by about 45.', 'Type (x+4)^2/45'] },
+          { t: 'challenge', id: 'final-6', title: 'The slalom', task: 'Two rocks, one on each side. Weave between them.', mode: 'fn', solution: '5*sin(x/3)', from: [-20, 0], hits: [14], rocks: [[-12, -5, 2.5], [-2, 5, 2.5]], blocksStraight: true, hints: ['A wave goes around both.', 'About 5 high and wide enough to span 18 units.', 'Type 5*sin(x/3)'] },
         ],
       },
     ],

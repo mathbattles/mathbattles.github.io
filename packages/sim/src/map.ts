@@ -41,12 +41,14 @@ export function placeSoldiers(
   rng: Rng,
   circles: Circle[],
   slots: SpawnSlot[],
+  /** Spots a custom map chose, by slot. Slots without one are placed at random. */
+  fixed: ({ x: number; y: number } | undefined)[] = [],
 ): { circles: Circle[]; spots: { x: number; y: number }[] } {
   let current = [...circles];
   const ffa = slots.some((s) => s.side === null);
   for (;;) {
     for (const gap of ffa ? FFA_SEPARATIONS : [SPAWN_SEPARATION]) {
-      const spots = tryPlace(rng, current, slots, gap);
+      const spots = tryPlace(rng, current, slots, gap, fixed);
       if (spots) return { circles: current, spots };
     }
     if (current.length === 0) throw new Error('Too many soldiers to place');
@@ -58,16 +60,28 @@ export function placeSoldiers(
   }
 }
 
-function tryPlace(rng: Rng, circles: Circle[], slots: SpawnSlot[], gap: number): { x: number; y: number }[] | null {
+function tryPlace(
+  rng: Rng,
+  circles: Circle[],
+  slots: SpawnSlot[],
+  gap: number,
+  fixed: ({ x: number; y: number } | undefined)[],
+): { x: number; y: number }[] | null {
   const spots: { x: number; y: number }[] = [];
-  for (const slot of slots) {
+  const chosen = fixed.filter((f): f is { x: number; y: number } => !!f);
+  for (const [i, slot] of slots.entries()) {
+    const own = fixed[i];
+    if (own) {
+      spots.push(own);
+      continue;
+    }
     let placed = false;
     for (let t = 0; t < MAX_TRIES && !placed; t++) {
       const halfW = slot.side === null ? PLANE_W : PLANE_W / 2;
       let x = rng.int(halfW - 2 * SOLDIER_R) + SOLDIER_R;
       const y = rng.int(PLANE_H - 2 * SOLDIER_R) + SOLDIER_R;
       if (slot.side === 1) x += PLANE_W / 2;
-      if (clear(x, y, spots, circles, slot.side === null, gap)) {
+      if (clear(x, y, [...spots, ...chosen], circles, slot.side === null, gap)) {
         spots.push({ x, y });
         placed = true;
       }

@@ -10,13 +10,14 @@ import { buy, cosmeticValue, equip, profile, saveProfile } from '../store';
 import { AccountPanel } from './Account';
 import { MyHistory } from './History';
 import { TopBar, useProfile } from './Shared';
+import { QuestsPanel, SeasonPass } from './Season';
 import { sound } from '../util';
 import { TRACKS } from '../audio/compose';
 
 const INK = '#2b2f7a';
 
 /** The small picture on each shop card. */
-function ItemThumb({ item }: { item: Cosmetic }) {
+export function ItemThumb({ item }: { item: Cosmetic }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current!;
@@ -149,7 +150,8 @@ const KIND_NAMES: Record<CosmeticKind, string> = { hat: 'Hats', trail: 'Shot tra
 
 /** Cheapest first. Items that can only be earned have no price, so they go last. */
 function shopOrder(items: Cosmetic[]): Cosmetic[] {
-  const price = (c: Cosmetic) => (c.earn ? Infinity : c.cost);
+  // Season rewards come after achievement rewards, in pass order.
+  const price = (c: Cosmetic) => (c.season ? 1e9 + c.season.level : c.earn ? 1e8 : c.cost);
   return items.slice().sort((a, b) => price(a) - price(b));
 }
 
@@ -168,6 +170,8 @@ export function Shop() {
         <button class={`small ${previewId === c.id ? 'on' : ''}`} aria-label={`Preview ${c.name}`} aria-pressed={previewId === c.id} onClick={() => setPreviewId(c.id)}>Preview</button>
         {owned ? (
           <button class="small" data-sfx="none" disabled={on} onClick={() => { equip(c.id); sound('equip', profile.muted); }}>{on ? 'Equipped' : 'Equip'}</button>
+        ) : c.season ? (
+          <span class="muted small-note">Season {c.season.id} pass, level {c.season.level}</span>
         ) : c.earn ? (
           <span class="muted small-note">Earn: {ACHIEVEMENTS.find((a) => a.id === c.earn)?.detail}</span>
         ) : (
@@ -240,14 +244,14 @@ export function ProfileScreen() {
           <p style={{ marginTop: 10, marginBottom: 4 }}>Level {lv.level}: {lv.into} of {lv.need} XP</p>
           <div class="bar" role="progressbar" aria-valuenow={lv.into} aria-valuemax={lv.need} aria-label="Progress to next level"><i style={{ width: `${(lv.into / lv.need) * 100}%` }} /></div>
           <p style={{ marginTop: 10 }}>{profile.wins} wins in {profile.matches} matches. {profile.kills} hits. Best shot: {profile.bestCombo} hits.</p>
-          <h3>Mastery</h3>
-          <p>Function {Math.floor(profile.mastery.fn / 10)}. y′ {Math.floor(profile.mastery.ode1 / 10)}. y″ {Math.floor(profile.mastery.ode2 / 10)}. Each level takes 10 hits in that mode.</p>
         </div>
         <div class="sheet">
           <h3>Account</h3>
           <AccountPanel />
         </div>
       </div>
+      <SeasonPass />
+      <QuestsPanel />
       <div class="sheet">
         <h3>Match history</h3>
         <MyHistory />

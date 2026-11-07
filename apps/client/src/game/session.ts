@@ -341,6 +341,8 @@ export class NetSession extends GameSession {
   seats: Seat[] = [];
   settings: RoomSettings | null = null;
   ranked = false;
+  /** How many people are watching the room. */
+  spectators = 0;
   error = '';
   ratingDelta: number | undefined;
   private ws: WebSocket | null = null;
@@ -427,6 +429,7 @@ export class NetSession extends GameSession {
         this.seats = msg.seats;
         this.settings = msg.settings;
         this.ranked = msg.ranked;
+        this.spectators = msg.spectators ?? 0;
         // Seat changes can arrive during a match. Only the server ending it returns everyone here.
         if (!msg.inMatch && !(msg.ranked && this.state?.over)) {
           this.status = 'lobby';

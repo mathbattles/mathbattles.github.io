@@ -2,8 +2,15 @@ import {
   ACHIEVEMENTS,
   COSMETICS,
   levelFromXp,
+  SEASON,
+  SEASON_REWARDS,
   questsFor,
   rewardsFor,
+  seasonActive,
+  seasonLevel,
+  seasonXpForMatch,
+  weekNumber,
+  type QuestMetric,
   utcDayNumber,
   type CosmeticKind,
   type ShotMode,
@@ -27,6 +34,11 @@ export interface Profile {
   questsPaid: string[];
   /** Course exercises finished. */
   learnDone: string[];
+  /** The season these numbers belong to. A new season starts them again. */
+  seasonId: number;
+  seasonXp: number;
+  /** Season levels whose rewards were already given. */
+  seasonPaid: number[];
   lastWinDay: number;
   daily: Record<string, { score: number; shots: number; chars: number }>;
   dailiesDone: number;
@@ -92,6 +104,9 @@ function fresh(): Profile {
     questProgress: {},
     questsPaid: [],
     learnDone: [],
+    seasonId: SEASON.id,
+    seasonXp: 0,
+    seasonPaid: [],
     lastWinDay: 0,
     daily: {},
     dailiesDone: 0,
@@ -171,6 +186,7 @@ export function mergeCloud(uid: string, cloud: Partial<Profile> | null): void {
   const merged = cloud ? mergeProgress(base, cloud) : base;
   Object.assign(profile, merged, device, { ownerUid: uid });
   normalizeLook(profile);
+  addSeasonXp(0);
   saveProfile();
 }
 
@@ -206,6 +222,7 @@ try {
 export function markLearned(id: string): void {
   if (profile.learnDone.includes(id)) return;
   profile.learnDone.push(id);
+  bumpQuest('learn');
   saveProfile();
 }
 
@@ -251,7 +268,7 @@ export function grantAchievement(id: string): boolean {
 
 function rollQuests(): void {
   const day = utcDayNumber(Date.now());
-  const week = Math.floor(day / 7);
+  const week = weekNumber(day);
   if (profile.questDay !== day) {
     for (const k of Object.keys(profile.questProgress)) {
       if (k.startsWith('d-')) delete profile.questProgress[k];
@@ -277,7 +294,7 @@ export function currentQuests() {
   }));
 }
 
-export function bumpQuest(metric: 'kills' | 'wins' | 'matches' | 'stars' | 'multi', by = 1): void {
+export function bumpQuest(metric: QuestMetric, by = 1): void {
   if (by <= 0) return;
   rollQuests();
   for (const q of questsFor(utcDayNumber(Date.now()))) {
@@ -287,7 +304,36 @@ export function bumpQuest(metric: 'kills' | 'wins' | 'matches' | 'stars' | 'mult
     if (next >= q.goal && !profile.questsPaid.includes(q.id)) {
       profile.questsPaid.push(q.id);
       profile.sparks += q.reward;
+      addSeasonXp(q.seasonXp);
     }
+  }
+}
+
+/** A new season starts everyone's pass again. Items already earned are kept. */
+function rollSeason(): void {
+  if (profile.seasonId === SEASON.id) return;
+  profile.seasonId = SEASON.id;
+  profile.seasonXp = 0;
+  profile.seasonPaid = [];
+}
+
+/**
+ * Adds season pass XP and hands out the rewards of every level reached.
+ * Rewards are given once, so a level's Sparks can't be paid twice.
+ */
+export function addSeasonXp(amount: number): void {
+  rollSeason();
+  if (amount > 0 && seasonActive(Date.now())) profile.seasonXp += Math.round(amount);
+  payoutSeason();
+}
+
+function payoutSeason(): void {
+  const { level } = seasonLevel(profile.seasonXp);
+  for (const r of SEASON_REWARDS) {
+    if (r.level > level || profile.seasonPaid.includes(r.level)) continue;
+    profile.seasonPaid.push(r.level);
+    if ('sparks' in r) profile.sparks += r.sparks;
+    else if (!profile.owned.includes(r.cosmetic)) profile.owned.push(r.cosmetic);
   }
 }
 
@@ -310,8 +356,10 @@ export function recordMatch(m: MatchRewardInput): { xp: number; sparks: number; 
     online: m.online,
     firstWinToday: profile.lastWinDay !== today,
   });
+  // Player XP comes only from playing. The season pass gets XP from matches and quests.
   profile.xp += r.xp;
   profile.sparks += r.sparks;
+  addSeasonXp(seasonXpForMatch(m.won, m.kills));
   profile.matches++;
   profile.kills += m.kills;
   profile.bestCombo = Math.max(profile.bestCombo, m.bestCombo);
@@ -325,9 +373,8 @@ export function recordMatch(m: MatchRewardInput): { xp: number; sparks: number; 
   }
   if (m.bestCombo >= 2) grantAchievement('double-kill');
   if (m.bestCombo >= 3) grantAchievement('triple-kill');
-  if (m.kills > 0 && m.mode === 'ode1') grantAchievement('ode1-kill');
-  if (m.kills > 0 && m.mode === 'ode2') grantAchievement('ode2-kill');
   bumpQuest('matches');
+  if (m.online) bumpQuest('online');
   bumpQuest('kills', m.kills);
   if (m.won) bumpQuest('wins');
   if (m.bestCombo >= 2) bumpQuest('multi');

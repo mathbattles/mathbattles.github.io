@@ -38,8 +38,6 @@ export const CHAPTERS = [
   { name: 'Curves', blurb: 'Powers, abs, and avoiding invalid values.' },
   { name: 'Waves', blurb: 'sin and cos weave between targets.' },
   { name: 'Walls', blurb: 'Bend over rocks and through gaps.' },
-  { name: "y' equations", blurb: 'Describe the slope and let the game solve it.' },
-  { name: "y'' equations", blurb: 'Aim with an angle, then steer with acceleration.' },
 ];
 
 type L = Omit<Level, 'id' | 'chapter'>;
@@ -85,23 +83,6 @@ const RAW: L[][] = [
     { title: 'Slalom', tip: 'A wave goes around rocks on both sides.', mode: 'fn', solution: '5*sin(x/3)', from: [-20, 0], hits: [14], rocks: [[-12, -5, 2.5], [-2, 5, 2.5]] },
     { title: 'Ricochet row', tip: 'Line up three targets for one big shot.', mode: 'fn', solution: '-x^2/60+x/4', from: [-18, -3], hits: [-8, 2, 12], rocks: [[-3, 5, 2.5], [7, -5, 2.5]] },
     { title: 'Double step', tip: 'Add two steps to clear two walls.', mode: 'fn', solution: '5/(1+exp(-3*(x+8)))+5/(1+exp(-3*(x-4)))', from: [-20, -8], hits: [14], rocks: [[-3, -5, 3], [10, -5, 3]] },
-  ],
-  [
-    { title: 'Constant slope', tip: "y' is the slope at each point. A constant gives a straight line.", mode: 'ode1', solution: '0.5', from: [-16, -4], hits: [4] },
-    { title: 'Slope from x', tip: "y' = x/15 makes the slope grow as x grows.", mode: 'ode1', solution: 'x/15', from: [-15, 3], hits: [10] },
-    { title: 'Back to center', tip: "y' = -y/3 always pulls the shot toward y = 0.", mode: 'ode1', solution: '-y/3', from: [-18, 9], hits: [2] },
-    { title: 'Running away', tip: "y' = y/8 grows faster the further the shot gets from 0.", mode: 'ode1', solution: 'y/8', from: [-18, 2], hits: [-4] },
-    { title: 'Wave slope', tip: "A sine slope gives a wave that keeps going.", mode: 'ode1', solution: '2*sin(x/2)', from: [-20, 0], hits: [-8, 8] },
-    { title: 'Around the rock', tip: "Use a slope that changes sign to arc over.", mode: 'ode1', solution: '-x/12', from: [-16, -6], hits: [10], rocks: [[0, -4, 2.5]] },
-  ],
-  [
-    { title: 'Aim with angle', tip: "With y'' = 0 the shot is a straight line at your firing angle.", mode: 'ode2', solution: '0', angle: 0.4, from: [-16, -4], hits: [4],
-      coach: ['Press the up and down arrows to change the angle. This is the only mode where angle matters.'] },
-    { title: 'Gravity', tip: "A negative y'' pulls the shot down like gravity.", mode: 'ode2', solution: '-0.1', angle: 0.7, from: [-18, -6], hits: [2] },
-    { title: 'Reverse gravity', tip: "A positive y'' pulls up.", mode: 'ode2', solution: '0.1', angle: -0.7, from: [-18, 6], hits: [2] },
-    { title: 'A spring', tip: "y'' = -y/4 swings back and forth around y = 0.", mode: 'ode2', solution: '-y/4', angle: 0.3, from: [-20, 3], hits: [-8, 8] },
-    { title: 'With drag', tip: "Using y' in the equation slows the slope down.", mode: 'ode2', solution: "-y'/4", angle: 0.9, from: [-20, -6], hits: [-12] },
-    { title: 'Lob the rock', tip: 'Angle up, let gravity bring it down behind the rock.', mode: 'ode2', solution: '-0.12', angle: 0.75, from: [-20, -6], hits: [0], rocks: [[-10, -4, 2.8]] },
   ],
 ];
 

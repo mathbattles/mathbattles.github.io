@@ -1,5 +1,5 @@
 import type { RefObject } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { ShotMode } from '@mathbattles/sim';
 import { profile } from '../store';
 import { sound } from '../util';
@@ -182,6 +182,119 @@ export function MathKeys(props: {
           {key.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+interface FnEntry {
+  label: string;
+  insert: string;
+  note: string;
+}
+
+const FUNCTION_LIST: { title: string; items: FnEntry[] }[] = [
+  {
+    title: 'Functions',
+    items: [
+      { label: 'sin(x)', insert: 'sin(x)', note: 'A wave between -1 and 1' },
+      { label: 'cos(x)', insert: 'cos(x)', note: 'A wave that starts at its top' },
+      { label: 'tan(x)', insert: 'tan(x)', note: 'Climbs and breaks, over and over' },
+      { label: 'sqrt(x)', insert: 'sqrt(x)', note: 'Square root. Only works for x of 0 or more' },
+      { label: 'abs(x)', insert: 'abs(x)', note: 'Distance from 0, which makes a V' },
+      { label: 'exp(x)', insert: 'exp(x)', note: 'e to the power x. Grows very fast' },
+      { label: 'ln(x)', insert: 'ln(x)', note: 'Natural log. Only for x above 0' },
+      { label: 'log(x)', insert: 'log(x)', note: 'Log base 10. Only for x above 0' },
+    ],
+  },
+  {
+    title: 'Numbers and powers',
+    items: [
+      { label: 'pi', insert: 'pi', note: '3.14159…' },
+      { label: 'e', insert: 'e', note: '2.71828…' },
+      { label: 'x^2', insert: 'x^2', note: 'x squared' },
+      { label: 'x^3', insert: 'x^3', note: 'x cubed' },
+    ],
+  },
+  {
+    title: 'Shapes to start from',
+    items: [
+      { label: 'x/3', insert: 'x/3', note: 'A straight line. Change 3 to aim' },
+      { label: '-x^2/40', insert: '-x^2/40', note: 'An arc, to go over things' },
+      { label: '5*sin(x/3)', insert: '5*sin(x/3)', note: 'A tall, wide wave' },
+      { label: 'x/4+2*sin(x)', insert: 'x/4+2*sin(x)', note: 'A wave that climbs' },
+      { label: 'abs(x)/2', insert: 'abs(x)/2', note: 'A sharp V turn' },
+      { label: '8/(1+exp(-3*x))', insert: '8/(1+exp(-3*x))', note: 'A smooth step up' },
+      { label: 'sqrt(abs(x))', insert: 'sqrt(abs(x))', note: 'A root that works on both sides' },
+    ],
+  },
+];
+
+/**
+ * A list of every function the game understands. Choosing one types it into the box at the
+ * cursor, so nobody has to remember how to spell it.
+ */
+export function FunctionPicker(props: { input: RefObject<HTMLInputElement>; value: string; onChange: (v: string) => void; disabled?: boolean }) {
+  const { input, value, onChange, disabled } = props;
+  const [open, setOpen] = useState(false);
+  const [up, setUp] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  // Opens upward when the list wouldn't fit below the button.
+  useLayoutEffect(() => {
+    if (!open || !root.current) return;
+    const r = root.current.getBoundingClientRect();
+    setUp(window.innerHeight - r.bottom < 300 && r.top > window.innerHeight - r.bottom);
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => {
+      if (!root.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', away, true);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('pointerdown', away, true);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [open]);
+  const pick = (entry: FnEntry) => {
+    const el = input.current;
+    const start = el?.selectionStart ?? value.length;
+    const end = el?.selectionEnd ?? start;
+    const out = applyKey(value, start, end, { label: entry.label, insert: entry.insert });
+    onChange(out.value);
+    setOpen(false);
+    sound('equip', profile.muted);
+    requestAnimationFrame(() => {
+      el?.focus({ preventScroll: true });
+      el?.setSelectionRange(out.caret, out.caret);
+    });
+  };
+  return (
+    <div class={`fn-picker ${open ? 'open' : ''}`} ref={root}>
+      <button type="button" class="small fn-picker-button" aria-expanded={open} aria-haspopup="dialog" disabled={disabled} onClick={() => setOpen((o) => !o)}>
+        <span aria-hidden="true">ƒ</span> Functions
+      </button>
+      {open && (
+        <div class={`fn-panel ${up ? 'up' : ''}`} role="dialog" aria-label="Functions you can use">
+          {FUNCTION_LIST.map((group) => (
+            <div class="fn-group">
+              <h4>{group.title}</h4>
+              <div class="fn-items">
+                {group.items.map((entry) => (
+                  <button type="button" class="fn-item" data-sfx="none" onClick={() => pick(entry)} aria-label={`Add ${entry.label}: ${entry.note}`}>
+                    <code>{entry.label}</code>
+                    <small>{entry.note}</small>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          <p class="muted small-note fn-tip">It goes where your cursor is. Change the numbers to aim.</p>
+        </div>
+      )}
     </div>
   );
 }

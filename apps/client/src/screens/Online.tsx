@@ -1,3 +1,4 @@
+import { savedMaps } from '../maps';
 import { Dropdown } from './Dropdown';
 import { BOT_LEVELS, MAX_PLAYERS, encodeReplay, isOnWinningSide, makeReplay, matchRecordFor, type BotLevel, type MatchKind, type MatchState, type ShotMode } from '@mathbattles/sim';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -10,6 +11,7 @@ import { go, modeName } from '../util';
 import { GameView } from './GameView';
 import { ResultCard } from './Local';
 import { TopBar, useProfile } from './Shared';
+import { RankedInfo } from './RankedInfo';
 
 const UNAVAILABLE = "Online play isn't reachable right now. Bots, the campaign, and Free Play still work.";
 
@@ -61,10 +63,13 @@ export function OnlineMenu() {
         </div>
         <div class="sheet">
           <h3>Public rooms</h3>
-          {online === null ? <p>Looking for rooms.</p> : !rooms?.length ? <p class="muted">No open rooms. Create one and others can join.</p> : rooms.map((r) => (
+          {online === null ? <p>Looking for rooms.</p> : !rooms?.length ? <p class="muted">No rooms right now. Create one and others can join.</p> : rooms.map((r) => (
             <div class="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
-              <span>{r.kind === 'ffa' ? 'Free-for-all' : 'Teams'}, {modeName(r.mode)}, {r.players}/{MAX_PLAYERS}</span>
-              <a class="btn small" href={`#/room/${r.code}`}>Join</a>
+              <span>{r.kind === 'ffa' ? 'Free-for-all' : 'Teams'}, {r.players}/{MAX_PLAYERS}{r.inLobby === 0 ? ', match in progress' : ''}</span>
+              <span class="row">
+                {r.inLobby !== 0 && <a class="btn small" href={`#/room/${r.code}`}>Join</a>}
+                <a class="btn small" href={`#/watch/${r.code}`}>Watch</a>
+              </span>
             </div>
           ))}
         </div>
@@ -74,7 +79,7 @@ export function OnlineMenu() {
 }
 
 /** Ranked rooms need the login token, which takes a moment to load after a page refresh. */
-export function Room(props: { code: string; ranked?: boolean }) {
+export function Room(props: { code: string; ranked?: boolean; watch?: boolean }) {
   const auth = useAuth();
   if (props.ranked && !auth.ready) {
     return <div class="page"><TopBar title="Ranked match" /><p>Checking your account.</p></div>;
@@ -82,7 +87,7 @@ export function Room(props: { code: string; ranked?: boolean }) {
   return <RoomInner {...props} />;
 }
 
-function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
+function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; watch?: boolean }) {
   useProfile();
   const session = useMemo(() => new NetSession(`${WS_URL}/room/${encodeURIComponent(code)}`, {
     t: 'join',
@@ -90,7 +95,8 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
     token: profile.guestToken,
     idToken: authState.token,
     hat: cosmeticValue('hat'),
-  }), [code]);
+    ...(watch ? { spectate: true } : {}),
+  }), [code, watch]);
   const [, force] = useState(0);
   const [finished, setOver] = useState<MatchState | null>(null);
   const [rewards, setRewards] = useState<ReturnType<typeof recordMatch> | null>(null);
@@ -106,7 +112,7 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
       setOver(state);
       const me = state.players.find((p) => p.id === session.you);
       // Signed-in players' matches are saved by the server. Guests keep theirs on this device.
-      if (!authState.user) {
+      if (!authState.user && !watch) {
         void recordMatchHistory(
           matchRecordFor(state, session.setups, me?.id ?? null, { id: `${code.toUpperCase()}-${state.config.seed}`, at: Date.now(), kind: 'online' }),
           null,
@@ -132,7 +138,7 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
     setChatText('');
   };
 
-  const chatPanel = profile.chatOff ? null : (
+  const chatPanel = profile.chatOff || watch ? null : (
     <div class="mini">
       <h3>Chat</h3>
       <div class="chatlog" ref={chatRef} aria-live="polite">
@@ -180,8 +186,9 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
         session={session}
         keepSession
         notice={session.error}
-        header={<a class="btn small" href={ranked ? '#/ranked' : '#/online'}>Leave</a>}
+        header={<span class="row"><a class="btn small" href={ranked ? '#/ranked' : '#/online'}>Leave</a>{watch && <span class="watch-tag">Watching</span>}{session.spectators > 0 && <span class="muted small-note">{session.spectators} watching</span>}</span>}
         hideOthersShots={!(session.settings?.showFunctions ?? false)}
+        spectator={watch}
         extraSide={chatPanel}
         result={over ? (
           <ResultCard state={over} viewer={session.you} rewards={rewards} replay={replay}>
@@ -201,6 +208,7 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
   return (
     <div class="page">
       <TopBar title={session.ranked ? 'Ranked match' : `Room ${session.code || code}`} />
+      {watch && <p class="watching" role="status">You're watching this room. The match shows here when it starts. <a href={`#/room/${code}`}>Join instead</a></p>}
       {session.status === 'connecting' && <p>Connecting.</p>}
       {session.error && <p class="error" role="alert">{session.error}</p>}
       {st && (
@@ -248,14 +256,23 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
                   <button class={st.kind === k ? 'on' : ''} disabled={!isHost} onClick={() => set({ kind: k })}>{k === 'teams' ? 'Teams' : 'Free-for-all'}</button>
                 ))}
               </div>
-              <div class="row" style={{ marginBottom: 8 }}>
-                {(['fn', 'ode1', 'ode2'] as ShotMode[]).map((m) => (
-                  <button class={st.mode === m ? 'on' : ''} disabled={!isHost} onClick={() => set({ mode: m })}>{modeName(m)}</button>
-                ))}
-              </div>
               <div class="row">
                 <span class="dd-field">Soldiers each{' '}
                   <Dropdown label="Soldiers each" disabled={!isHost} value={st.soldiers} onChange={(n) => set({ soldiers: n })} options={[1, 2, 3, 4].map((n) => ({ value: n, label: String(n) }))} />
+                </span>
+                <span class="dd-field">Map{' '}
+                  {isHost ? (
+                    <Dropdown
+                      label="Map"
+                      value={st.map ? (savedMaps().find((m) => m.map.name === st.map!.name)?.id ?? 'chosen') : 'random'}
+                      onChange={(v) => set({ map: v === 'random' ? null : v === 'chosen' ? st.map : savedMaps().find((m) => m.id === v)?.map ?? null })}
+                      options={[
+                        { value: 'random', label: 'Random map' },
+                        ...(st.map && !savedMaps().some((m) => m.map.name === st.map!.name) ? [{ value: 'chosen', label: st.map.name }] : []),
+                        ...savedMaps().map((m) => ({ value: m.id, label: m.map.name })),
+                      ]}
+                    />
+                  ) : <strong>{st.map?.name ?? 'Random map'}</strong>}
                 </span>
                 <label class="check"><input type="checkbox" disabled={!isHost} checked={st.showFunctions} onChange={(e) => set({ showFunctions: (e.target as HTMLInputElement).checked })} /> Show everyone's functions</label>
               </div>
@@ -322,7 +339,7 @@ export function Ranked() {
     <div class="page">
       <TopBar title="Ranked" />
       <div class="sheet">
-        <p>Ranked is one-on-one in Function mode, with one soldier each. The dashed preview of your shot's start shows here too, as in every mode. Your rating changes after every match and partly resets each season.</p>
+        <p>One on one, one soldier each. Win to climb the ranks. Your rating changes after every match and partly resets each season.</p>
         {!auth.ready ? (
           <p>Checking your account.</p>
         ) : !auth.user ? (
@@ -340,7 +357,7 @@ export function Ranked() {
         )}
         {error && <p class="error" role="alert">{error}</p>}
       </div>
-      <a class="btn" href="#/leaderboard">View leaderboard</a>
+      {auth.ready && auth.user && <RankedInfo />}
     </div>
   );
 }

@@ -6,7 +6,7 @@ import { profile, subscribeProfile } from './store';
 import { useProfile } from './screens/Shared';
 import { Menu } from './screens/Menu';
 import { LocalSetup, Practice } from './screens/Local';
-import { Campaign, Daily, LevelScreen, ReplayScreen } from './screens/Solo';
+import { Campaign, LevelScreen, ReplayScreen } from './screens/Solo';
 import { Leaderboard, Privacy, ProfileScreen, Settings, Shop } from './screens/Meta';
 import { OnlineMenu, Ranked, Room } from './screens/Online';
 import { SignIn } from './screens/Account';
@@ -14,6 +14,11 @@ import { Learn } from './screens/Learn';
 import { PlayerScreen } from './screens/History';
 import { SideNav } from './screens/SideNav';
 import { initAudioUi } from './audio/ui';
+import { Inventory } from './screens/Inventory';
+import { Admin } from './screens/Admin';
+import { Friends, InviteToasts } from './screens/Friends';
+import { MapEditor, MapsPage, SharedMapScreen } from './screens/Maps';
+import { initSocial } from './social';
 
 function route(): string {
   return location.hash.replace(/^#/, '') || '/';
@@ -35,7 +40,6 @@ function Router({ path }: { path: string }) {
     case 'practice': return <Practice />;
     case 'campaign': return <Campaign />;
     case 'level': return <LevelScreen id={parts[1] ?? ''} />;
-    case 'daily': return <Daily />;
     case 'replay': return <ReplayScreen data={parts[1] ?? ''} />;
     case 'online': return <OnlineMenu />;
     // Whether a room is ranked depends only on its code, however the link was written.
@@ -43,8 +47,16 @@ function Router({ path }: { path: string }) {
     case 'ranked':
       if (!parts[1]) return parts[0] === 'ranked' ? <Ranked /> : <OnlineMenu />;
       return <Room key={parts[1]} code={parts[1]} ranked={parts[1].toUpperCase().startsWith('R-')} />;
+    case 'watch':
+      if (!parts[1]) return <OnlineMenu />;
+      return <Room key={`watch-${parts[1]}`} code={parts[1]} watch ranked={parts[1].toUpperCase().startsWith('R-')} />;
     case 'learn': return <Learn lessonId={parts[1]} />;
     case 'shop': return <Shop />;
+    case 'inventory': return <Inventory />;
+    case 'admin': return <Admin />;
+    case 'friends': return <Friends />;
+    case 'maps': return parts[1] === 'edit' ? <MapEditor key={parts[2] ?? 'new'} id={parts[2]} /> : <MapsPage />;
+    case 'map': return <SharedMapScreen code={decodeSafe(parts[1] ?? '')} />;
     case 'profile': return <ProfileScreen />;
     case 'signin': return <SignIn />;
     case 'player': return <PlayerScreen name={decodeSafe(parts[1] ?? '')} />;
@@ -137,6 +149,7 @@ function App() {
         </main>
       </div>
       <Consent />
+      <InviteToasts />
     </>
   );
 }
@@ -147,6 +160,7 @@ function applyDesign(): void {
 applyDesign();
 subscribeProfile(applyDesign);
 initAudioUi();
+initSocial();
 
 render(<App />, document.getElementById('app')!);
 void initAuth();

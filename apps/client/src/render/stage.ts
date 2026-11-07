@@ -1,4 +1,4 @@
-import { BLAST_R, DRAW_STEPS_PER_SEC, NEXT_TURN_DELAY_MS, PLANE_H, PLANE_W, PX_PER_UNIT, SOLDIER_R, type Circle, type MatchState, type ShotRecord } from '@mathbattles/sim';
+import { ALLIES, TARGETS, BLAST_R, DRAW_STEPS_PER_SEC, NEXT_TURN_DELAY_MS, PLANE_H, PLANE_W, PX_PER_UNIT, SOLDIER_R, type Circle, type MatchState, type ShotRecord } from '@mathbattles/sim';
 import { drawHat } from './doodles';
 import { drawObstacle, obstacleStyle, type ObstacleStyle } from './obstacles';
 
@@ -145,6 +145,70 @@ export function strokeTrail(
     c.restore();
     return;
   }
+  if (trail === 'candycane' || trail === 'frost' || trail === 'gold') {
+    const layers: [string, number, number, number[]][] =
+      trail === 'candycane' ? [['#ffffff', 6, 1, []], ['#e8304a', 6, 1, [7, 7]], ['#00000022', 1, 1, []]]
+      : trail === 'frost' ? [['#bfe9ff', 13, 0.35, []], ['#8fd3ff', 6, 0.7, []], ['#ffffff', 2, 1, []]]
+      : [['#ffd75e', 12, 0.35, []], ['#e0a400', 4.5, 1, []], ['#fff6c2', 1.4, 1, []]];
+    for (const [stroke, width, alpha, dash] of layers) {
+      c.strokeStyle = stroke;
+      c.lineWidth = width;
+      c.globalAlpha = alpha;
+      c.setLineDash(dash);
+      trace();
+      c.stroke();
+    }
+    c.restore();
+    return;
+  }
+  if (trail === 'lights' || trail === 'sparkle') {
+    c.strokeStyle = trail === 'lights' ? '#2f6b3a' : color;
+    c.lineWidth = trail === 'lights' ? 1.6 : 2.6;
+    trace();
+    c.stroke();
+    // Bulbs or sparkles placed every few pixels along the path.
+    const bulbs = ['#ff4d6d', '#3fd06e', '#ffd33d', '#4fb3ff'];
+    let walked = 0;
+    let n = 0;
+    let lx = px(xs[0]!);
+    let ly = ys[0]!;
+    const stride = Math.max(1, Math.floor(upto / 1800));
+    for (let i = stride; i < upto; i += stride) {
+      const x = px(xs[i]!);
+      const y = ys[i]!;
+      if (!Number.isFinite(y)) continue;
+      walked += Math.hypot(x - lx, y - ly);
+      lx = x;
+      ly = y;
+      if (walked < (trail === 'lights' ? 13 : 17)) continue;
+      walked = 0;
+      n++;
+      if (trail === 'lights') {
+        const bulb = bulbs[n % bulbs.length]!;
+        c.fillStyle = bulb;
+        c.globalAlpha = 0.3;
+        c.beginPath();
+        c.arc(x, y + 3, 5, 0, Math.PI * 2);
+        c.fill();
+        c.globalAlpha = 1;
+        c.beginPath();
+        c.ellipse(x, y + 3, 2.2, 3, 0, 0, Math.PI * 2);
+        c.fill();
+      } else {
+        const size = n % 3 === 0 ? 4.5 : 3;
+        c.fillStyle = n % 2 ? '#ffffff' : '#ffe27a';
+        c.beginPath();
+        c.moveTo(x, y - size);
+        c.quadraticCurveTo(x, y, x + size, y);
+        c.quadraticCurveTo(x, y, x, y + size);
+        c.quadraticCurveTo(x, y, x - size, y);
+        c.quadraticCurveTo(x, y, x, y - size);
+        c.fill();
+      }
+    }
+    c.restore();
+    return;
+  }
   if (trail === 'neon') {
     c.strokeStyle = color;
     c.globalAlpha = 0.25;
@@ -213,6 +277,143 @@ export function drawBlast(c: CanvasRenderingContext2D, x: number, y: number, r: 
     c.textAlign = 'center';
     c.textBaseline = 'middle';
     c.fillText(style === 'pi' ? 'π' : 'Σ', x, y);
+  } else if (style === 'sqrt' || style === 'infinity') {
+    c.font = `800 ${Math.round(r * 3 + 70 * t)}px "Shantell Sans", serif`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(style === 'sqrt' ? '√' : '∞', x, y);
+  } else if (style === 'snowflake') {
+    const size = r + 50 * t;
+    c.save();
+    c.translate(x, y);
+    c.rotate(t * 1.2);
+    c.strokeStyle = '#9fd8ff';
+    c.lineWidth = 3.5 * (1 - t) + 1.5;
+    c.beginPath();
+    for (let a = 0; a < 6; a++) {
+      const ang = (a / 6) * Math.PI * 2;
+      const dx = Math.cos(ang);
+      const dy = Math.sin(ang);
+      c.moveTo(0, 0);
+      c.lineTo(dx * size, dy * size);
+      for (const along of [0.45, 0.72]) {
+        const bx = dx * size * along;
+        const by = dy * size * along;
+        const arm = size * 0.22;
+        c.moveTo(bx, by);
+        c.lineTo(bx + Math.cos(ang + 0.7) * arm, by + Math.sin(ang + 0.7) * arm);
+        c.moveTo(bx, by);
+        c.lineTo(bx + Math.cos(ang - 0.7) * arm, by + Math.sin(ang - 0.7) * arm);
+      }
+    }
+    c.stroke();
+    c.strokeStyle = '#ffffff';
+    c.lineWidth = 1.2;
+    c.stroke();
+    c.restore();
+  } else if (style === 'confetti') {
+    const colors = ['#ffd33d', '#ff5d7e', '#4fb3ff', '#57d977', '#b57bff'];
+    for (let i = 0; i < 16; i++) {
+      const ang = (i / 16) * Math.PI * 2 + (i % 3) * 0.3;
+      const dist = r * 0.6 + (40 + (i % 4) * 12) * t;
+      const px = x + Math.cos(ang) * dist;
+      const py = y + Math.sin(ang) * dist + 30 * t * t;
+      c.save();
+      c.translate(px, py);
+      c.rotate(ang + t * 8 + i);
+      c.fillStyle = colors[i % colors.length]!;
+      c.fillRect(-3.5, -1.8, 7, 3.6);
+      c.restore();
+    }
+  } else if (style === 'gift') {
+    const size = r * 1.5;
+    c.save();
+    c.translate(x, y);
+    c.fillStyle = '#e8304a';
+    c.fillRect(-size / 2, -size / 2 + 4, size, size * 0.8);
+    c.fillStyle = '#ffd33d';
+    c.fillRect(-2.5, -size / 2 + 4, 5, size * 0.8);
+    // The lid flies off and spins away.
+    c.translate(10 * t, -size / 2 - 40 * t);
+    c.rotate(t * 2.4);
+    c.fillStyle = '#c4183a';
+    c.fillRect(-size / 2 - 2, -4, size + 4, 6);
+    c.fillStyle = '#ffd33d';
+    c.beginPath();
+    c.ellipse(-4, -6, 4, 2.5, -0.5, 0, Math.PI * 2);
+    c.ellipse(4, -6, 4, 2.5, 0.5, 0, Math.PI * 2);
+    c.fill();
+    c.restore();
+    for (let i = 0; i < 8; i++) {
+      const ang = -Math.PI / 2 + (i - 3.5) * 0.35;
+      c.fillStyle = i % 2 ? '#ffd33d' : '#ffffff';
+      c.beginPath();
+      c.arc(x + Math.cos(ang) * (r + 50 * t), y - size / 2 + Math.sin(ang) * (r + 50 * t), 2.6, 0, Math.PI * 2);
+      c.fill();
+    }
+  } else if (style === 'lightning') {
+    // A jagged bolt from above, the same shape every time for a given spot.
+    const top = y - 160;
+    const pts: [number, number][] = [[x + 12, top]];
+    let seed = Math.floor(x * 7 + y * 13);
+    const rand = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+    for (let i = 1; i < 8; i++) pts.push([x + (rand() - 0.5) * 26 * (1 - i / 8), top + ((y - top) * i) / 8]);
+    pts.push([x, y]);
+    for (const [stroke, width] of [['#fff27a', 9 * (1 - t) + 2], ['#ffffff', 3]] as const) {
+      c.strokeStyle = stroke;
+      c.lineWidth = width;
+      c.lineJoin = 'round';
+      c.beginPath();
+      pts.forEach(([px, py], i) => (i ? c.lineTo(px, py) : c.moveTo(px, py)));
+      c.stroke();
+    }
+    c.strokeStyle = '#fff27a';
+    c.lineWidth = 3 * (1 - t) + 1;
+    c.beginPath();
+    c.arc(x, y, r + 34 * t, 0, Math.PI * 2);
+    c.stroke();
+  } else if (style === 'smite') {
+    // A beam of light falls from the sky onto the target, then narrows and fades.
+    const w = (r * 2.2 + 26) * (1 - t * 0.7);
+    const top = y - 900;
+    const g = c.createLinearGradient(x - w, 0, x + w, 0);
+    g.addColorStop(0, 'rgba(255, 190, 40, 0)');
+    g.addColorStop(0.18, 'rgba(255, 185, 30, 0.6)');
+    g.addColorStop(0.36, 'rgba(255, 222, 110, 0.95)');
+    g.addColorStop(0.5, 'rgba(255, 255, 255, 1)');
+    g.addColorStop(0.64, 'rgba(255, 222, 110, 0.95)');
+    g.addColorStop(0.82, 'rgba(255, 185, 30, 0.6)');
+    g.addColorStop(1, 'rgba(255, 190, 40, 0)');
+    c.fillStyle = g;
+    c.fillRect(x - w, top, w * 2, y - top);
+    // Gold edges so the beam stands out on light paper too.
+    c.strokeStyle = 'rgba(230, 150, 0, 0.8)';
+    c.lineWidth = 2;
+    c.beginPath();
+    c.moveTo(x - w * 0.55, top);
+    c.lineTo(x - w * 0.55, y);
+    c.moveTo(x + w * 0.55, top);
+    c.lineTo(x + w * 0.55, y);
+    c.stroke();
+    const glow = c.createRadialGradient(x, y, 0, x, y, r * 2 + 60 * t + 20);
+    glow.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    glow.addColorStop(0.4, 'rgba(255, 228, 120, 0.7)');
+    glow.addColorStop(1, 'rgba(255, 210, 80, 0)');
+    c.fillStyle = glow;
+    c.beginPath();
+    c.arc(x, y, r * 2 + 60 * t + 20, 0, Math.PI * 2);
+    c.fill();
+    c.strokeStyle = '#ffd33d';
+    c.lineWidth = 4 * (1 - t) + 1;
+    c.beginPath();
+    c.ellipse(x, y + 4, r + 80 * t, (r + 80 * t) * 0.32, 0, 0, Math.PI * 2);
+    c.stroke();
+    c.fillStyle = '#ffffff';
+    for (let i = 0; i < 10; i++) {
+      const ang = (i / 10) * Math.PI * 2;
+      const d = r + 70 * t;
+      c.fillRect(x + Math.cos(ang) * d - 1.5, y - 40 * t * (i % 3) + Math.sin(ang) * d * 0.4 - 1.5, 3, 3);
+    }
   } else if (style === 'heart') {
     const size = r * 1.2 + 46 * t;
     c.beginPath();
@@ -268,6 +469,11 @@ const reducedMotion = () => motionReduced;
 
 /** Frame pacing: about 60 per second while things move, about 30 while the field is calm. */
 const BUSY_FRAME_MS = 15;
+/**
+ * The grid carries on this far past every edge of the field (in field pixels), so a camera
+ * zoom or shake shows more graph instead of leftover pixels from earlier frames.
+ */
+const MARGIN = 120;
 const CALM_FRAME_MS = 32;
 
 /** Draws the field. Holds its own display copy so kills appear as the curve reaches them. */
@@ -332,13 +538,15 @@ export class Stage {
     const w = Math.round(PLANE_W * scale);
     const h = Math.round(PLANE_H * scale);
     // Setting a canvas size clears it, so only do it when the size really changes.
-    if (this.canvas.width === w && this.canvas.height === h && this.baseLayer.width === w) return;
+    const bw = Math.round((PLANE_W + 2 * MARGIN) * scale);
+    const bh = Math.round((PLANE_H + 2 * MARGIN) * scale);
+    if (this.canvas.width === w && this.canvas.height === h && this.baseLayer.width === bw) return;
     this.canvas.width = w;
     this.canvas.height = h;
     this.terrainLayer.width = w;
     this.terrainLayer.height = h;
-    this.baseLayer.width = w;
-    this.baseLayer.height = h;
+    this.baseLayer.width = bw;
+    this.baseLayer.height = bh;
     this.terrainDirty = true;
   }
 
@@ -561,38 +769,46 @@ export class Stage {
     c.globalCompositeOperation = 'source-over';
     this.terrainDirty = false;
     const base = this.baseLayer.getContext('2d')!;
-    base.setTransform(this.baseLayer.width / PLANE_W, 0, 0, this.baseLayer.height / PLANE_H, 0, 0);
+    const k = this.baseLayer.width / (PLANE_W + 2 * MARGIN);
+    base.setTransform(k, 0, 0, k, MARGIN * k, MARGIN * k);
     this.drawBackground(base, theme);
     base.drawImage(this.terrainLayer, 0, 0, PLANE_W, PLANE_H);
     this.baseKey = `${this.themeId}|${this.mirror}`;
   }
 
   private drawBackground(c: CanvasRenderingContext2D, theme: Theme): void {
+    // The paper and grid run past the field on every side, out to MARGIN.
+    const left = -MARGIN;
+    const top = -MARGIN;
+    const right = PLANE_W + MARGIN;
+    const bottom = PLANE_H + MARGIN;
     c.fillStyle = theme.bg;
-    c.fillRect(0, 0, PLANE_W, PLANE_H);
+    c.fillRect(left, top, right - left, bottom - top);
     const cx = PLANE_W / 2;
     const cy = PLANE_H / 2;
     c.strokeStyle = theme.grid;
     c.lineWidth = 1;
     c.beginPath();
-    for (let u = -25; u <= 25; u++) {
+    const ux = Math.ceil((cx + MARGIN) / PX_PER_UNIT);
+    const uy = Math.ceil((cy + MARGIN) / PX_PER_UNIT);
+    for (let u = -ux; u <= ux; u++) {
       const x = cx + u * PX_PER_UNIT;
-      c.moveTo(x, 0);
-      c.lineTo(x, PLANE_H);
+      c.moveTo(x, top);
+      c.lineTo(x, bottom);
     }
-    for (let u = -14; u <= 14; u++) {
+    for (let u = -uy; u <= uy; u++) {
       const y = cy - u * PX_PER_UNIT;
-      c.moveTo(0, y);
-      c.lineTo(PLANE_W, y);
+      c.moveTo(left, y);
+      c.lineTo(right, y);
     }
     c.stroke();
     c.strokeStyle = theme.axis;
     c.lineWidth = 2;
     c.beginPath();
-    c.moveTo(0, cy);
-    c.lineTo(PLANE_W, cy);
-    c.moveTo(cx, 0);
-    c.lineTo(cx, PLANE_H);
+    c.moveTo(left, cy);
+    c.lineTo(right, cy);
+    c.moveTo(cx, top);
+    c.lineTo(cx, bottom);
     c.stroke();
     c.fillStyle = theme.label;
     c.font = '11px "Shantell Sans", sans-serif';
@@ -663,13 +879,22 @@ export class Stage {
     }
     this.drawFigure(c, x, y, color, facing, theme.bg);
     drawHat(c, this.looks[s.playerId]?.hat ?? 'none', x, y - SOLDIER_R + 1, color, facing);
-    if (owner?.name && this.nameBelongsOn(owner, s.id)) {
+    // Practice targets and allies each get a label. A player's name follows their next soldier.
+    const everyOne = owner?.id === TARGETS || owner?.id === ALLIES;
+    if (owner?.name && (everyOne || this.nameBelongsOn(owner, s.id))) {
       c.font = '600 11px "Shantell Sans", sans-serif';
       c.textAlign = 'center';
-      c.textBaseline = 'bottom';
       c.fillStyle = color;
-      // Keep names inside the field near its edges and top.
-      c.fillText(owner.name, Math.max(34, Math.min(PLANE_W - 34, x)), Math.max(14, y - SOLDIER_R - 9));
+      const lx = Math.max(34, Math.min(PLANE_W - 34, x));
+      // Above the soldier and any hat, or below when that would leave the field.
+      const above = y - SOLDIER_R - 9;
+      if (above >= 13) {
+        c.textBaseline = 'bottom';
+        c.fillText(owner.name, lx, above);
+      } else {
+        c.textBaseline = 'top';
+        c.fillText(owner.name, lx, y + SOLDIER_R + 6);
+      }
     }
   }
 
@@ -773,6 +998,10 @@ export class Stage {
     this.shake *= Math.pow(0.0025, dt);
     this.flash *= Math.pow(0.004, dt);
     const z = this.zoom;
+    if (z.target === 1) {
+      z.tx = PLANE_W / 2;
+      z.ty = PLANE_H / 2;
+    }
     const k = 1 - Math.pow(0.002, dt);
     z.s += (z.target - z.s) * k;
     z.x += (z.tx - z.x) * k;
@@ -895,8 +1124,11 @@ export class Stage {
         const victim = last && this.soldiers.find((q) => q.id === last.id);
         if (victim) {
           this.zoom.target = 1.7;
-          this.zoom.tx = this.px(victim.x);
-          this.zoom.ty = victim.y;
+          // Centre on the victim, but never so far out that the view passes the drawn margin.
+          const halfW = PLANE_W / 2 / this.zoom.target;
+          const halfH = PLANE_H / 2 / this.zoom.target;
+          this.zoom.tx = Math.max(halfW - MARGIN * 0.8, Math.min(PLANE_W - halfW + MARGIN * 0.8, this.px(victim.x)));
+          this.zoom.ty = Math.max(halfH - MARGIN * 0.8, Math.min(PLANE_H - halfH + MARGIN * 0.8, victim.y));
         }
       }
     }
@@ -954,17 +1186,26 @@ export class Stage {
     this.stepEffects(dt);
     if (this.terrainDirty || this.baseKey !== `${this.themeId}|${this.mirror}`) this.drawTerrain(theme);
 
+    // Start each frame clean, so nothing from an earlier frame can show through.
+    c.fillStyle = theme.bg;
+    c.fillRect(0, 0, PLANE_W, PLANE_H);
+
     // Camera: zoom and shake apply to everything on the field.
     c.save();
     const z = this.zoom;
     if (z.s > 1.002) {
+      // However far it's zoomed, the view stays inside the drawn margin around the field.
+      const halfW = PLANE_W / 2 / z.s;
+      const halfH = PLANE_H / 2 / z.s;
+      const vx = Math.max(halfW - MARGIN * 0.9, Math.min(PLANE_W - halfW + MARGIN * 0.9, z.x));
+      const vy = Math.max(halfH - MARGIN * 0.9, Math.min(PLANE_H - halfH + MARGIN * 0.9, z.y));
       c.translate(PLANE_W / 2, PLANE_H / 2);
       c.scale(z.s, z.s);
-      c.translate(-z.x, -z.y);
+      c.translate(-vx, -vy);
     }
     if (this.shake > 0.3) c.translate((Math.random() - 0.5) * this.shake, (Math.random() - 0.5) * this.shake);
 
-    c.drawImage(this.baseLayer, 0, 0, PLANE_W, PLANE_H);
+    c.drawImage(this.baseLayer, -MARGIN, -MARGIN, PLANE_W + 2 * MARGIN, PLANE_H + 2 * MARGIN);
 
     if (this.previewPath && !this.past) {
       c.save();

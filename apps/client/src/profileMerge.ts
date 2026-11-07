@@ -15,6 +15,8 @@ export interface Mergeable {
   achievements: string[];
   questsPaid: string[];
   learnDone: string[];
+  seasonXp: number;
+  seasonPaid: number[];
   stars: Record<string, number>;
   mastery: Record<string, number>;
   questProgress: Record<string, number>;
@@ -22,8 +24,9 @@ export interface Mergeable {
   updatedAt: number;
 }
 
-const NUMBERS = ['xp', 'sparks', 'matches', 'wins', 'kills', 'bestCombo', 'dailiesDone', 'lastWinDay', 'questDay', 'questWeek'] as const;
+const NUMBERS = ['xp', 'sparks', 'matches', 'wins', 'kills', 'bestCombo', 'dailiesDone', 'lastWinDay', 'questDay', 'questWeek', 'seasonXp'] as const;
 const LISTS = ['owned', 'achievements', 'questsPaid', 'learnDone'] as const;
+const NUMBER_LISTS = ['seasonPaid'] as const;
 const HIGHEST = ['stars', 'mastery', 'questProgress'] as const;
 
 /**
@@ -35,6 +38,7 @@ export function mergeProgress<T extends Mergeable>(a: T, b: Partial<T>): T {
   const out: T = bNewer ? { ...a, ...b } : { ...b, ...a };
   for (const k of NUMBERS) (out as Mergeable)[k] = Math.max(num(a[k]), num(b[k]));
   for (const k of LISTS) (out as Mergeable)[k] = [...new Set([...(a[k] ?? []), ...((b[k] as string[] | undefined) ?? [])])];
+  for (const k of NUMBER_LISTS) (out as Mergeable)[k] = [...new Set([...(a[k] ?? []), ...((b[k] as number[] | undefined) ?? [])])];
   for (const k of HIGHEST) {
     const merged: Record<string, number> = { ...(a[k] ?? {}) };
     for (const [key, v] of Object.entries((b[k] as Record<string, number> | undefined) ?? {})) merged[key] = Math.max(num(merged[key]), num(v));

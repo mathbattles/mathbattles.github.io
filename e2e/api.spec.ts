@@ -15,24 +15,14 @@ test('badly formed requests get clean answers, not server errors', async ({ requ
   expect(badName.status()).toBe(200);
   expect((await badName.json()).available).toBe(false);
 
-  const day = Math.floor(Date.now() / 86_400_000);
-  const nullShot = await request.post(`${API}/api/daily/${day}`, { data: { guest: 'tester', shots: [null] } });
-  expect(nullShot.status()).toBe(400);
-  const notJson = await request.post(`${API}/api/daily/${day}`, { data: 'not json', headers: { 'content-type': 'text/plain' } });
-  expect(notJson.status()).toBe(400);
-  const badMath = await request.post(`${API}/api/daily/${day}`, { data: { guest: 'tester', shots: [{ expr: 'hack(' }] } });
-  expect(badMath.status()).toBe(400);
-  const farFuture = await request.get(`${API}/api/daily/${day + 5}`);
-  expect(farFuture.status()).toBe(400);
+  // Bad map uploads and unknown codes get plain answers too.
+  expect((await request.post(`${API}/api/maps`, { data: { map: { circles: 'lots' } } })).status()).toBe(401);
+  expect((await request.get(`${API}/api/maps/M-NOPE1`)).status()).toBe(404);
+  expect((await request.get(`${API}/api/maps?sort=popular`)).status()).toBe(200);
+  const counts = await request.get(`${API}/api/cosmetics`);
+  expect(counts.status()).toBe(200);
+  expect(typeof (await counts.json()).players).toBe('number');
   expect((await request.get(`${API}/api/nothing`)).status()).toBe(404);
-});
-
-test('a score that did not clear the map is refused', async ({ request }) => {
-  const day = Math.floor(Date.now() / 86_400_000);
-  const res = await request.post(`${API}/api/daily/${day}`, { data: { guest: 'tester', name: 'Cheat', shots: [{ expr: '0' }] } });
-  // One flat shot almost never clears three targets. Clearing is checked by the server either way.
-  expect([200, 400]).toContain(res.status());
-  if (res.status() === 400) expect((await res.json()).error).toMatch(/did not clear/);
 });
 
 test('private routes need a real login', async ({ request }) => {
@@ -43,6 +33,14 @@ test('private routes need a real login', async ({ request }) => {
   expect((await request.post(`${API}/api/account/claim`, { headers: forged, data: { username: 'stolen' } })).status()).toBe(401);
   expect((await request.post(`${API}/api/account/sync-email`, { headers: forged, data: {} })).status()).toBe(401);
   expect((await request.delete(`${API}/api/account`, { headers: forged })).status()).toBe(401);
+  // Friends, parties, invites, ranked standing and the admin page all need a real login.
+  expect((await request.post(`${API}/api/social`, { headers: forged, data: { room: null } })).status()).toBe(401);
+  expect((await request.post(`${API}/api/friends`, { headers: forged, data: { action: 'request', name: 'x' } })).status()).toBe(401);
+  expect((await request.post(`${API}/api/party`, { headers: forged, data: { action: 'create' } })).status()).toBe(401);
+  expect((await request.post(`${API}/api/invites`, { headers: forged, data: { action: 'room', name: 'x', room: 'ABCDE' } })).status()).toBe(401);
+  expect((await request.get(`${API}/api/ranked`, { headers: forged })).status()).toBe(401);
+  expect((await request.get(`${API}/api/admin`, { headers: forged })).status()).toBe(403);
+  expect((await request.get(`${API}/api/admin`)).status()).toBe(403);
   expect((await request.get(`${API}/api/history`)).status()).toBe(401);
   expect((await request.post(`${API}/api/history`, { headers: forged, data: { id: 'x' } })).status()).toBe(401);
   // The old route that trusted any email address is gone.

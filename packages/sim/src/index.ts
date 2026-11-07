@@ -3,6 +3,7 @@ export * from './parser';
 export * from './rng';
 export * from './terrain';
 export * from './map';
+export * from './maps';
 export * from './trajectory';
 export * from './rules';
 export * from './ai';

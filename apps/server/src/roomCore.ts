@@ -12,6 +12,7 @@ import {
   START_DELAY_MS,
   TURN_MS,
   chooseMove,
+  cleanMap,
   createMatch,
   currentPlayer,
   fire,
@@ -54,6 +55,7 @@ const RANKED_SETTINGS: RoomSettings = { kind: 'teams', mode: 'fn', soldiers: 1, 
 const MAX_SEATS = MAX_PLAYERS;
 const LOBBY_RETURN_MS = 12_000;
 const RANKED_NO_SHOW_MS = 30_000;
+const MAX_SPECTATORS = 20;
 const HAT_VALUES = new Set(COSMETICS.filter((c) => c.kind === 'hat').map((c) => c.value));
 
 /**
@@ -66,6 +68,8 @@ export class RoomCore {
   settings: RoomSettings;
   state: MatchState | null = null;
   private connSeat = new Map<string, string>();
+  /** Connections watching without a seat. They see everything players see, and can't act. */
+  private spectators = new Set<string>();
   private tokenSeat = new Map<string, string>();
   private deadline = 0;
   private busyUntil = 0;
@@ -93,6 +97,7 @@ export class RoomCore {
 
   private broadcast(msg: ServerMsg): void {
     for (const conn of this.connSeat.keys()) this.io.send(conn, msg);
+    for (const conn of this.spectators) this.io.send(conn, msg);
   }
 
   private publicSeat(s: Internal): Seat {
@@ -100,7 +105,7 @@ export class RoomCore {
   }
 
   private sendLobby(to?: string): void {
-    const msg: ServerMsg = { t: 'lobby', host: this.host, seats: this.seats.map((s) => this.publicSeat(s)), settings: this.settings, ranked: this.ranked, inMatch: !!this.state };
+    const msg: ServerMsg = { t: 'lobby', host: this.host, seats: this.seats.map((s) => this.publicSeat(s)), settings: this.settings, ranked: this.ranked, inMatch: !!this.state, spectators: this.spectators.size };
     if (to) this.io.send(to, msg);
     else this.broadcast(msg);
     this.io.onLobbyChange?.({ players: this.seats.filter((s) => s.connected).length, kind: this.settings.kind, mode: this.settings.mode, inLobby: !this.state });
@@ -117,7 +122,11 @@ export class RoomCore {
   /** identity is proven by the transport layer: a verified user id or a guest token. */
   join(connId: string, identity: string, msg: Extract<ClientMsg, { t: 'join' }>): void {
     // A connection gets one seat. Joining again could otherwise leave ghost seats behind.
-    if (this.connSeat.has(connId)) return;
+    if (this.connSeat.has(connId) || this.spectators.has(connId)) return;
+    if (msg.spectate) {
+      this.watch(connId);
+      return;
+    }
     if (this.ranked) {
       if (this.cancelled) {
         this.io.send(connId, { t: 'closed', message: "This ranked match was cancelled because a player didn't connect." });
@@ -172,6 +181,19 @@ export class RoomCore {
     this.schedule();
   }
 
+  /** Joins as a watcher: no seat, no turn, and nothing they send changes the room. */
+  private watch(connId: string): void {
+    if (this.spectators.size >= MAX_SPECTATORS) {
+      this.io.send(connId, { t: 'closed', message: 'Too many people are watching this room right now.' });
+      return;
+    }
+    this.spectators.add(connId);
+    this.io.send(connId, { t: 'welcome', you: '', code: this.code });
+    this.sendLobby();
+    if (this.state) this.sendMatchTo(connId);
+    if (this.state?.over && this.finalMsg) this.io.send(connId, this.finalMsg);
+  }
+
   private uniqueName(name: string): string {
     const used = new Set(this.seats.map((s) => s.name.toLowerCase()));
     if (!used.has(name.toLowerCase())) return name;
@@ -188,6 +210,10 @@ export class RoomCore {
   }
 
   disconnect(connId: string): void {
+    if (this.spectators.delete(connId)) {
+      this.sendLobby();
+      return;
+    }
     const id = this.connSeat.get(connId);
     this.connSeat.delete(connId);
     const seat = this.seats.find((s) => s.id === id);
@@ -277,7 +303,9 @@ export class RoomCore {
 
   private applySettings(p: Partial<RoomSettings>): void {
     if (p.kind === 'teams' || p.kind === 'ffa') this.settings.kind = p.kind;
-    if (p.mode === 'fn' || p.mode === 'ode1' || p.mode === 'ode2') this.settings.mode = p.mode as ShotMode;
+    // Only y = f(x) matches are offered now.
+    this.settings.mode = 'fn';
+    if ('map' in p) this.settings.map = p.map ? cleanMap(p.map) : null;
     if (typeof p.showFunctions === 'boolean') this.settings.showFunctions = p.showFunctions;
     if (typeof p.soldiers === 'number') this.settings.soldiers = Math.max(1, Math.min(4, Math.trunc(p.soldiers) || 1));
   }
@@ -331,7 +359,7 @@ export class RoomCore {
       .filter((s) => s.connected)
       .map((s) => ({ id: s.id, name: s.name, team: s.team, isBot: s.isBot, botLevel: s.isBot ? s.id.split(':')[1] : undefined }));
     this.state = createMatch(
-      { kind: this.settings.kind, mode: this.settings.mode, soldiers: this.settings.soldiers, seed },
+      { kind: this.settings.kind, mode: this.settings.mode, soldiers: this.settings.soldiers, seed, ...(this.settings.map ? { map: this.settings.map } : {}) },
       setups,
     );
     // The exact list used here, so replay links can rebuild this same match.

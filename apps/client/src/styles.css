@@ -534,6 +534,24 @@ button.mk:active:not(:disabled) { --fill: var(--yellow); --label: var(--on-brigh
 /* Phones keep a tapped button "hovered", so keys only light up while pressed. */
 @media (hover: none) { button.mk:hover:not(:disabled):not(:active) { --fill: var(--mk-fill); --label: var(--ink); transform: none; box-shadow: 1px 2px 0 var(--lift); } }
 .mathkeys-off { margin-top: 8px; }
+/* The Functions list: every function the game understands, ready to drop into the box. */
+.fn-picker { position: relative; margin-top: 8px; }
+.fn-picker-button span { font-family: 'Cambria Math', Georgia, serif; font-style: italic; font-weight: 700; }
+.fn-panel {
+  position: absolute; left: 0; top: calc(100% + 6px); z-index: 25;
+  width: min(560px, calc(100vw - 32px)); max-height: min(420px, 60vh); overflow-y: auto;
+  padding: 12px 14px; background: var(--card); color: var(--ink);
+  border: 2.5px solid var(--ink); border-radius: var(--wobble-2); box-shadow: 3px 5px 0 var(--ink);
+  animation: dd-pop .16s cubic-bezier(.3, 1.6, .5, 1) both;
+}
+.fn-panel.up { top: auto; bottom: calc(100% + 6px); transform-origin: bottom left; }
+.fn-group + .fn-group { margin-top: 10px; }
+.fn-group h4 { margin: 0 0 6px; font-size: .95rem; }
+.fn-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr)); gap: 6px; }
+button.fn-item { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 5px 10px; text-align: left; font-weight: 400; box-shadow: 1px 2px 0 var(--lift); border-radius: 8px 12px 7px 11px / 11px 7px 12px 8px; }
+button.fn-item code { background: none; padding: 0; font-size: 1.05rem; font-weight: 700; }
+button.fn-item small { font-size: .78rem; opacity: .85; line-height: 1.25; }
+.fn-tip { margin: 10px 0 0; }
 .preview { min-height: 34px; padding: 3px 2px 0; overflow-x: auto; }
 .controls2 { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
 button.dir-plus { --fill: var(--blue); --label: #fff; }
@@ -719,3 +737,127 @@ td, th { text-align: left; padding: 4px 8px; border-bottom: 1.5px solid var(--pa
   .sheet { padding: 18px 18px; }
   .shop-preview.full { padding: 14px 12px; }
 }
+
+/* Watching a match. */
+.watching { background: color-mix(in srgb, var(--blue) 16%, var(--card)); border: 2px dashed var(--blue); border-radius: 10px; padding: 8px 14px; font-weight: 600; max-width: none; }
+.watch-tag { background: var(--blue); color: #fff; font-weight: 800; padding: 1px 10px; border-radius: 8px 12px 7px 11px; font-size: .9rem; }
+
+/* Ranked screen. */
+.rank-card .rank-top { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.rank-badge { color: var(--ink); flex: none; filter: drop-shadow(2px 3px 0 color-mix(in srgb, var(--ink) 35%, transparent)); }
+.rank-bar { margin-top: 14px; }
+.rank-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; margin-top: 12px; }
+.rank-stats > div { border: 2px solid var(--ink); border-radius: 10px 14px 9px 13px; padding: 8px 12px; background: color-mix(in srgb, var(--ink) 4%, var(--card)); display: flex; flex-direction: column; }
+.rank-stats strong { font-size: 1.35rem; line-height: 1.1; }
+.rank-stats span { font-size: .85rem; opacity: .8; }
+.rank-ladder, .top-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.rank-ladder li { display: flex; align-items: center; gap: 10px; padding: 3px 8px; border-radius: 8px; }
+.rank-ladder li span { flex: 1; font-weight: 600; }
+.rank-ladder li.here { background: color-mix(in srgb, var(--yellow) 40%, transparent); outline: 2px solid var(--ink); }
+.top-list { counter-reset: place; margin-bottom: 10px; }
+.top-list li { counter-increment: place; display: flex; align-items: baseline; gap: 8px; }
+.top-list li::before { content: counter(place) '.'; font-weight: 800; min-width: 1.6em; }
+.top-list li.me { font-weight: 800; }
+
+/* Season pass. */
+.season-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.season-level { display: flex; flex-direction: column; align-items: center; padding: 4px 14px; border: 2.5px solid var(--ink); border-radius: var(--wobble); background: var(--yellow); color: var(--on-bright); box-shadow: 2px 3px 0 var(--ink); }
+.season-level span { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.season-level strong { font-size: 1.7rem; line-height: 1; }
+.season-bar { margin-top: 10px; }
+.pass-track { display: flex; gap: 10px; overflow-x: auto; padding: 6px 4px 12px; scroll-snap-type: x proximity; }
+.pass-level {
+  position: relative; flex: 0 0 132px; scroll-snap-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 3px; text-align: center;
+  padding: 8px 8px 10px; border: 2.5px solid var(--ink); border-radius: var(--wobble-2);
+  background: var(--card); opacity: .62; transition: transform .15s cubic-bezier(.3, 1.6, .5, 1), opacity .15s;
+}
+.pass-level:hover { opacity: 1; transform: translateY(-3px) rotate(-.6deg); }
+.pass-level canvas { width: 100%; height: auto; border-radius: 8px; background: #fff; }
+.pass-level strong { font-size: .88rem; line-height: 1.15; }
+.pass-level small { font-size: .74rem; opacity: .8; }
+.pass-num { position: absolute; top: -10px; left: -6px; background: var(--ink); color: var(--card); font-weight: 800; font-size: .8rem; min-width: 26px; padding: 1px 6px; border-radius: 9px; }
+.pass-level.got { opacity: 1; background: color-mix(in srgb, var(--green) 14%, var(--card)); }
+.pass-level.next { opacity: 1; box-shadow: 3px 4px 0 var(--yellow), 0 0 0 3px var(--yellow); }
+.pass-level.final { flex-basis: 160px; opacity: 1; background: linear-gradient(160deg, #fff6c2, #ffd33d 60%, #ff9838); color: var(--on-bright); box-shadow: 0 0 18px color-mix(in srgb, var(--yellow) 70%, transparent); }
+.pass-sparks { width: 100%; aspect-ratio: 140 / 80; display: grid; place-items: center; font-size: 2.2rem; color: #e0a400; background: #fff8dc; border-radius: 8px; }
+.pass-check { position: absolute; top: 6px; right: 8px; background: var(--green); color: var(--on-bright); font-weight: 800; border-radius: 50%; width: 22px; height: 22px; display: grid; place-items: center; font-size: .85rem; border: 2px solid var(--ink); }
+
+/* Quests. */
+.quest-group + .quest-group { margin-top: 12px; }
+.quest-group h4 { margin: 0 0 6px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.quest-group h4 small { font-weight: 400; }
+.quests { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.quests li { display: flex; gap: 14px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.quest-text { display: flex; flex-direction: column; }
+.quest-progress { display: flex; align-items: center; gap: 8px; min-width: 170px; }
+.quest-progress .bar { flex: 1; }
+.quests li.done .quest-text span { text-decoration: line-through; text-decoration-thickness: 2px; opacity: .7; }
+
+/* Inventory: cards like a collection. */
+.inventory-layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1000px) { .inventory-layout { grid-template-columns: minmax(0, 1fr) minmax(280px, 30%); align-items: start; } .card-detail { position: sticky; top: 12px; } }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 128px), 1fr)); gap: 12px; }
+button.card {
+  --rare: #c9ced8;
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 8px 10px; font-weight: 600; text-align: center;
+  background: linear-gradient(170deg, color-mix(in srgb, var(--rare) 45%, var(--card)), var(--card) 75%);
+  border-radius: 12px 16px 11px 15px / 15px 11px 16px 12px;
+}
+button.card canvas { width: 100%; height: auto; border-radius: 8px; background: #fff; border: 2px solid color-mix(in srgb, var(--rare) 80%, var(--ink)); }
+button.card strong { font-size: .9rem; line-height: 1.15; }
+button.card small { font-size: .74rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: color-mix(in srgb, var(--rare) 60%, var(--ink)); }
+button.card.picked { box-shadow: 3px 5px 0 var(--ink), 0 0 0 3px var(--yellow); }
+.worn-tag { position: absolute; top: 4px; right: 6px; background: var(--green); color: var(--on-bright); font-size: .7rem; font-weight: 800; padding: 0 6px; border-radius: 6px; }
+.rarity-starter { --rare: #c9ced8; }
+.rarity-common { --rare: #6fbf73; }
+.rarity-rare { --rare: #3f8cff; }
+.rarity-epic { --rare: #9b5cf6; }
+.rarity-season { --rare: #ff9838; }
+.rarity-mythic { --rare: #ffd33d; }
+button.card.rarity-mythic { background: linear-gradient(160deg, #fff6c2, #ffd33d 55%, #ff9838); color: var(--on-bright); animation: mythic-glow 2.4s ease-in-out infinite; }
+@keyframes mythic-glow { 0%, 100% { box-shadow: 2px 3px 0 var(--ink), 0 0 6px #ffd33d; } 50% { box-shadow: 2px 3px 0 var(--ink), 0 0 18px #ffd33d; } }
+.card-detail .detail-art canvas { width: 100%; height: auto; border-radius: 10px; background: #fff; border: 2.5px solid var(--ink); }
+.card-detail dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 12px 0; }
+.card-detail dt { font-weight: 800; }
+.card-detail dd { margin: 0; }
+.rarity-pill { display: inline-block; background: var(--rare); color: var(--on-bright); font-weight: 800; font-size: .8rem; padding: 1px 10px; border-radius: 8px; text-transform: uppercase; letter-spacing: .05em; }
+
+/* Admin. */
+.admin-row { display: flex; align-items: flex-end; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.admin-row label { display: flex; flex-direction: column; gap: 2px; font-weight: 600; }
+.admin-row input { width: 140px; }
+
+/* Custom maps. */
+.map-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap: 12px; }
+.map-card { display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 2px solid var(--ink); border-radius: 12px 16px 11px 15px; background: var(--card); transition: transform .13s cubic-bezier(.3, 1.6, .5, 1); }
+.map-card:hover { transform: translateY(-3px) rotate(-.4deg); }
+.map-preview { display: block; width: 100%; height: auto; border: 2px solid var(--ink); border-radius: 8px; }
+.shared-map .map-preview { max-width: 520px; margin-bottom: 10px; }
+.editor-layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1000px) { .editor-layout { grid-template-columns: minmax(0, 1fr) minmax(280px, 30%); align-items: start; } }
+.editor-canvas { position: relative; }
+.editor-canvas canvas { display: block; width: 100%; height: auto; border: 2.5px solid var(--ink); border-radius: 10px; }
+.editor-canvas .editor-overlay { position: absolute; inset: 0; border-color: transparent; touch-action: none; cursor: crosshair; }
+.editor-overlay.tool-erase { cursor: not-allowed; }
+.editor-tools { display: flex; flex-direction: column; gap: 10px; }
+.editor-tools .stack-label { display: flex; flex-direction: column; gap: 3px; font-weight: 600; }
+.editor-tools .stack-label input { width: 100%; }
+.editor-actions button { flex: 1; }
+
+/* Friends and parties. */
+.friend-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 2px; border-bottom: 1.5px solid var(--page-line); flex-wrap: wrap; }
+.friend-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ink-soft); opacity: .45; display: inline-block; flex: none; }
+.on .dot, .friend-row.on .dot { background: var(--green); opacity: 1; box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 30%, transparent); }
+.party-list { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.party-list li { display: flex; align-items: center; gap: 8px; }
+.toasts { position: fixed; right: 14px; bottom: 14px; z-index: 70; display: flex; flex-direction: column; gap: 10px; max-width: min(360px, calc(100vw - 28px)); }
+.toast { margin: 0; padding: 14px 18px; animation: route-in .25s ease-out both; box-shadow: 3px 5px 0 var(--ink); }
+.toast p { margin: 0 0 8px; }
+
+/* Long inputs in a row wrap instead of pushing the page sideways on small phones. */
+.page form.row { flex: 1 1 260px; min-width: 0; max-width: 100%; flex-wrap: nowrap; }
+.page form.row input[type='text'] { flex: 1 1 auto; width: 0; min-width: 0; }
+.map-card .row, .friend-row .row { flex-wrap: wrap; }

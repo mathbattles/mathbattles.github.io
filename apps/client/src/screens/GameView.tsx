@@ -1,4 +1,4 @@
-import { MathKeys, useMathKeys } from './MathKeys';
+import { FunctionPicker, MathKeys, useMathKeys } from './MathKeys';
 import {
   ParseError,
   RuleError,
@@ -117,6 +117,8 @@ export function GameView(props: {
   hideOthersShots?: boolean;
   /** The room screen owns online sessions, which outlive one match. */
   keepSession?: boolean;
+  /** Watching someone else's match: no function box. */
+  spectator?: boolean;
 }) {
   const { session } = props;
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -370,7 +372,8 @@ export function GameView(props: {
         </div>
         {props.notice && <p class="error" role="alert" style={{ marginTop: 8 }}>{props.notice}</p>}
         {props.result}
-        {!state.over && !props.result && (
+        {props.spectator && !state.over && !props.result && <p class="watching" role="status">You're watching this match. Functions show when each shot is fired{props.hideOthersShots ? ', once the match ends' : ''}.</p>}
+        {!props.spectator && !state.over && !props.result && (
           <div class="shotbar">
             <div class="shotrow">
               <label for="fn-input">{modeLabel(mode)}</label>
@@ -404,6 +407,7 @@ export function GameView(props: {
               />
               <button class="primary fire" data-sfx="none" onClick={doFire} disabled={!canAct || !!check}>Fire</button>
             </div>
+            <FunctionPicker input={input} value={expr} disabled={!canAct} onChange={(v) => { setExpr(v); setError(''); }} />
             {keys.on && (
               <MathKeys input={input} mode={mode} value={expr} disabled={!canAct} typing={keys.typing} setTyping={keys.setTyping}
                 onChange={(v) => { setExpr(v); setError(''); }} />

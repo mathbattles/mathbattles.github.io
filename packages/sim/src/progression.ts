@@ -73,6 +73,8 @@ export interface Cosmetic {
   cost: number;
   /** Non-empty when earned rather than bought. */
   earn?: string;
+  /** Unlocked by reaching this level of a season pass, never sold. */
+  season?: { id: number; level: number };
   value: string;
 }
 
@@ -123,6 +125,41 @@ export const COSMETICS: Cosmetic[] = [
   { id: 'obstacle-pool', kind: 'obstacle', name: 'Pool balls', cost: 450, value: 'pool' },
   { id: 'obstacle-planets', kind: 'obstacle', name: 'Planets', cost: 600, value: 'planets' },
   { id: 'obstacle-neon', kind: 'obstacle', name: 'Neon', cost: 650, value: 'neon' },
+  // Season 0 pass rewards.
+  { id: 'title-season0', kind: 'title', name: 'Season Zero', cost: 0, season: { id: 0, level: 1 }, value: 'Season Zero' },
+  { id: 'obstacle-snowballs', kind: 'obstacle', name: 'Snowballs', cost: 0, season: { id: 0, level: 2 }, value: 'snowballs' },
+  { id: 'trail-candycane', kind: 'trail', name: 'Candy cane', cost: 0, season: { id: 0, level: 4 }, value: 'candycane' },
+  { id: 'title-snowplotter', kind: 'title', name: 'Snow Plotter', cost: 0, season: { id: 0, level: 5 }, value: 'Snow Plotter' },
+  { id: 'hat-beanie', kind: 'hat', name: 'Knit beanie', cost: 0, season: { id: 0, level: 7 }, value: 'beanie' },
+  { id: 'blast-snowflake', kind: 'blast', name: 'Snowflake', cost: 0, season: { id: 0, level: 8 }, value: 'snowflake' },
+  { id: 'title-rootfinder', kind: 'title', name: 'Root Finder', cost: 0, season: { id: 0, level: 10 }, value: 'Root Finder' },
+  { id: 'hat-earmuffs', kind: 'hat', name: 'Earmuffs', cost: 0, season: { id: 0, level: 11 }, value: 'earmuffs' },
+  { id: 'trail-frost', kind: 'trail', name: 'Frost', cost: 0, season: { id: 0, level: 13 }, value: 'frost' },
+  { id: 'title-derivative', kind: 'title', name: 'The Derivative', cost: 0, season: { id: 0, level: 14 }, value: 'The Derivative' },
+  { id: 'obstacle-ornaments', kind: 'obstacle', name: 'Ornaments', cost: 0, season: { id: 0, level: 16 }, value: 'ornaments' },
+  { id: 'blast-confetti', kind: 'blast', name: 'Confetti', cost: 0, season: { id: 0, level: 17 }, value: 'confetti' },
+  { id: 'title-wavemaker', kind: 'title', name: 'Wave Maker', cost: 0, season: { id: 0, level: 19 }, value: 'Wave Maker' },
+  { id: 'hat-elf', kind: 'hat', name: 'Elf hat', cost: 0, season: { id: 0, level: 20 }, value: 'elf' },
+  { id: 'trail-lights', kind: 'trail', name: 'String lights', cost: 0, season: { id: 0, level: 22 }, value: 'lights' },
+  { id: 'title-parabolapro', kind: 'title', name: 'Parabola Pro', cost: 0, season: { id: 0, level: 23 }, value: 'Parabola Pro' },
+  { id: 'blast-sqrt', kind: 'blast', name: 'Root pop', cost: 0, season: { id: 0, level: 25 }, value: 'sqrt' },
+  { id: 'obstacle-gifts', kind: 'obstacle', name: 'Gift boxes', cost: 0, season: { id: 0, level: 26 }, value: 'gifts' },
+  { id: 'title-graphgoblin', kind: 'title', name: 'Graph Goblin', cost: 0, season: { id: 0, level: 28 }, value: 'Graph Goblin' },
+  { id: 'hat-chef', kind: 'hat', name: 'Chef hat', cost: 0, season: { id: 0, level: 29 }, value: 'chef' },
+  { id: 'trail-sparkle', kind: 'trail', name: 'Sparkle', cost: 0, season: { id: 0, level: 31 }, value: 'sparkle' },
+  { id: 'title-constant', kind: 'title', name: 'The Constant', cost: 0, season: { id: 0, level: 32 }, value: 'The Constant' },
+  { id: 'blast-gift', kind: 'blast', name: 'Gift burst', cost: 0, season: { id: 0, level: 34 }, value: 'gift' },
+  { id: 'title-curvecrusher', kind: 'title', name: 'Curve Crusher', cost: 0, season: { id: 0, level: 35 }, value: 'Curve Crusher' },
+  { id: 'hat-reindeer', kind: 'hat', name: 'Antlers', cost: 0, season: { id: 0, level: 37 }, value: 'reindeer' },
+  { id: 'obstacle-donuts', kind: 'obstacle', name: 'Donuts', cost: 0, season: { id: 0, level: 38 }, value: 'donuts' },
+  { id: 'title-axis', kind: 'title', name: 'Axis of Awesome', cost: 0, season: { id: 0, level: 40 }, value: 'Axis of Awesome' },
+  { id: 'blast-infinity', kind: 'blast', name: 'Infinity pop', cost: 0, season: { id: 0, level: 41 }, value: 'infinity' },
+  { id: 'trail-gold', kind: 'trail', name: 'Gold leaf', cost: 0, season: { id: 0, level: 43 }, value: 'gold' },
+  { id: 'title-series', kind: 'title', name: 'Infinite Series', cost: 0, season: { id: 0, level: 44 }, value: 'Infinite Series' },
+  { id: 'hat-astronaut', kind: 'hat', name: 'Space helmet', cost: 0, season: { id: 0, level: 46 }, value: 'astronaut' },
+  { id: 'blast-lightning', kind: 'blast', name: 'Lightning', cost: 0, season: { id: 0, level: 47 }, value: 'lightning' },
+  { id: 'title-hyperbola', kind: 'title', name: 'Holiday Hyperbola', cost: 0, season: { id: 0, level: 49 }, value: 'Holiday Hyperbola' },
+  { id: 'blast-smite', kind: 'blast', name: 'Smite', cost: 0, season: { id: 0, level: 50 }, value: 'smite' },
 ];
 
 export interface Achievement {
@@ -138,35 +175,109 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'double-kill', name: 'Two Roots', detail: 'Hit 2 enemies with one shot', reward: 40 },
   { id: 'triple-kill', name: 'Cubic', detail: 'Hit 3 enemies with one shot', reward: 100 },
   { id: 'sine-only', name: 'Wave Rider', detail: 'Land a kill using only sin', reward: 40 },
-  { id: 'ode1-kill', name: 'First Order', detail: "Land a kill in y' mode", reward: 40 },
-  { id: 'ode2-kill', name: 'Second Order', detail: "Land a kill in y'' mode", reward: 60 },
   { id: 'genius-win', name: 'Beyond Genius', detail: 'Beat a Genius bot', reward: 150 },
   { id: 'campaign-complete', name: 'Q.E.D.', detail: 'Finish the campaign', reward: 200 },
-  { id: 'daily-3', name: 'Habit Forming', detail: 'Finish 3 Daily Challenges', reward: 60 },
 ];
+
+export type QuestMetric = 'kills' | 'wins' | 'matches' | 'stars' | 'multi' | 'online' | 'learn';
 
 export interface QuestDef {
   id: string;
   text: string;
   goal: number;
+  /** Sparks paid when finished. */
   reward: number;
+  /** Season pass XP paid when finished. */
+  seasonXp: number;
   weekly?: boolean;
-  metric: 'kills' | 'wins' | 'matches' | 'stars' | 'multi';
+  metric: QuestMetric;
 }
 
 const DAILY_POOL: QuestDef[] = [
-  { id: 'd-kills', text: 'Hit 5 enemies', goal: 5, reward: 30, metric: 'kills' },
-  { id: 'd-wins', text: 'Win 2 matches', goal: 2, reward: 40, metric: 'wins' },
-  { id: 'd-matches', text: 'Play 3 matches', goal: 3, reward: 25, metric: 'matches' },
-  { id: 'd-stars', text: 'Earn 3 campaign stars', goal: 3, reward: 30, metric: 'stars' },
-  { id: 'd-multi', text: 'Hit 2 enemies with one shot', goal: 1, reward: 50, metric: 'multi' },
+  { id: 'd-kills', text: 'Hit 5 enemies', goal: 5, reward: 30, seasonXp: 80, metric: 'kills' },
+  { id: 'd-wins', text: 'Win 2 matches', goal: 2, reward: 40, seasonXp: 100, metric: 'wins' },
+  { id: 'd-matches', text: 'Play 3 matches', goal: 3, reward: 25, seasonXp: 70, metric: 'matches' },
+  { id: 'd-stars', text: 'Earn 3 campaign stars', goal: 3, reward: 30, seasonXp: 70, metric: 'stars' },
+  { id: 'd-multi', text: 'Hit 2 enemies with one shot', goal: 1, reward: 50, seasonXp: 100, metric: 'multi' },
+  { id: 'd-online', text: 'Play an online match', goal: 1, reward: 35, seasonXp: 90, metric: 'online' },
+  { id: 'd-learn', text: 'Finish 2 Learn exercises', goal: 2, reward: 25, seasonXp: 60, metric: 'learn' },
+  { id: 'd-kills2', text: 'Hit 10 enemies', goal: 10, reward: 45, seasonXp: 110, metric: 'kills' },
 ];
-const WEEKLY: QuestDef = { id: 'w-wins', text: 'Win 10 matches this week', goal: 10, reward: 200, weekly: true, metric: 'wins' };
 
-/** Three daily quests chosen from the UTC date, and one weekly. */
+const WEEKLY_POOL: QuestDef[] = [
+  { id: 'w-wins', text: 'Win 10 matches', goal: 10, reward: 200, seasonXp: 400, weekly: true, metric: 'wins' },
+  { id: 'w-kills', text: 'Hit 40 enemies', goal: 40, reward: 180, seasonXp: 350, weekly: true, metric: 'kills' },
+  { id: 'w-matches', text: 'Play 15 matches', goal: 15, reward: 150, seasonXp: 300, weekly: true, metric: 'matches' },
+  { id: 'w-multi', text: 'Hit 2 or more enemies with one shot, 5 times', goal: 5, reward: 220, seasonXp: 400, weekly: true, metric: 'multi' },
+  { id: 'w-online', text: 'Play 5 online matches', goal: 5, reward: 200, seasonXp: 380, weekly: true, metric: 'online' },
+  { id: 'w-stars', text: 'Earn 12 campaign stars', goal: 12, reward: 160, seasonXp: 320, weekly: true, metric: 'stars' },
+];
+
+/** Three daily quests chosen from the UTC date. They change every day. */
+export function dailyQuests(dayNumber: number): QuestDef[] {
+  const start = (dayNumber * 3) % DAILY_POOL.length;
+  return [0, 1, 2].map((i) => DAILY_POOL[(start + i) % DAILY_POOL.length]!);
+}
+
+/** Three weekly quests, which change every Monday (UTC). */
+export function weeklyQuests(dayNumber: number): QuestDef[] {
+  const week = weekNumber(dayNumber);
+  return [0, 1, 2].map((i) => WEEKLY_POOL[(week * 2 + i) % WEEKLY_POOL.length]!);
+}
+
+/** Weeks counted from a Monday, so the weekly quests reset at the start of each week. */
+export function weekNumber(dayNumber: number): number {
+  // Day 0 (1 January 1970) was a Thursday, so shift by 3 to make weeks start on Monday.
+  return Math.floor((dayNumber + 3) / 7);
+}
+
 export function questsFor(dayNumber: number): QuestDef[] {
-  const start = dayNumber % DAILY_POOL.length;
-  return [0, 1, 2].map((i) => DAILY_POOL[(start + i) % DAILY_POOL.length]!).concat(WEEKLY);
+  return [...dailyQuests(dayNumber), ...weeklyQuests(dayNumber)];
+}
+
+/** A season pass: levels earned with season XP from matches and quests. */
+export interface Season {
+  id: number;
+  name: string;
+  /** When it ends, in ms. Season XP stops counting after this. */
+  ends: number;
+  levels: number;
+  xpPerLevel: number;
+}
+
+export const SEASON: Season = {
+  id: 0,
+  name: 'Season 0',
+  // Through Christmas Day, everywhere in the world.
+  ends: Date.UTC(2026, 11, 26, 12, 0, 0),
+  levels: 50,
+  xpPerLevel: 200,
+};
+
+export type SeasonReward = { level: number; sparks: number } | { level: number; cosmetic: string };
+
+/** Every third level pays Sparks. Every other level unlocks a cosmetic, ending with Smite at 50. */
+export const SEASON_REWARDS: SeasonReward[] = Array.from({ length: SEASON.levels }, (_, i) => {
+  const level = i + 1;
+  if (level % 3 === 0) return { level, sparks: 50 + level * 5 };
+  const item = COSMETICS.find((c) => c.season?.id === SEASON.id && c.season.level === level);
+  return { level, cosmetic: item!.id };
+});
+
+export const SEASON_XP = { win: 60, loss: 25, kill: 5 } as const;
+
+export function seasonXpForMatch(won: boolean, kills: number): number {
+  return (won ? SEASON_XP.win : SEASON_XP.loss) + kills * SEASON_XP.kill;
+}
+
+export function seasonLevel(xp: number): { level: number; into: number; need: number; maxed: boolean } {
+  const level = Math.min(SEASON.levels, Math.floor(Math.max(0, xp) / SEASON.xpPerLevel));
+  const maxed = level >= SEASON.levels;
+  return { level, into: maxed ? SEASON.xpPerLevel : Math.max(0, xp) - level * SEASON.xpPerLevel, need: SEASON.xpPerLevel, maxed };
+}
+
+export function seasonActive(now: number): boolean {
+  return now < SEASON.ends;
 }
 
 export function utcDayNumber(now: number): number {

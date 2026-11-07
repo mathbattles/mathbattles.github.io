@@ -1,4 +1,4 @@
-import { MathKeys, useMathKeys } from './MathKeys';
+import { FunctionPicker, MathKeys, useMathKeys } from './MathKeys';
 import {
   ParseError,
   RuleError,
@@ -154,6 +154,7 @@ function FunctionBox(props: {
         />
         <button class="primary fire" data-sfx="none" disabled={props.disabled || !props.expr.trim() || !!bad} onClick={props.onFire}>{props.fireLabel ?? 'Fire'}</button>
       </div>
+      <FunctionPicker input={box} value={props.expr} onChange={props.onExpr} disabled={props.disabled} />
       {keys.on && <MathKeys input={box} mode={props.mode} value={props.expr} onChange={props.onExpr} disabled={props.disabled} typing={keys.typing} setTyping={keys.setTyping} />}
       {props.expr.trim() && !bad && <Tex expr={props.expr} prefix={modeLabel(props.mode)} />}
       {(bad || props.error) && <p class="error" role="alert">{bad?.message ?? props.error}</p>}

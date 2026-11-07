@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'preact/hooks';
 import { runDemo } from '../render/demo';
 import { Stage } from '../render/stage';
-import { cosmeticValue, currentQuests, profile } from '../store';
+import { cosmeticValue, profile } from '../store';
+import { QuestsPanel } from './Season';
 import { TopBar } from './Shared';
 
 /** The hero is the game itself: a real shot traced by the real simulation. */
@@ -34,15 +35,16 @@ function HeroDemo() {
 
 const MODES = [
   { href: '#/campaign', name: 'Campaign', text: 'Puzzles that teach you, from lines to y″.' },
-  { href: '#/daily', name: 'Daily Challenge', text: 'One map for everyone today. Fewest shots wins.' },
+  { href: '#/maps', name: 'Custom maps', text: 'Build your own maps, share them, and play other people’s.' },
   { href: '#/practice', name: 'Free Play', text: 'No timer, with a preview of your curve.' },
   { href: '#/ranked', name: 'Ranked', text: 'One-on-one for a place on the ladder.' },
   { href: '#/learn', name: 'Learn', text: 'A full course, from your first shot to winning matches.' },
   { href: '#/shop', name: 'Shop', text: 'Spend Sparks on hats, trails, and obstacles.' },
+  { href: '#/inventory', name: 'Inventory', text: 'Everything you own, and how rare it is.' },
+  { href: '#/friends', name: 'Friends', text: 'Add friends, start a party, and play together.' },
 ];
 
 export function Menu() {
-  const quests = currentQuests();
   const newPlayer = Object.keys(profile.stars).length === 0 && profile.matches === 0;
   return (
     <div class="page">
@@ -64,15 +66,7 @@ export function Menu() {
           <a class="menu-item" href={m.href}><strong>{m.name}</strong><span>{m.text}</span></a>
         ))}
       </div>
-      <div class="sheet" style={{ marginTop: 16 }}>
-        <h3>Quests</h3>
-        {quests.map((q) => (
-          <div class="row" style={{ justifyContent: 'space-between' }}>
-            <span class={q.paid ? 'ok' : ''}>{q.text}</span>
-            <span>{q.progress}/{q.goal}, {q.reward} Sparks</span>
-          </div>
-        ))}
-      </div>
+      <QuestsPanel />
       <p class="muted" style={{ marginTop: 16 }}>
         <span class="phone-only"><a href="#/settings">Settings</a>{' '}<a href="#/leaderboard">Leaderboard</a>{' '}</span><a href="#/privacy">Privacy</a>{' '}Inspired by Graphwar and Math Wars. Not affiliated with either.
       </p>

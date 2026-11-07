@@ -1,4 +1,5 @@
 import type { Dir, ShotMode } from './constants';
+import type { MapDef } from './maps';
 import type { MatchKind, MatchState, PlayerSetup, ShotRecord } from './rules';
 
 export interface RoomSettings {
@@ -6,6 +7,8 @@ export interface RoomSettings {
   mode: ShotMode;
   soldiers: number;
   showFunctions: boolean;
+  /** A player-made map for the next match, or none for a random one. */
+  map?: MapDef | null;
 }
 
 export interface Seat {
@@ -27,7 +30,7 @@ export interface ChatLine {
 }
 
 export type ClientMsg =
-  | { t: 'join'; name: string; token: string; idToken?: string | null; hat?: string }
+  | { t: 'join'; name: string; token: string; idToken?: string | null; hat?: string; spectate?: boolean }
   | { t: 'leave' }
   | { t: 'settings'; settings: Partial<RoomSettings> }
   | { t: 'team'; team: 1 | 2 }
@@ -42,7 +45,7 @@ export type ClientMsg =
 
 export type ServerMsg =
   | { t: 'welcome'; you: string; code: string }
-  | { t: 'lobby'; host: string; seats: Seat[]; settings: RoomSettings; ranked: boolean; inMatch: boolean }
+  | { t: 'lobby'; host: string; seats: Seat[]; settings: RoomSettings; ranked: boolean; inMatch: boolean; spectators: number }
   | { t: 'match'; state: MatchState; setups: PlayerSetup[]; deadline: number; serverNow: number }
   | { t: 'shot'; shot: ShotRecord; state: MatchState; deadline: number; serverNow: number }
   | { t: 'update'; state: MatchState; deadline: number; serverNow: number }

@@ -1,4 +1,5 @@
 import type { MatchConfig, MatchEvent, MatchState, PlayerSetup } from './rules';
+import { cleanMap } from './maps';
 import { createMatch, currentPlayer, fire, removePlayer, skipTurn } from './rules';
 
 /**
@@ -186,10 +187,27 @@ export function encodeReplay(replay: Replay): string {
   const { config, setups } = replay;
   const w = new Writer();
   w.byte(2);
-  w.byte(KINDS.indexOf(config.kind) | (MODES.indexOf(config.mode) << 1) | ((config.soldiers - 1) << 3));
+  const map = config.map ? cleanMap(config.map) : null;
+  w.byte(KINDS.indexOf(config.kind) | (MODES.indexOf(config.mode) << 1) | ((config.soldiers - 1) << 3) | (map ? 0x20 : 0));
   // Seeds are whole numbers. Store the sign separately so negative seeds work too.
   const seed = Math.trunc(config.seed);
   w.uint(Math.abs(seed) * 2 + (seed < 0 ? 1 : 0));
+  // A custom map travels inside the link, so anyone can watch without having the map.
+  if (map) {
+    w.text(map.name);
+    w.uint(map.circles.length);
+    for (const c of map.circles) {
+      w.uint(c.x);
+      w.uint(c.y);
+      w.uint(c.r);
+    }
+    w.uint(map.spawns.length);
+    for (const sp of map.spawns) {
+      w.uint(sp.x);
+      w.uint(sp.y);
+      w.byte(sp.team);
+    }
+  }
   w.byte(setups.length);
   for (const s of setups) {
     const level = s.isBot ? Math.max(0, BOT_LEVEL_CODES.indexOf(s.botLevel ?? '')) : 0;
@@ -223,6 +241,14 @@ function decodeV2(bytes: Uint8Array): Replay {
   const soldiers = ((flags >> 3) & 3) + 1;
   const rawSeed = r.uint();
   const seed = rawSeed % 2 === 1 ? -(rawSeed - 1) / 2 : rawSeed / 2;
+  let map: MatchConfig['map'];
+  if (flags & 0x20) {
+    const name = r.text();
+    const circles = Array.from({ length: Math.min(r.uint(), 100) }, () => ({ x: r.uint(), y: r.uint(), r: r.uint() }));
+    const spawns = Array.from({ length: Math.min(r.uint(), 40) }, () => ({ x: r.uint(), y: r.uint(), team: (r.byte() === 2 ? 2 : 1) as 1 | 2 }));
+    map = cleanMap({ name, circles, spawns }) ?? undefined;
+    if (!map) throw new Error('Bad map');
+  }
   const count = r.byte();
   if (count < 2 || count > 10) throw new Error('Bad player count');
   const setups: PlayerSetup[] = [];
@@ -236,7 +262,7 @@ function decodeV2(bytes: Uint8Array): Replay {
       ...(isBot ? { isBot: true, botLevel: BOT_LEVEL_CODES[(f >> 2) & 3] } : {}),
     });
   }
-  const config: MatchConfig = { kind, mode, soldiers, seed };
+  const config: MatchConfig = { kind, mode, soldiers, seed, ...(map ? { map } : {}) };
   const total = r.uint();
   if (total > MAX_REPLAY_ACTIONS) throw new Error('Too many actions');
   const actions: ReplayAction[] = [];

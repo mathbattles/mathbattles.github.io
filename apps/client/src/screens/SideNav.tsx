@@ -1,4 +1,6 @@
 import type { ComponentChildren } from 'preact';
+import { useAuth } from '../auth';
+import { isAdminName } from './Admin';
 
 interface Tab {
   path: string;
@@ -44,6 +46,7 @@ const SECTIONS: { name: string; icon: () => ComponentChildren; tone: string; tab
       { path: '/online', label: 'Play Online' },
       { path: '/ranked', label: 'Ranked' },
       { path: '/local', label: 'Bots and Friends' },
+      { path: '/friends', label: 'Friends' },
     ],
   },
   {
@@ -52,9 +55,9 @@ const SECTIONS: { name: string; icon: () => ComponentChildren; tone: string; tab
     tone: 'var(--blue)',
     tabs: [
       { path: '/practice', label: 'Free Play' },
-      { path: '/daily', label: 'Daily Challenge' },
       { path: '/learn', label: 'Learn' },
       { path: '/campaign', label: 'Campaign' },
+      { path: '/maps', label: 'Custom Maps' },
     ],
   },
   {
@@ -63,6 +66,7 @@ const SECTIONS: { name: string; icon: () => ComponentChildren; tone: string; tab
     tone: 'var(--violet)',
     tabs: [
       { path: '/shop', label: 'Shop' },
+      { path: '/inventory', label: 'Inventory' },
       { path: '/leaderboard', label: 'Leaderboard' },
       { path: '/profile', label: 'Profile' },
       { path: '/settings', label: 'Settings' },
@@ -72,7 +76,8 @@ const SECTIONS: { name: string; icon: () => ComponentChildren; tone: string; tab
 
 function isActive(tab: string, path: string): boolean {
   if (tab === '/') return path === '/';
-  if (tab === '/online') return path.startsWith('/online') || path.startsWith('/room');
+  if (tab === '/online') return path.startsWith('/online') || path.startsWith('/room') || path.startsWith('/watch');
+  if (tab === '/maps') return path.startsWith('/maps') || path.startsWith('/map/');
   if (tab === '/campaign') return path.startsWith('/campaign') || path.startsWith('/level');
   if (tab === '/leaderboard') return path.startsWith('/leaderboard') || path.startsWith('/player');
   return path.startsWith(tab);
@@ -80,11 +85,16 @@ function isActive(tab: string, path: string): boolean {
 
 /** The left tab bar on larger screens. Phones use the menu page's tiles instead. */
 export function SideNav({ path }: { path: string }) {
+  const auth = useAuth();
+  // The admin page shows up only for the game's owner.
+  const sections = isAdminName(auth.username)
+    ? SECTIONS.map((s) => (s.name === 'Misc' ? { ...s, tabs: [...s.tabs, { path: '/admin', label: 'Admin' }] } : s))
+    : SECTIONS;
   return (
     <nav class="sidenav" aria-label="Main">
       <a class="brand" href="#/">MathBattles.io</a>
       <a class={`tab home ${path === '/' ? 'active' : ''}`} href="#/" aria-current={path === '/' ? 'page' : undefined}>Home</a>
-      {SECTIONS.map((s) => {
+      {sections.map((s) => {
         const open = s.tabs.some((t) => isActive(t.path, path));
         const Icon = s.icon;
         return (

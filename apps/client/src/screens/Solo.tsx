@@ -1,8 +1,7 @@
-import { DAILY_MAX_SHOTS, ACHIEVEMENTS, dailyPuzzle, decodeReplay, utcDayNumber, type Replay } from '@mathbattles/sim';
+import { ACHIEVEMENTS, decodeReplay, type Replay } from '@mathbattles/sim';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { CHAPTERS, LEVELS, buildLevel, levelUnlocked, parFor, starsFor } from '../content/campaign';
 import { ReplaySession, SoloSession } from '../game/session';
-import { fetchDaily, submitDaily, type DailyEntry } from '../net/api';
 import { grantAchievement, profile, saveProfile, setStars } from '../store';
 import { go, modeName } from '../util';
 import { GameView } from './GameView';
@@ -90,76 +89,6 @@ export function LevelScreen({ id }: { id: string }) {
             {result.cleared && next && <button class="primary" onClick={() => go(`/level/${next.id}`)}>Next level</button>}
             <button class={result.cleared ? '' : 'primary'} onClick={() => setAttempt(attempt + 1)}>Retry</button>
             <a class="btn" href="#/campaign">All levels</a>
-          </div>
-        </div>
-      )}
-    />
-  );
-}
-
-export function Daily() {
-  const day = utcDayNumber(Date.now());
-  const [attempt, setAttempt] = useState(1);
-  const session = useMemo(() => new SoloSession(dailyPuzzle(day), { maxShots: DAILY_MAX_SHOTS }), [attempt]);
-  const [done, setDone] = useState<null | { cleared: boolean; score: number; shots: number; chars: number; note: string }>(null);
-  const [board, setBoard] = useState<DailyEntry[] | null>(null);
-
-  useEffect(() => {
-    void fetchDaily(day).then(setBoard);
-  }, []);
-
-  useEffect(() => {
-    setDone(null);
-    session.onFinish = (o) => {
-      const shots = o.shots.length;
-      const chars = o.shots.reduce((a, s) => a + s.expr.replace(/\s/g, '').length, 0);
-      const score = shots * 1000 + chars;
-      let note = '';
-      if (o.cleared) {
-        const prev = profile.daily[String(day)];
-        if (!prev) {
-          profile.dailiesDone++;
-          profile.sparks += 40;
-          if (profile.dailiesDone >= 3) grantAchievement('daily-3');
-        }
-        if (!prev || score < prev.score) profile.daily[String(day)] = { score, shots, chars };
-        saveProfile();
-        void submitDaily(day, o.shots).then((r) => {
-          setBoard(r.board ?? null);
-          if (r.error) setDone((d) => d && { ...d, note: r.error! });
-        });
-        note = prev ? '' : 'You earned 40 Sparks.';
-      }
-      setDone({ cleared: o.cleared, score, shots, chars, note });
-    };
-  }, [session]);
-
-  const best = profile.daily[String(day)];
-  const date = new Date(day * 86_400_000).toISOString().slice(0, 10);
-  return (
-    <GameView
-      key={attempt}
-      session={session}
-      header={<span class="row"><a class="btn small" href="#/">Menu</a><strong>Daily Challenge, {date}</strong></span>}
-      soloInfo={`${modeName(session.state.config.mode)}. Up to ${DAILY_MAX_SHOTS} shots. Fewer shots and shorter functions score better.`}
-      extraSide={
-        <div class="mini">
-          <h3>Today's best</h3>
-          {best && <p>You: {best.shots} shots, {best.chars} characters</p>}
-          {board === null ? <p class="muted">The leaderboard is offline. Your score is saved on this device.</p> : board.length === 0 ? <p class="muted">No scores yet today. Be the first.</p> : (
-            <ol style={{ margin: 0, paddingLeft: 20 }}>
-              {board.slice(0, 10).map((e) => <li>{e.name}: {e.shots} shots, {e.chars} chars</li>)}
-            </ol>
-          )}
-        </div>
-      }
-      result={done && (
-        <div class="sheet result-card">
-          <h2>{done.cleared ? `Cleared in ${done.shots} ${done.shots === 1 ? 'shot' : 'shots'}` : 'Out of shots'}</h2>
-          <p>{done.cleared ? `${done.chars} characters in total. ${done.note}` : 'Try again with a new plan. The puzzle stays the same all day.'}</p>
-          <div class="row">
-            <button class="primary" onClick={() => setAttempt(attempt + 1)}>Try again</button>
-            <a class="btn" href="#/">Back to menu</a>
           </div>
         </div>
       )}

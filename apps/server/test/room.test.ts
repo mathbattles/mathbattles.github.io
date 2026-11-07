@@ -43,6 +43,41 @@ function startDuel() {
 const connFor = (seatId: string, h: ReturnType<typeof harness>) =>
   [...h.room.seats.find((s) => s.id === seatId)!.conns][0]!;
 
+describe('watching and custom maps', () => {
+  it('lets people watch a match without a seat, and nothing they send changes it', () => {
+    const h = startDuel();
+    h.room.join('w', 'g:watcher', { t: 'join', name: 'Watcher', token: 'watcher', spectate: true });
+    expect(h.room.seats.some((s) => s.name === 'Watcher')).toBe(false);
+    expect(h.last('w', 'welcome')).toMatchObject({ you: '' });
+    expect(h.last('w', 'match')).toBeTruthy();
+    expect(h.last('a', 'lobby')).toMatchObject({ spectators: 1 });
+    const before = JSON.stringify(h.room.state);
+    h.room.handle('w', { t: 'fire', expr: 'x/3' });
+    h.room.handle('w', { t: 'chat', text: 'hello' });
+    h.room.handle('w', { t: 'start' });
+    expect(JSON.stringify(h.room.state)).toBe(before);
+    // Watchers get each shot like players do.
+    const cur = currentPlayer(h.room.state!);
+    h.room.handle(connFor(cur.id, h), { t: 'fire', expr: 'x/7' });
+    expect(h.last('w', 'shot')).toBeTruthy();
+    h.room.disconnect('w');
+    expect(h.last('a', 'lobby')).toMatchObject({ spectators: 0 });
+  });
+  it('plays the host’s custom map, and only offers y = f(x)', () => {
+    const h = harness();
+    h.join('a', '1');
+    h.join('b', '2');
+    const map = { name: 'Wall', circles: [{ x: 385, y: 225, r: 60 }], spawns: [{ x: 80, y: 225, team: 1 as const }, { x: 690, y: 225, team: 2 as const }] };
+    h.room.handle('a', { t: 'settings', settings: { map, mode: 'ode2' } });
+    expect(h.room.settings.mode).toBe('fn');
+    expect(h.room.settings.map).toEqual(map);
+    h.room.handle('b', { t: 'ready', ready: true });
+    h.room.handle('a', { t: 'start' });
+    expect(h.room.state!.circles).toEqual(map.circles);
+    expect(h.room.state!.soldiers.map((s) => [s.x, s.y]).sort()).toEqual([[690, 225], [80, 225]]);
+  });
+});
+
 describe('room lobby', () => {
   it('assigns host, balances teams, and hides tokens', () => {
     const h = harness();

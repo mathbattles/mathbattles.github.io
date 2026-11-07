@@ -37,6 +37,12 @@ export const authState: AuthState = {
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
 
+/** Calls fn whenever sign-in state changes, outside of components. */
+export function subscribeAuth(fn: () => void): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
 export function useAuth(): AuthState {
   const [, force] = useState(0);
   useEffect(() => {

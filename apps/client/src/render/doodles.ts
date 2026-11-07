@@ -193,6 +193,108 @@ export function drawHat(c: CanvasRenderingContext2D, hat: string, x: number, y: 
       c.closePath();
       c.fill();
       break;
+    case 'beanie':
+      c.fillStyle = '#3f8cff';
+      c.beginPath();
+      c.arc(0, 2, 7.5, Math.PI, 0);
+      c.closePath();
+      c.fill();
+      c.stroke();
+      c.fillStyle = '#ffffff';
+      c.fillRect(-7.8, -0.5, 15.6, 3.2);
+      c.strokeRect(-7.8, -0.5, 15.6, 3.2);
+      c.fillStyle = '#ff5d7e';
+      c.beginPath();
+      c.arc(0, -6.8, 2.6, 0, Math.PI * 2);
+      c.fill();
+      break;
+    case 'earmuffs':
+      c.strokeStyle = '#5b5f73';
+      c.lineWidth = 2;
+      c.beginPath();
+      c.arc(0, 5, 8.6, Math.PI * 1.05, Math.PI * 1.95);
+      c.stroke();
+      c.fillStyle = '#ff8cc2';
+      c.strokeStyle = color;
+      c.lineWidth = 1.2;
+      for (const sx of [-8.4, 8.4]) {
+        c.beginPath();
+        c.arc(sx, 6.5, 3.4, 0, Math.PI * 2);
+        c.fill();
+        c.stroke();
+      }
+      break;
+    case 'elf':
+      c.fillStyle = '#2f9e44';
+      c.beginPath();
+      c.moveTo(-6, 1);
+      c.quadraticCurveTo(1, -8, 11, -8);
+      c.quadraticCurveTo(4, -3, 6, 1);
+      c.closePath();
+      c.fill();
+      c.stroke();
+      c.fillStyle = '#d62f3a';
+      c.fillRect(-7, -1, 14, 3);
+      c.fillStyle = '#ffd33d';
+      c.beginPath();
+      c.arc(11.5, -8, 2, 0, Math.PI * 2);
+      c.fill();
+      break;
+    case 'chef':
+      c.fillStyle = '#ffffff';
+      c.strokeStyle = '#9aa0b4';
+      c.lineWidth = 1.2;
+      c.beginPath();
+      c.arc(-4, -5, 4, 0, Math.PI * 2);
+      c.arc(4, -5, 4, 0, Math.PI * 2);
+      c.moveTo(4, -8);
+      c.arc(0, -8, 4.5, 0, Math.PI * 2);
+      c.fill();
+      c.stroke();
+      c.fillRect(-5.5, -4, 11, 5);
+      c.strokeRect(-5.5, -4, 11, 5);
+      break;
+    case 'reindeer':
+      c.strokeStyle = '#8a5a2b';
+      c.lineWidth = 1.8;
+      c.lineCap = 'round';
+      c.beginPath();
+      for (const sx of [-1, 1]) {
+        c.moveTo(3.5 * sx, 1);
+        c.lineTo(6.5 * sx, -8);
+        c.moveTo(5.5 * sx, -4.5);
+        c.lineTo(9.5 * sx, -6);
+        c.moveTo(6.5 * sx, -8);
+        c.lineTo(9 * sx, -11);
+        c.moveTo(6.5 * sx, -8);
+        c.lineTo(4.5 * sx, -11);
+      }
+      c.stroke();
+      break;
+    case 'astronaut':
+      // A clear bubble around the whole head.
+      c.fillStyle = 'rgba(170, 215, 255, 0.28)';
+      c.strokeStyle = '#c9d6ea';
+      c.lineWidth = 1.8;
+      c.beginPath();
+      c.arc(0, 6, 10.5, 0, Math.PI * 2);
+      c.fill();
+      c.stroke();
+      c.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+      c.lineWidth = 1.4;
+      c.beginPath();
+      c.arc(0, 6, 8, Math.PI * 1.15, Math.PI * 1.45);
+      c.stroke();
+      c.strokeStyle = '#c9d6ea';
+      c.beginPath();
+      c.moveTo(3, -4);
+      c.lineTo(5, -9);
+      c.stroke();
+      c.fillStyle = '#ff5d7e';
+      c.beginPath();
+      c.arc(5, -9.5, 1.6, 0, Math.PI * 2);
+      c.fill();
+      break;
     default:
       break;
   }

@@ -239,6 +239,85 @@ const fruit: Painter = (c, x, y, r, i) => {
   }
 };
 
+const snowballs: Painter = (c, x, y, r, i) => {
+  c.fillStyle = '#f4f8ff';
+  c.fillRect(x - r, y - r, r * 2, r * 2);
+  c.fillStyle = '#dbe6f5';
+  scatter(x, y, r, i, 8, (px, py, k) => dot(c, px, py, 1.2 + (k % 3) * 0.8));
+  rimAndShine(c, x, y, r, '#a9bcd6', '#ffffffcc');
+};
+
+const ORNAMENT = ['#d62f3a', '#e0a400', '#2f9e44', '#2f6fdb', '#9b4fd6'];
+
+const ornaments: Painter = (c, x, y, r, i) => {
+  const color = ORNAMENT[i % ORNAMENT.length]!;
+  c.fillStyle = color;
+  c.fillRect(x - r, y - r, r * 2, r * 2);
+  // A pale band with dots across the middle.
+  c.fillStyle = '#ffffffaa';
+  c.fillRect(x - r, y - r * 0.18, r * 2, r * 0.36);
+  c.fillStyle = color;
+  for (let k = -3; k <= 3; k++) dot(c, x + k * r * 0.28, y, Math.max(0.6, r * 0.06));
+  // The metal cap at the top.
+  c.fillStyle = '#d9c27a';
+  c.fillRect(x - r * 0.22, y - r, r * 0.44, r * 0.2);
+  rimAndShine(c, x, y, r, '#00000044', '#ffffffcc');
+};
+
+const GIFT = [
+  { box: '#d62f3a', ribbon: '#ffd33d' },
+  { box: '#2f9e44', ribbon: '#ffffff' },
+  { box: '#2f6fdb', ribbon: '#ff8cc2' },
+  { box: '#9b4fd6', ribbon: '#ffd33d' },
+];
+
+const gifts: Painter = (c, x, y, r, i) => {
+  const look = GIFT[i % GIFT.length]!;
+  c.fillStyle = look.box;
+  c.fillRect(x - r, y - r, r * 2, r * 2);
+  c.fillStyle = look.ribbon;
+  const band = Math.max(2, r * 0.22);
+  c.fillRect(x - band / 2, y - r, band, r * 2);
+  c.fillRect(x - r, y - band / 2, r * 2, band);
+  c.beginPath();
+  c.ellipse(x - r * 0.22, y - band, r * 0.24, r * 0.14, -0.6, 0, Math.PI * 2);
+  c.ellipse(x + r * 0.22, y - band, r * 0.24, r * 0.14, 0.6, 0, Math.PI * 2);
+  c.fill();
+  rimAndShine(c, x, y, r, '#00000040', '#ffffff66');
+};
+
+const SPRINKLES = ['#ffd33d', '#4fb3ff', '#57d977', '#ffffff', '#b57bff'];
+
+const donuts: Painter = (c, x, y, r, i) => {
+  c.fillStyle = '#d9a066';
+  c.fillRect(x - r, y - r, r * 2, r * 2);
+  // Icing with a wavy edge.
+  c.fillStyle = i % 2 ? '#ff8fb8' : '#6b3e26';
+  c.beginPath();
+  for (let a = 0; a <= 24; a++) {
+    const ang = (a / 24) * Math.PI * 2;
+    const rr = r * (0.8 + Math.sin(a * 2.3 + i) * 0.05);
+    if (a === 0) c.moveTo(x + Math.cos(ang) * rr, y + Math.sin(ang) * rr);
+    else c.lineTo(x + Math.cos(ang) * rr, y + Math.sin(ang) * rr);
+  }
+  c.fill();
+  scatter(x, y, r * 0.75, i, 6, (px, py, k) => {
+    if (Math.hypot(px - x, py - y) < r * 0.36) return;
+    c.strokeStyle = SPRINKLES[k % SPRINKLES.length]!;
+    c.lineWidth = Math.max(1, r * 0.06);
+    c.beginPath();
+    c.moveTo(px - 2, py - 1);
+    c.lineTo(px + 2, py + 1);
+    c.stroke();
+  });
+  // The hole is solid in the game, so it's drawn as dough in shadow.
+  c.fillStyle = '#9a6a38';
+  dot(c, x, y, Math.max(1, r * 0.26));
+  c.fillStyle = '#7a5129';
+  dot(c, x, y + r * 0.05, Math.max(0.6, r * 0.18));
+  rimAndShine(c, x, y, r, '#8a5a2b', '#ffffff55');
+};
+
 export const OBSTACLE_STYLES: Record<string, ObstacleStyle> = {
   candy: { paint: candy, debris: (i) => CANDY[i % CANDY.length]!.fill },
   bw: { paint: blackWhite, debris: (i) => (i % 2 === 0 ? '#161616' : '#e8e8e8') },
@@ -248,6 +327,10 @@ export const OBSTACLE_STYLES: Record<string, ObstacleStyle> = {
   pool: { paint: pool, debris: (i) => POOL[i % 8]! },
   neon: { paint: neon, debris: (i) => NEON[i % NEON.length]! },
   fruit: { paint: fruit, debris: (i) => FRUIT[i % FRUIT.length]!.flesh },
+  snowballs: { paint: snowballs, debris: () => '#e6eef9' },
+  ornaments: { paint: ornaments, debris: (i) => ORNAMENT[i % ORNAMENT.length]! },
+  gifts: { paint: gifts, debris: (i) => GIFT[i % GIFT.length]!.box },
+  donuts: { paint: donuts, debris: () => '#d9a066' },
 };
 
 export function obstacleStyle(id: string | undefined): ObstacleStyle {

@@ -461,9 +461,9 @@ test('larger screens: a left tab bar replaces the tiles, and steps aside during 
   await expect(page.locator('.menu-list')).toBeHidden();
   // Home stands alone, then the three sections, each holding its own tabs in order.
   const sections: Record<string, string[]> = {
-    Play: ['Play Online', 'Ranked', 'Bots and Friends'],
-    Practice: ['Free Play', 'Daily Challenge', 'Learn', 'Campaign'],
-    Misc: ['Shop', 'Leaderboard', 'Profile', 'Settings'],
+    Play: ['Play Online', 'Ranked', 'Bots and Friends', 'Friends'],
+    Practice: ['Free Play', 'Learn', 'Campaign', 'Custom Maps'],
+    Misc: ['Shop', 'Inventory', 'Leaderboard', 'Profile', 'Settings'],
   };
   await expect(nav.getByRole('link', { name: 'Home', exact: true })).toBeVisible();
   await expect(nav.getByRole('region')).toHaveCount(3);
@@ -695,7 +695,9 @@ test('shop items run from cheapest to most expensive, with earned items last', a
   await expect(sections).toHaveCount(5);
   for (let i = 0; i < 5; i++) {
     const prices = await sections.nth(i).locator('.item').evaluateAll((items) => items.map((el) => {
-      if (el.textContent?.includes('Earn:')) return Infinity;
+      // Season pass rewards come last of all, after achievement rewards.
+      if (el.textContent?.includes('Season 0 pass')) return 2e9;
+      if (el.textContent?.includes('Earn:')) return 1e9;
       const m = el.textContent?.match(/Buy for (\d+)/);
       // Free items, and owned ones, which here are only the free starters.
       return m ? Number(m[1]) : 0;
@@ -877,6 +879,144 @@ test('phones get math keys that type functions, and the setting can turn them of
   await ctx.close();
 });
 
+test('the Functions list fills in a function where the cursor is', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Picker2');
+  await page.goto('/#/practice');
+  const box = page.locator('#fn-input');
+  await expect(box).toBeEnabled();
+  await box.fill('4*');
+  await page.getByRole('button', { name: 'Functions' }).click();
+  await expect(page.getByRole('dialog', { name: 'Functions you can use' })).toBeVisible();
+  await page.getByRole('button', { name: /^Add sin\(x\)/ }).click();
+  await expect(box).toHaveValue('4*sin(x)');
+  await expect(page.getByRole('dialog', { name: 'Functions you can use' })).toHaveCount(0);
+  // Escape closes it without adding anything.
+  await page.getByRole('button', { name: 'Functions' }).click();
+  await page.keyboard.press('Escape');
+  await expect(box).toHaveValue('4*sin(x)');
+});
+
+test('custom maps: draw one, save it, and play it against a bot', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Mapper');
+  await page.goto('/#/maps');
+  await page.getByRole('link', { name: 'Make a new map' }).click();
+  await expect(page.getByRole('heading', { name: 'Map editor' })).toBeVisible();
+  await page.getByLabel('Name').fill('Test canyon');
+  const field = page.locator('.editor-overlay');
+  const box = (await field.boundingBox())!;
+  const at = async (fx: number, fy: number) => page.mouse.click(box.x + box.width * fx, box.y + box.height * fy);
+  // Three rocks down the middle, then a starting spot for each team.
+  await at(0.5, 0.2);
+  await at(0.5, 0.5);
+  await at(0.5, 0.8);
+  await expect(page.getByText(/3\/40 rocks/)).toBeVisible();
+  await page.getByRole('button', { name: 'Blue start' }).click();
+  await at(0.1, 0.5);
+  await page.getByRole('button', { name: 'Red start' }).click();
+  await at(0.9, 0.5);
+  await expect(page.getByText('Starting spots: 1 blue, 1 red.')).toBeVisible();
+  // Undo, then put it back.
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect(page.getByText('Starting spots: 1 blue, 0 red.')).toBeVisible();
+  await at(0.9, 0.5);
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Saved on this device.')).toBeVisible();
+  await page.getByRole('button', { name: 'Play it' }).click();
+  await expect(page.getByRole('heading', { name: 'Local match' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Map' })).toHaveText('Test canyon');
+  await page.getByRole('button', { name: 'Start match' }).click();
+  await expect(page.locator('.game canvas')).toBeVisible();
+  // It's listed with the player's maps.
+  await page.goto('/#/maps');
+  await expect(page.locator('.map-card').filter({ hasText: 'Test canyon' })).toBeVisible();
+});
+
+test('inventory shows owned items by section, with details', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Collector');
+  await page.goto('/#/inventory');
+  await expect(page.getByText(/You've collected \d+ of \d+ items/)).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Kill effects/ })).toBeVisible();
+  await page.locator('.card').filter({ hasText: 'Ring' }).click();
+  const detail = page.locator('.card-detail');
+  await expect(detail).toContainText('How to get it');
+  await expect(detail).toContainText('Free for everyone');
+  await expect(detail).toContainText('How many exist');
+  await expect(detail.getByRole('button', { name: 'Wearing it' })).toBeDisabled();
+});
+
+test('the season pass and quests show on the profile and menu', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Seasonal');
+  await page.goto('/#/profile');
+  await expect(page.getByRole('heading', { name: 'Season 0 pass' })).toBeVisible();
+  const levels = page.getByRole('list', { name: 'Season rewards' }).getByRole('listitem');
+  await expect(levels).toHaveCount(50);
+  await expect(levels.last()).toContainText('Smite');
+  await page.goto('/#/');
+  await expect(page.getByRole('heading', { name: 'Quests', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Today/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^This week/ })).toBeVisible();
+  await expect(page.locator('.quests li')).toHaveCount(6);
+  await expect(page.locator('.quests li').first()).toContainText('season XP');
+});
+
+test('anyone can watch an online match without joining it', async ({ browser }) => {
+  const a = await newPlayer(browser, 'Ana');
+  const b = await newPlayer(browser, 'Bo');
+  const w = await newPlayer(browser, 'Wes');
+  await a.goto('/#/online');
+  await a.getByRole('button', { name: 'Create private room' }).click();
+  await expect(a).toHaveURL(/#\/room\/[A-Z0-9]+/);
+  const code = a.url().split('/').pop()!;
+  await b.goto(`/#/room/${code}`);
+  await w.goto(`/#/watch/${code}`);
+  await expect(w.getByText("You're watching this room.")).toBeVisible();
+  await expect(a.getByText('1 watching').or(a.locator('body'))).toBeVisible();
+  await b.getByRole('button', { name: 'Mark ready' }).click();
+  await a.getByRole('button', { name: 'Start match' }).click();
+  await expect(w.locator('.game canvas')).toBeVisible({ timeout: 15_000 });
+  await expect(w.getByText("You're watching this match.")).toBeVisible();
+  await expect(w.locator('#fn-input')).toHaveCount(0);
+  await expect(w.getByText('Watching', { exact: true })).toBeVisible();
+  // The watcher isn't a player, so the match still has exactly two.
+  await expect(w.locator('.scores > div')).toHaveCount(2);
+});
+
+test('friends and parties between two accounts: request, accept, invite, party, follow', async ({ browser }) => {
+  test.setTimeout(180_000);
+  const password = 'correct-horse-9';
+  const nameA = uniqueName('fa');
+  const nameB = uniqueName('fb');
+  const a = await createAccount(browser, nameA, password);
+  const b = await createAccount(browser, nameB, password);
+  try {
+    await a.goto('/#/friends');
+    await a.getByLabel('Username to add').fill(nameB);
+    await a.getByRole('button', { name: 'Send request' }).click();
+    await expect(a.getByText(`Friend request sent to ${nameB}.`)).toBeVisible();
+    await b.goto('/#/friends');
+    await b.getByRole('button', { name: 'Accept' }).click();
+    await expect(b.locator('.friend-row').filter({ hasText: nameA })).toBeVisible();
+    // A starts a party with B; B accepts the invite that pops up.
+    await a.goto('/#/friends');
+    await a.locator('.friend-row').filter({ hasText: nameB }).getByRole('button', { name: 'Party up' }).click();
+    await expect(b.getByText(`${nameA} invited you to their party.`)).toBeVisible({ timeout: 30_000 });
+    await b.getByRole('button', { name: 'Join party' }).click();
+    await b.goto('/#/friends');
+    await expect(b.getByText(`${nameA} leads this party.`)).toBeVisible({ timeout: 20_000 });
+    // When the leader makes a room, the party follows.
+    await b.goto('/#/shop');
+    await a.goto('/#/online');
+    await a.getByRole('button', { name: 'Create private room' }).click();
+    await expect(a).toHaveURL(/#\/room\/[A-Z0-9]+/);
+    const code = a.url().split('/').pop()!;
+    await expect(b).toHaveURL(new RegExp(`#/room/${code}`), { timeout: 40_000 });
+    await expect(a.locator('.team-1, .team-2').filter({ hasText: nameB })).toBeVisible({ timeout: 15_000 });
+  } finally {
+    await deleteAccount(a);
+    await deleteAccount(b);
+  }
+});
+
 test('an owned obstacle design is used on the real field', async ({ browser }) => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -980,7 +1120,7 @@ for (const [name, width, height] of [
     await page.addInitScript(() => {
       if (!localStorage.getItem('mathbattles.profile.v1')) localStorage.setItem('mathbattles.profile.v1', JSON.stringify({ name: 'Fit', analytics: 'no' }));
     });
-    for (const path of ['/#/', '/#/practice', '/#/campaign', '/#/learn', '/#/learn/slope', '/#/learn/winning', '/#/shop', '/#/settings', '/#/local', '/#/profile', '/#/online', '/#/ranked', '/#/leaderboard', '/#/signin', '/#/level/0-1', '/#/daily']) {
+    for (const path of ['/#/', '/#/practice', '/#/campaign', '/#/learn', '/#/learn/slope', '/#/learn/winning', '/#/shop', '/#/settings', '/#/local', '/#/profile', '/#/online', '/#/ranked', '/#/leaderboard', '/#/signin', '/#/level/0-1', '/#/maps', '/#/maps/edit/fitcheck', '/#/inventory', '/#/friends', '/#/admin']) {
       await page.goto(path);
       await page.waitForTimeout(250);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);

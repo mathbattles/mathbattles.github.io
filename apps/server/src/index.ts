@@ -1,17 +1,14 @@
 import {
-  DAILY_MAX_SHOTS,
   ParseError,
   RuleError,
   START_RATING,
   MAX_STORED_REPLAY,
   eloDelta,
   matchRecordFor,
-  scoreDaily,
   seasonReset,
   usernameProblem,
   utcDayNumber,
   type ClientMsg,
-  type DailyShot,
   type MatchRecord,
   type MatchState,
   type PlayerSetup,
@@ -21,6 +18,7 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { MessageBucket, callerIp, overLimit } from './limits';
 import { cleanName, isBlockedName } from './moderation';
 import { RoomCore } from './roomCore';
+import { handleSocial, socialCleanup } from './social';
 
 export interface Env {
   ROOM: DurableObjectNamespace;
@@ -157,6 +155,11 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
   const tooMany = () => json({ error: 'Too many requests. Wait a few minutes and try again.' }, 429);
   const limitIp = async (name: string, max: number, windowMs: number) => !!ip && overLimit(env.DB, `${name}:${ip}`, max, windowMs);
 
+  if (['social', 'friends', 'invites', 'party', 'maps', 'cosmetics', 'ranked', 'admin'].includes(parts[1] ?? '')) {
+    const claims = await verifyClaims(env, bearer(req));
+    const handled = await handleSocial({ db: env.DB, req, parts, json, uid: claims?.uid ?? null, newCode, ip });
+    if (handled) return handled;
+  }
   switch (parts[1]) {
     case 'health':
       return json({ ok: true });
@@ -171,7 +174,7 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
       }
       const cutoff = Date.now() - 10 * MINUTE;
       const { results } = await env.DB.prepare(
-        'SELECT code, players, kind, mode FROM rooms WHERE is_public = 1 AND in_lobby = 1 AND players > 0 AND players < 10 AND updated_at > ? ORDER BY updated_at DESC LIMIT 30',
+        'SELECT code, players, kind, mode, in_lobby AS inLobby FROM rooms WHERE is_public = 1 AND players > 0 AND updated_at > ? ORDER BY in_lobby DESC, updated_at DESC LIMIT 40',
       ).bind(cutoff).all();
       return json(results);
     }
@@ -179,39 +182,6 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
     case 'leaderboard': {
       const { results } = await env.DB.prepare('SELECT name, rating FROM players WHERE games > 0 ORDER BY rating DESC LIMIT 100').all();
       return json(results);
-    }
-
-    case 'daily': {
-      const day = Number(parts[2]);
-      const today = utcDayNumber(Date.now());
-      if (!Number.isInteger(day) || day > today || day < today - 2) return json({ error: 'That day is not available' }, 400);
-      const board = async () =>
-        (await env.DB.prepare('SELECT name, shots, chars FROM daily_scores WHERE day = ? ORDER BY score ASC LIMIT 50').bind(day).all()).results;
-      if (req.method === 'POST') {
-        // A run started just before midnight UTC still counts for the day it started.
-        if (day < today - 1) return json({ error: 'That Daily Challenge has ended, so this score was not sent.' }, 400);
-        if (await limitIp('daily', 30, HOUR)) return tooMany();
-        const body = await readJson<{ name?: string; guest?: string; shots?: DailyShot[] }>(req);
-        if (!body || !Array.isArray(body.shots) || body.shots.length === 0 || body.shots.length > DAILY_MAX_SHOTS) return json({ error: 'Bad score' }, 400);
-        const claims = await verifyClaims(env, bearer(req));
-        const who = claims?.uid ?? `g:${String(body.guest ?? '').slice(0, 64)}`;
-        if (who === 'g:') return json({ error: 'Bad score' }, 400);
-        let result;
-        try {
-          result = scoreDaily(day, body.shots.map((s) => ({ expr: String(s?.expr ?? ''), angle: typeof s?.angle === 'number' ? s.angle : undefined })));
-        } catch (e) {
-          if (e instanceof ParseError || e instanceof RuleError) return json({ error: 'Bad score' }, 400);
-          throw e;
-        }
-        if (!result.cleared) return json({ error: 'That run did not clear the map' }, 400);
-        await env.DB.prepare(
-          `INSERT INTO daily_scores (day, who, name, score, shots, chars) VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT (day, who) DO UPDATE SET name = excluded.name, score = excluded.score, shots = excluded.shots, chars = excluded.chars
-           WHERE excluded.score < daily_scores.score`,
-        ).bind(day, who, await publicName(env, claims?.uid ?? null, body.name), result.score, result.shots, result.chars).run();
-        return json({ board: await board() });
-      }
-      return json(await board());
     }
 
     case 'profile': {
@@ -317,6 +287,13 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
           env.DB.prepare('DELETE FROM players WHERE uid = ?').bind(uid),
           env.DB.prepare('DELETE FROM daily_scores WHERE who = ?').bind(uid),
           env.DB.prepare('DELETE FROM match_history WHERE uid = ?').bind(uid),
+          // Friends, presence, invites, party places and shared maps go too.
+          env.DB.prepare('DELETE FROM friends WHERE uid = ? OR friend_uid = ?').bind(uid, uid),
+          env.DB.prepare('DELETE FROM presence WHERE uid = ?').bind(uid),
+          env.DB.prepare('DELETE FROM invites WHERE from_uid = ? OR to_uid = ?').bind(uid, uid),
+          env.DB.prepare('DELETE FROM party_members WHERE uid = ?').bind(uid),
+          env.DB.prepare('DELETE FROM parties WHERE leader = ? AND id NOT IN (SELECT party_id FROM party_members)').bind(uid),
+          env.DB.prepare('DELETE FROM maps WHERE uid = ?').bind(uid),
         ]);
         return json({ ok: true });
       }
@@ -381,9 +358,10 @@ export default {
     // Each job stands alone, so one failing can't stop the others.
     const jobs: Promise<unknown>[] = [
       env.DB.prepare('DELETE FROM rooms WHERE updated_at < ?').bind(now.getTime() - 86_400_000).run(),
-      env.DB.prepare('DELETE FROM daily_scores WHERE day < ?').bind(utcDayNumber(now.getTime()) - 7).run(),
+      env.DB.prepare('DELETE FROM daily_scores').run(),
       env.DB.prepare('DELETE FROM reports WHERE created_at < ?').bind(now.getTime() - 90 * 86_400_000).run(),
       env.DB.prepare('DELETE FROM rate_limits WHERE window_start < ?').bind(now.getTime() - 86_400_000).run(),
+      ...socialCleanup(env.DB, now.getTime()),
     ];
     if (now.getUTCDate() === 1 && now.getUTCMonth() % 3 === 0) {
       const period = `${now.getUTCFullYear()}-${now.getUTCMonth() + 1}`;

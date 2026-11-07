@@ -1,3 +1,5 @@
+import { savedMaps, takePendingMap } from '../maps';
+import type { MapDef } from '@mathbattles/sim';
 import { Dropdown } from './Dropdown';
 import {
   BOT_LEVELS,
@@ -60,6 +62,9 @@ export function LocalSetup() {
   const [kind, setKind] = useState<MatchKind>('teams');
   const [mode, setMode] = useState<ShotMode>('fn');
   const [soldiers, setSoldiers] = useState(1);
+  // A map chosen in the editor or the maps page arrives here, ready to play.
+  const [map, setMap] = useState<MapDef | null>(() => takePendingMap());
+  const maps = savedMaps();
   const [seats, setSeats] = useState<SeatDraft[]>([
     { name: profile.name, team: 1, kind: 'human' },
     { name: BOT_NAMES[0]!, team: 2, kind: 'normal' },
@@ -84,14 +89,21 @@ export function LocalSetup() {
               <button class={kind === 'teams' ? 'on' : ''} onClick={() => setKind('teams')}>Teams</button>
               <button class={kind === 'ffa' ? 'on' : ''} onClick={() => setKind('ffa')}>Free-for-all</button>
             </div>
-            <div class="row" role="group" aria-label="Function type" style={{ marginBottom: 10 }}>
-              {(['fn', 'ode1', 'ode2'] as ShotMode[]).map((m) => (
-                <button class={mode === m ? 'on' : ''} onClick={() => setMode(m)}>{modeName(m)}</button>
-              ))}
-            </div>
             <div class="row" style={{ marginBottom: 10 }}>
               <span class="dd-field">Soldiers each{' '}
                 <Dropdown label="Soldiers each" value={soldiers} onChange={setSoldiers} options={[1, 2, 3, 4].map((n) => ({ value: n, label: String(n) }))} />
+              </span>
+              <span class="dd-field">Map{' '}
+                <Dropdown
+                  label="Map"
+                  value={map ? (maps.find((m) => m.map.name === map.name && m.map.circles.length === map.circles.length)?.id ?? 'chosen') : 'random'}
+                  onChange={(v) => setMap(v === 'random' ? null : v === 'chosen' ? map : maps.find((m) => m.id === v)?.map ?? null)}
+                  options={[
+                    { value: 'random', label: 'Random map' },
+                    ...(map && !maps.some((m) => m.map.name === map.name && m.map.circles.length === map.circles.length) ? [{ value: 'chosen', label: map.name }] : []),
+                    ...maps.map((m) => ({ value: m.id, label: m.map.name })),
+                  ]}
+                />
               </span>
             </div>
           </div>
@@ -119,12 +131,12 @@ export function LocalSetup() {
         </div>
       </div>
       {!valid && <p class="error">Each team needs at least one player.</p>}
-      <button class="primary" disabled={!valid} onClick={() => setPlaying({ key: 1, config: { kind, mode, soldiers, seats } })}>Start match</button>
+      <button class="primary" disabled={!valid} onClick={() => setPlaying({ key: 1, config: { kind, mode, soldiers, seats, map } })}>Start match</button>
     </div>
   );
 }
 
-function makeSession(c: { kind: MatchKind; mode: ShotMode; soldiers: number; seats: SeatDraft[] }) {
+function makeSession(c: { kind: MatchKind; mode: ShotMode; soldiers: number; seats: SeatDraft[]; map?: MapDef | null }) {
   const setups: PlayerSetup[] = c.seats.map((s, i) => ({
     id: `p${i}`,
     name: s.name.trim() || `Player ${i + 1}`,
@@ -132,7 +144,7 @@ function makeSession(c: { kind: MatchKind; mode: ShotMode; soldiers: number; sea
     isBot: s.kind !== 'human',
     botLevel: s.kind !== "human" ? s.kind : undefined,
   }));
-  return new LocalSession({ kind: c.kind, mode: c.mode, soldiers: c.soldiers, seed: (Math.random() * 2 ** 31) >>> 0 }, setups);
+  return new LocalSession({ kind: c.kind, mode: c.mode, soldiers: c.soldiers, seed: (Math.random() * 2 ** 31) >>> 0, ...(c.map ? { map: c.map } : {}) }, setups);
 }
 
 function LocalGame(props: { config: Parameters<typeof makeSession>[0]; onAgain: () => void }) {
@@ -198,9 +210,6 @@ export function Practice() {
       header={
         <span class="row">
           <a class="btn small" href="#/">Menu</a>
-          {(['fn', 'ode1', 'ode2'] as ShotMode[]).map((m) => (
-            <button class={`small ${mode === m ? 'on' : ''}`} onClick={() => setMode(m)}>{modeName(m)}</button>
-          ))}
           <button class="small" onClick={() => setKey(key + 1)}>New map</button>
         </span>
       }

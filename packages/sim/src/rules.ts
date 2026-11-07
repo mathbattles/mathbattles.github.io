@@ -1,5 +1,6 @@
 import { BLAST_R, DEFAULT_SOLDIERS, MAX_PLAYERS, MAX_SOLDIERS, PLANE_H, PLANE_W, SOLDIER_R, type Dir, type ShotMode } from './constants';
 import { generateCircles, placeSoldiers, type SpawnSlot } from './map';
+import { cleanMap, type MapDef } from './maps';
 import { Rng } from './rng';
 import { Terrain, type Circle } from './terrain';
 import { simulateShot, type EndReason, type ShotResult } from './trajectory';
@@ -11,6 +12,8 @@ export interface MatchConfig {
   mode: ShotMode;
   soldiers: number;
   seed: number;
+  /** A player-made map. Without one, the seed makes a random map. */
+  map?: MapDef;
 }
 
 export interface PlayerSetup {
@@ -90,9 +93,19 @@ export function createMatch(config: MatchConfig, setups: PlayerSetup[]): MatchSt
     }
   }
   if (setups.length > MAX_PLAYERS) throw new RuleError(`A match can have at most ${MAX_PLAYERS} players.`);
+  // A custom map's spawns go to its teams in order. Any soldiers left over are placed at random.
+  const map = config.map ? cleanMap(config.map) : null;
+  const fixed: ({ x: number; y: number } | undefined)[] = [];
+  if (map) {
+    const free = [...map.spawns];
+    for (const slot of slots) {
+      const i = free.findIndex((s) => slot.side === null || s.team - 1 === slot.side);
+      fixed.push(i >= 0 ? free.splice(i, 1)[0] : undefined);
+    }
+  }
   let placed;
   try {
-    placed = placeSoldiers(rng, generateCircles(rng), slots);
+    placed = placeSoldiers(rng, map ? map.circles : generateCircles(rng), slots, fixed);
   } catch {
     throw new RuleError('Too many soldiers for one map. Use fewer players or soldiers.');
   }

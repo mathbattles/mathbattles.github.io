@@ -1,4 +1,4 @@
-import type { DailyShot, MatchRecord } from '@mathbattles/sim';
+import type { MapDef, MatchRecord } from '@mathbattles/sim';
 
 /** Set after the server is first deployed. */
 const PROD_SERVER = 'https://mathbattles-server.mathbattles.workers.dev';
@@ -6,11 +6,6 @@ const PROD_SERVER = 'https://mathbattles-server.mathbattles.workers.dev';
 export const SERVER_URL: string = (import.meta.env.VITE_SERVER_URL as string | undefined) ?? PROD_SERVER;
 export const WS_URL = SERVER_URL.replace(/^http/, 'ws');
 
-export interface DailyEntry {
-  name: string;
-  shots: number;
-  chars: number;
-}
 export interface LeaderRow {
   name: string;
   rating: number;
@@ -20,6 +15,8 @@ export interface RoomInfo {
   players: number;
   kind: string;
   mode: string;
+  /** 1 while waiting in the lobby, 0 during a match. */
+  inLobby: number;
 }
 
 async function call<T>(path: string, init?: RequestInit, token?: string | null): Promise<T | null> {
@@ -49,24 +46,6 @@ export function createRoom(isPublic: boolean) {
 }
 export function fetchLeaderboard() {
   return call<LeaderRow[]>('/api/leaderboard');
-}
-export function fetchDaily(day: number) {
-  return call<DailyEntry[]>(`/api/daily/${day}`);
-}
-export async function submitDaily(day: number, shots: DailyShot[]): Promise<{ board?: DailyEntry[]; error?: string }> {
-  const { profile } = await import('../store');
-  const { authState } = await import('../auth');
-  try {
-    const res = await fetch(`${SERVER_URL}/api/daily/${day}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...(authState.token ? { authorization: `Bearer ${authState.token}` } : {}) },
-      body: JSON.stringify({ name: profile.name, guest: profile.guestToken, shots }),
-    });
-    const body = (await res.json()) as { board?: DailyEntry[]; error?: string };
-    return res.ok ? { board: body.board } : { error: body.error ?? "The score wasn't accepted." };
-  } catch {
-    return { error: 'The leaderboard is offline, so this score is saved on this device only.' };
-  }
 }
 export function pullProfile(token: string) {
   return call<{ profile: unknown; rating: number; username: string | null }>('/api/profile', undefined, token);
@@ -128,3 +107,67 @@ export function uploadHistory(token: string, record: MatchRecord) {
 export function fetchPlayer(name: string) {
   return call<PlayerPage>(`/api/player/${encodeURIComponent(name)}`);
 }
+
+/** Sends a request with the signed-in player's token, and returns the server's answer or its error. */
+async function authed<T>(path: string, init?: RequestInit): Promise<{ data?: T; error?: string }> {
+  const { authState } = await import('../auth');
+  if (!authState.token) return { error: 'Sign in to an account to use this.' };
+  try {
+    const res = await fetch(`${SERVER_URL}${path}`, {
+      ...init,
+      headers: { ...(init?.body ? { 'content-type': 'application/json' } : {}), authorization: `Bearer ${authState.token}` },
+    });
+    const body = (await res.json()) as T & { error?: string };
+    return res.ok ? { data: body } : { error: body.error ?? 'Something went wrong. Try again.' };
+  } catch {
+    return { error: "The game server isn't reachable. Try again soon." };
+  }
+}
+const post = <T>(path: string, data: unknown) => authed<T>(path, { method: 'POST', body: JSON.stringify(data) });
+
+export interface FriendInfo {
+  name: string;
+  online: boolean;
+  room: string | null;
+  inMatch: boolean;
+}
+export interface SocialState {
+  me: string | null;
+  friends: FriendInfo[];
+  incoming: string[];
+  outgoing: string[];
+  party: { id: string; leader: string; isLeader: boolean; members: { name: string; online: boolean; leader: boolean }[]; room: string | null } | null;
+  invites: { id: number; from: string; kind: 'room' | 'party'; target: string }[];
+}
+/** Says which room this player is in, and gets friends, party and invites back. */
+export const pingSocial = (room: string | null) => post<SocialState>('/api/social', { room });
+export const friendAction = (action: 'request' | 'accept' | 'decline' | 'cancel' | 'remove', name: string) => post<{ ok: boolean; message?: string }>('/api/friends', { action, name });
+export const inviteToRoom = (name: string, room: string) => post<{ ok: boolean; message?: string }>('/api/invites', { action: 'room', name, room });
+export const dismissInvite = (id: number) => post<{ ok: boolean }>('/api/invites', { action: 'dismiss', id });
+export const partyAction = (action: 'create' | 'invite' | 'join' | 'leave' | 'kick', extra: { name?: string; id?: string } = {}) =>
+  post<{ ok: boolean; message?: string }>('/api/party', { action, ...extra });
+
+export interface SharedMap {
+  code: string;
+  name: string;
+  author: string;
+  plays: number;
+  at?: number;
+  map: MapDef;
+}
+export const listMaps = (sort: 'new' | 'popular') => call<SharedMap[]>(`/api/maps?sort=${sort}`);
+export const myMaps = () => authed<SharedMap[]>('/api/maps?mine=1');
+export const fetchMap = (code: string) => call<SharedMap>(`/api/maps/${encodeURIComponent(code)}`);
+export const publishMap = (map: MapDef) => post<{ code: string }>('/api/maps', { map });
+export const deleteSharedMap = (code: string) => authed<{ ok: boolean }>(`/api/maps/${encodeURIComponent(code)}`, { method: 'DELETE' });
+export const countMapPlay = (code: string) => call(`/api/maps/${encodeURIComponent(code)}/play`, { method: 'POST', body: '{}' });
+
+export const cosmeticCounts = () => call<{ players: number; counts: Record<string, number> }>('/api/cosmetics');
+export const myRanked = () => authed<{ rating: number; games: number; place: number | null; total: number; season: number }>('/api/ranked');
+
+export interface AdminData {
+  stats: Record<string, number>;
+  reports: { id: number; code: string; reported: string; text: string; created_at: number }[];
+}
+export const adminData = () => authed<AdminData>('/api/admin');
+export const adminDeleteReport = (id: number) => authed<{ ok: boolean }>(`/api/admin/reports/${id}`, { method: 'DELETE' });

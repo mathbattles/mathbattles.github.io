@@ -4,7 +4,12 @@ import {
   PLANE_H,
   PLANE_W,
   createSolo,
-  dailyPuzzle,
+  SEASON,
+  SEASON_REWARDS,
+  cleanMap,
+  dailyQuests,
+  weeklyQuests,
+  seasonLevel,
   decodeReplay,
   encodeReplay,
   fire,
@@ -12,7 +17,6 @@ import {
   makeReplay,
   replayStart,
   applyAction,
-  scoreDaily,
   skipTurn,
   soloCleared,
   soloHitFriend,
@@ -31,8 +35,9 @@ import { CHAPTERS, LEVELS, buildLevel, starsFor } from '../src/content/campaign'
 import { exprToTex } from '../src/util';
 
 describe('campaign', () => {
-  it('has about 40 levels across every chapter', () => {
-    expect(LEVELS.length).toBeGreaterThanOrEqual(40);
+  it('has plenty of levels across every chapter', () => {
+    expect(LEVELS.length).toBeGreaterThanOrEqual(28);
+    expect(LEVELS.every((l) => l.mode === 'fn')).toBe(true);
     expect(new Set(LEVELS.map((l) => l.chapter)).size).toBe(CHAPTERS.length);
     expect(new Set(LEVELS.map((l) => l.id)).size).toBe(LEVELS.length);
   });
@@ -65,19 +70,100 @@ describe('campaign', () => {
   });
 });
 
-describe('daily challenge', () => {
-  it('builds the same puzzle for the same day and a different one the next', () => {
-    expect(dailyPuzzle(20000)).toEqual(dailyPuzzle(20000));
-    expect(dailyPuzzle(20000)).not.toEqual(dailyPuzzle(20001));
+describe('season 0 pass', () => {
+  it('has 50 levels, ends after Christmas, and finishes with Smite', () => {
+    expect(SEASON.name).toBe('Season 0');
+    expect(SEASON_REWARDS).toHaveLength(50);
+    expect(new Date(SEASON.ends).toISOString().slice(0, 10)).toBe('2026-12-26');
+    const last = SEASON_REWARDS[49]!;
+    expect('cosmetic' in last && last.cosmetic).toBe('blast-smite');
+    expect(COSMETICS.find((c) => c.id === 'blast-smite')?.kind).toBe('blast');
   });
-  it('scores by replaying the shots', () => {
-    const s = scoreDaily(20000, [{ expr: '0' }, { expr: 'x/2' }]);
-    expect(s.shots).toBe(2);
-    expect(s.chars).toBe(4);
-    expect(s.score).toBe(2004);
+  it('gives one or two cosmetic levels for every Sparks level', () => {
+    const kinds = SEASON_REWARDS.map((r) => ('sparks' in r ? 's' : 'c')).join('');
+    expect(kinds).not.toMatch(/ss/);
+    expect(kinds).not.toMatch(/ccc/);
+    const sparks = SEASON_REWARDS.filter((r) => 'sparks' in r).length;
+    const cosmetics = SEASON_REWARDS.length - sparks;
+    expect(cosmetics).toBeGreaterThanOrEqual(sparks);
+    expect(cosmetics).toBeLessThanOrEqual(sparks * 2 + 2);
   });
-  it('rejects bad math on submission', () => {
-    expect(() => scoreDaily(20000, [{ expr: 'hack(' }])).toThrow();
+  it('rewards real, unique cosmetics that the shop never sells', () => {
+    const ids = SEASON_REWARDS.flatMap((r) => ('cosmetic' in r ? [r.cosmetic] : []));
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) {
+      const c = COSMETICS.find((x) => x.id === id);
+      expect(c, id).toBeTruthy();
+      expect(c!.season?.id).toBe(0);
+      expect(c!.cost).toBe(0);
+    }
+    // Every season obstacle design has a painter.
+    for (const c of COSMETICS.filter((x) => x.kind === 'obstacle')) expect(OBSTACLE_STYLES[c.value], c.id).toBeTruthy();
+  });
+  it('turns XP into levels', () => {
+    expect(seasonLevel(0)).toMatchObject({ level: 0, into: 0 });
+    expect(seasonLevel(SEASON.xpPerLevel * 3 + 10)).toMatchObject({ level: 3, into: 10 });
+    expect(seasonLevel(1e9)).toMatchObject({ level: 50, maxed: true });
+  });
+});
+
+describe('quests', () => {
+  it('change every day, and every week on Monday', () => {
+    const day = 20402; // A Monday.
+    expect(new Date(day * 86_400_000).getUTCDay()).toBe(1);
+    expect(dailyQuests(day).map((q) => q.id)).not.toEqual(dailyQuests(day + 1).map((q) => q.id));
+    const week = weeklyQuests(day).map((q) => q.id);
+    for (let d = day; d < day + 7; d++) expect(weeklyQuests(d).map((q) => q.id)).toEqual(week);
+    expect(weeklyQuests(day + 7).map((q) => q.id)).not.toEqual(week);
+    expect(weeklyQuests(day - 1).map((q) => q.id)).not.toEqual(week);
+  });
+  it('pay Sparks and season XP', () => {
+    for (let d = 20000; d < 20014; d++) {
+      for (const q of [...dailyQuests(d), ...weeklyQuests(d)]) {
+        expect(q.reward).toBeGreaterThan(0);
+        expect(q.seasonXp).toBeGreaterThan(0);
+      }
+      expect(dailyQuests(d)).toHaveLength(3);
+      expect(weeklyQuests(d)).toHaveLength(3);
+    }
+  });
+});
+
+describe('custom maps', () => {
+  const map = {
+    name: 'Twin rocks',
+    circles: [{ x: 300, y: 200, r: 40 }, { x: 470, y: 250, r: 40 }],
+    spawns: [{ x: 60, y: 60, team: 1 as const }, { x: 700, y: 380, team: 2 as const }],
+  };
+  const setups = [{ id: 'a', name: 'Ana', team: 1 as const }, { id: 'b', name: 'Bo', team: 2 as const }];
+  it('use the map’s rocks and starting spots', () => {
+    const m = createMatch({ kind: 'teams', mode: 'fn', soldiers: 2, seed: 9, map }, setups);
+    expect(m.circles).toEqual(map.circles);
+    const a = m.players.find((p) => p.id === 'a')!;
+    const b = m.players.find((p) => p.id === 'b')!;
+    // Each team's first soldier stands on its spot. The rest are placed at random on their side.
+    expect(a.soldierIds.map((id) => m.soldiers[id]!).some((s) => s.x === 60 && s.y === 60)).toBe(true);
+    expect(b.soldierIds.map((id) => m.soldiers[id]!).some((s) => s.x === 700 && s.y === 380)).toBe(true);
+    for (const id of a.soldierIds) expect(m.soldiers[id]!.x).toBeLessThan(385);
+  });
+  it('travel inside replay links and rebuild the same match', () => {
+    const m = createMatch({ kind: 'teams', mode: 'fn', soldiers: 1, seed: 4, map }, setups);
+    fire(m, currentPlayer(m).id, { expr: 'x/9' });
+    fire(m, currentPlayer(m).id, { expr: '-x/5' });
+    const back = decodeReplay(encodeReplay(makeReplay(m, setups)))!;
+    expect(back.config.map).toEqual(map);
+    const again = replayStart(back);
+    for (const action of back.actions) applyAction(again, action);
+    expect(again.holes).toEqual(m.holes);
+    expect(again.soldiers.map((s) => [s.x, s.y, s.alive])).toEqual(m.soldiers.map((s) => [s.x, s.y, s.alive]));
+  });
+  it('are checked before use', () => {
+    expect(cleanMap(map)).toEqual(map);
+    expect(cleanMap({ ...map, circles: Array.from({ length: 41 }, () => ({ x: 1, y: 1, r: 10 })) })).toBeNull();
+    expect(cleanMap({ ...map, circles: [{ x: 'a', y: 1, r: 10 }] })).toBeNull();
+    expect(cleanMap(null)).toBeNull();
+    // Out-of-range values are pulled back into the field instead of rejected.
+    expect(cleanMap({ name: '', circles: [{ x: 9999, y: -5, r: 500 }], spawns: [] })).toEqual({ name: 'Custom map', circles: [{ x: 770, y: 0, r: 120 }], spawns: [] });
   });
 });
 
