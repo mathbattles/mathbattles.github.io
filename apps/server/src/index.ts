@@ -262,12 +262,16 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
       if (await limitIp('resolve', 30, 15 * MINUTE)) return tooMany();
       if (await overLimit(env.DB, `resolve-name:${name}`, 10, 15 * MINUTE)) return tooMany();
       const row = await env.DB.prepare('SELECT login_email FROM usernames WHERE username_lc = ?').bind(name).first<{ login_email: string | null }>();
-      // Always ask Firebase, so response time doesn't reveal which usernames have an email.
-      const email = row?.login_email ?? `nobody${PRIVATE_DOMAIN}`;
+      if (!row?.login_email) {
+        // Accounts without a real email have nothing to check here. Wait about as long as a real
+        // check takes, so response time doesn't reveal which usernames have an email.
+        await new Promise((r) => setTimeout(r, 150 + Math.random() * 250));
+        return fail();
+      }
       const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${env.FIREBASE_API_KEY}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email, password, returnSecureToken: false }),
+        body: JSON.stringify({ email: row.login_email, password, returnSecureToken: false }),
       });
       if (res.status === 429) return tooMany();
       if (!res.ok) {
@@ -275,7 +279,7 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
         if (detail?.error?.message?.startsWith('TOO_MANY_ATTEMPTS')) return tooMany();
         return fail();
       }
-      return row?.login_email ? json({ email: row.login_email }) : fail();
+      return json({ email: row.login_email });
     }
 
     case 'report': {
