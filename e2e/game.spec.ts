@@ -829,7 +829,9 @@ test('the shot preview shows in a normal match, not just Free Play', async ({ br
   await page.getByRole('button', { name: 'Start match' }).click();
   const box = page.locator('#fn-input');
   await expect(box).toBeEnabled({ timeout: 20_000 });
-  await page.waitForTimeout(500);
+  // Names on the field change look when the game's font arrives, so let it load first.
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(1200);
   const field = page.locator('.game canvas');
   const before = await field.screenshot();
   await box.fill('x/3');
