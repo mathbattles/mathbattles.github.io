@@ -414,6 +414,21 @@ test('two brand-new level 1 accounts can play ranked, and ratings change', async
     await b.close();
     await expect(a.getByRole('heading', { name: 'You win' })).toBeVisible({ timeout: 60_000 });
     await expect(a.getByText(/Rating \+\d+/)).toBeVisible();
+
+    // The server saved it: it's in match history, watchable, and on the public player page.
+    await a.goto('/#/profile');
+    const row = a.locator('.match').first();
+    await expect(row).toContainText(`vs ${nameB}`, { timeout: 15_000 });
+    await expect(row).toContainText('Ranked');
+    await expect(row.locator('.rating-change')).toHaveText(/^\+\d+$/);
+    await expect(row.getByRole('link', { name: 'Watch' })).toBeVisible();
+    await a.goto(`/#/player/${nameA}`);
+    await expect(a.locator('.match').first()).toContainText(`vs ${nameB}`);
+    await a.goto('/#/leaderboard');
+    await a.getByRole('table').getByRole('link', { name: nameA }).click();
+    await expect(a.getByRole('heading', { name: nameA })).toBeVisible();
+    await a.getByRole('link', { name: 'Watch' }).first().click();
+    await expect(a.getByText('Replay', { exact: true })).toBeVisible();
   } finally {
     await removeAccount(nameA).catch(() => {});
     await removeAccount(nameB).catch(() => {});
