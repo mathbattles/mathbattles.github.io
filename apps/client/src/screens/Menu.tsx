@@ -35,9 +35,9 @@ function HeroDemo() {
 const MODES = [
   { href: '#/campaign', name: 'Campaign', text: 'Puzzles that teach you, from lines to y″.' },
   { href: '#/daily', name: 'Daily Challenge', text: 'One map for everyone today. Fewest shots wins.' },
-  { href: '#/practice', name: 'Practice', text: 'No timer, with a preview of your curve.' },
+  { href: '#/practice', name: 'Free Play', text: 'No timer, with a preview of your curve.' },
   { href: '#/ranked', name: 'Ranked', text: 'One-on-one for a place on the ladder.' },
-  { href: '#/learn', name: 'Learn', text: 'Every function, plus tricks for hard shots.' },
+  { href: '#/learn', name: 'Learn', text: 'A full course, from your first shot to winning matches.' },
   { href: '#/shop', name: 'Shop', text: 'Spend Sparks on hats, trails, and obstacles.' },
 ];
 

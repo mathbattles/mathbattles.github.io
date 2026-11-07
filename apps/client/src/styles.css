@@ -115,18 +115,64 @@ code { font-family: 'Cambria Math', 'STIX Two Text', Georgia, serif; font-style:
     background: var(--card);
     border-right: 2.5px solid var(--ink);
   }
-  .sidenav .brand { font-size: 1.25rem; font-weight: 800; text-decoration: none; padding: 2px 10px 10px; }
+  .sidenav .brand { font-size: 1.25rem; font-weight: 800; text-decoration: none; padding: 2px 10px 6px; }
   .sidenav .tab {
-    --tab: var(--ink);
-    display: flex; align-items: center; gap: 10px;
-    padding: 8px 10px; font-weight: 600; text-decoration: none;
+    display: block;
+    padding: 5px 10px; font-weight: 600; text-decoration: none;
     border: 2.5px solid transparent; border-radius: var(--wobble-2);
-    transition: transform .13s cubic-bezier(.3, 1.6, .5, 1), background-color .12s, border-color .12s, box-shadow .12s;
+    transition: transform .14s cubic-bezier(.3, 1.6, .5, 1), background-color .12s, border-color .12s, box-shadow .12s;
   }
-  .sidenav .tab i { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; background: var(--tab); border: 2px solid var(--ink); }
-  .sidenav .tab:hover { border-color: var(--ink); transform: translateX(3px) rotate(-.5deg); box-shadow: 2px 3px 0 var(--tab); }
+  .sidenav .tab:hover { border-color: var(--ink); transform: translateX(4px) rotate(-.6deg); box-shadow: 2px 3px 0 var(--tone, var(--yellow)); }
   .sidenav .tab:active { transform: translateX(1px) scale(.98); box-shadow: none; }
   .sidenav .tab.active { background: var(--yellow); color: var(--on-bright); border-color: var(--ink); font-weight: 800; }
+  .sidenav .tab.home { margin-bottom: 4px; }
+
+  /* A section lifts as one group when you move over it, and its icon comes alive. */
+  .nav-section {
+    position: relative; margin-top: 7px; padding: 4px 5px 6px;
+    border: 2.5px dashed transparent; border-radius: var(--wobble-2);
+    transition: transform .18s cubic-bezier(.3, 1.6, .5, 1), border-color .15s, background-color .15s, box-shadow .15s;
+  }
+  .nav-section:hover, .nav-section:focus-within {
+    border-color: var(--tone);
+    background: color-mix(in srgb, var(--tone) 12%, transparent);
+    transform: translate(1px, -1px) rotate(-.25deg);
+    box-shadow: 3px 4px 0 color-mix(in srgb, var(--tone) 55%, transparent);
+  }
+  .nav-section.open .nav-title span { text-decoration: underline; text-decoration-color: var(--tone); text-decoration-thickness: 3px; text-underline-offset: 3px; }
+  .nav-title { display: flex; align-items: center; gap: 8px; margin: 0 0 3px; padding: 1px 5px; font-size: 1.1rem; }
+  .nav-section .tab { font-size: .97rem; margin-left: 4px; }
+}
+
+.nav-icon { flex: 0 0 auto; width: 28px; height: 28px; overflow: visible; }
+.nav-icon path, .nav-icon circle { stroke: var(--ink); stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Play: a green arrow that leans forward and pulses. */
+.icon-play .arrow { fill: var(--green); transform-origin: 16px 16px; transition: transform .22s cubic-bezier(.3, 1.8, .5, 1); }
+.nav-section:hover .icon-play .arrow, .nav-section:focus-within .icon-play .arrow { transform: translateX(3px) scale(1.16); }
+.nav-section:hover .icon-play { animation: icon-pulse .9s ease-in-out .2s infinite; }
+@keyframes icon-pulse {
+  50% { transform: translateX(2px); }
+}
+
+/* Practice: a graph whose curve draws itself. */
+.icon-graph .axes { fill: none; }
+.icon-graph .curve { fill: none; stroke: var(--blue); stroke-dasharray: 1; stroke-dashoffset: 0; }
+.icon-graph .dot { fill: var(--pink); transform-origin: 27px 9.5px; transition: transform .2s cubic-bezier(.3, 1.8, .5, 1); }
+.nav-section:hover .icon-graph .curve, .nav-section:focus-within .icon-graph .curve { animation: draw-curve .75s ease-out; }
+.nav-section:hover .icon-graph .dot, .nav-section:focus-within .icon-graph .dot { transform: scale(1.4); }
+@keyframes draw-curve {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+
+/* Misc: a gear that turns. */
+.icon-gear .teeth { fill: var(--violet); }
+.icon-gear .hole { fill: var(--card); }
+.icon-gear .gear { transform-origin: 16px 16px; transition: transform .6s cubic-bezier(.3, 1.3, .5, 1); }
+.nav-section:hover .icon-gear .gear, .nav-section:focus-within .icon-gear .gear { transform: rotate(120deg); }
+
+@media (min-width: 1000px) {
   body.in-game .sidenav { display: none; }
 }
 .page.narrow { max-width: 520px; }
@@ -378,6 +424,57 @@ button.shot .hits { font-weight: 800; font-size: .82rem; }
   .shop-preview { grid-column: 2; grid-row: 1; top: 12px; }
   .shop-items { grid-column: 1; grid-row: 1; min-width: 0; }
 }
+/* Learn */
+.lesson { max-width: 880px; }
+.crumb { margin-bottom: 2px; font-size: .92rem; }
+.lesson-p { margin-top: .9em; }
+.lesson-h { margin-top: 1.1em; }
+.lesson-tip { background: color-mix(in srgb, var(--yellow) 28%, var(--card)); border-left: 5px solid var(--yellow); padding: 8px 12px; border-radius: 6px; font-weight: 600; overflow-wrap: anywhere; max-width: none; }
+.lesson-table { overflow-x: auto; margin: 12px 0; background: var(--card); border: 2px solid var(--ink); border-radius: 12px; padding: 6px; }
+.lesson-table td:first-child { white-space: nowrap; font-weight: 600; }
+@media (max-width: 600px) {
+  .lesson-table td:first-child { white-space: normal; overflow-wrap: anywhere; min-width: 7em; }
+}
+.lesson-box { background: var(--card); border: 2.5px solid var(--ink); border-radius: var(--wobble-2); padding: 14px; margin: 16px 0; transition: box-shadow .2s, border-color .2s; }
+.lesson-box.cleared { border-color: var(--good); box-shadow: 3px 4px 0 var(--green); }
+.lesson-box h3 { margin-bottom: .35em; }
+.box-note { margin-bottom: .6em; }
+.box-info, .positions { margin: 8px 0 0; font-size: .95rem; }
+.lesson-field { position: relative; }
+.lesson-field canvas { display: block; width: 100%; height: auto; border: 2.5px solid var(--ink); border-radius: 10px; cursor: crosshair; touch-action: pan-y; }
+.coords { position: absolute; right: 6px; top: 6px; background: var(--on-bright); color: #fff; padding: 1px 8px; border-radius: 6px; font-size: .85rem; pointer-events: none; font-variant-numeric: tabular-nums; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+button.chip { display: flex; flex-direction: column; align-items: flex-start; padding: 4px 10px; min-width: 0; max-width: 100%; font-weight: 400; text-align: left; }
+button.chip code { background: none; padding: 0; overflow-wrap: anywhere; white-space: normal; }
+button.chip small { opacity: .85; }
+.slider-expr { margin: 10px 0 6px; font-weight: 600; overflow-wrap: anywhere; }
+.sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 16px; }
+.slider { display: flex; flex-direction: column; gap: 2px; }
+.slider input { width: 100%; accent-color: var(--blue); height: 26px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.miss { margin: 8px 0 0; font-weight: 600; color: var(--error); }
+.hints { margin-top: 10px; }
+.hint { margin: 0 0 6px; background: color-mix(in srgb, var(--blue) 12%, transparent); padding: 4px 10px; border-radius: 8px; max-width: none; animation: route-in .22s ease-out both; }
+.quiz-options { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin-bottom: 8px; }
+.quiz-options button { text-align: left; font-weight: 400; }
+.quiz-options button.right { --fill: var(--green); --label: var(--on-bright); font-weight: 600; }
+.quiz-options button.wrong { --fill: var(--pink); --label: #fff; }
+.quiz p { margin: 0; }
+.lesson-foot { margin-top: 22px; }
+.lesson-foot .btn { max-width: 100%; }
+.learn-top .bar { margin-top: 8px; }
+.lesson-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.lesson-link {
+  display: block; text-decoration: none; padding: 8px 12px;
+  border: 2.5px solid var(--ink); border-radius: var(--wobble-2); background: var(--card);
+  transition: transform .13s cubic-bezier(.3, 1.6, .5, 1), box-shadow .13s;
+}
+.lesson-link:hover { transform: translate(-1px, -3px) rotate(-.4deg); box-shadow: 3px 5px 0 var(--blue); }
+.lesson-link small { display: block; color: var(--ink-soft); }
+.lesson-link.done { border-color: var(--good); }
+.lesson-link.done strong span { color: var(--good); }
+.lesson-link.next { background: color-mix(in srgb, var(--yellow) 30%, var(--card)); }
+
 /* Match history */
 .matches { list-style: none; margin: 0; padding: 0; max-height: 460px; overflow-y: auto; }
 .match { display: flex; align-items: center; gap: 10px; padding: 7px 4px; border-bottom: 1.5px solid var(--page-line); flex-wrap: wrap; }

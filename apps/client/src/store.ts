@@ -26,6 +26,8 @@ export interface Profile {
   questWeek: number;
   questProgress: Record<string, number>;
   questsPaid: string[];
+  /** Course exercises finished. */
+  learnDone: string[];
   lastWinDay: number;
   daily: Record<string, { score: number; shots: number; chars: number }>;
   dailiesDone: number;
@@ -83,6 +85,7 @@ function fresh(): Profile {
     questWeek: 0,
     questProgress: {},
     questsPaid: [],
+    learnDone: [],
     lastWinDay: 0,
     daily: {},
     dailiesDone: 0,
@@ -188,6 +191,12 @@ try {
   });
 } catch {
   /* no window here */
+}
+
+export function markLearned(id: string): void {
+  if (profile.learnDone.includes(id)) return;
+  profile.learnDone.push(id);
+  saveProfile();
 }
 
 export function cosmeticValue(kind: CosmeticKind): string {

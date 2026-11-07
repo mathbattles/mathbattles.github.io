@@ -7,9 +7,10 @@ import { useProfile } from './screens/Shared';
 import { Menu } from './screens/Menu';
 import { LocalSetup, Practice } from './screens/Local';
 import { Campaign, Daily, LevelScreen, ReplayScreen } from './screens/Solo';
-import { Learn, Leaderboard, Privacy, ProfileScreen, Settings, Shop } from './screens/Meta';
+import { Leaderboard, Privacy, ProfileScreen, Settings, Shop } from './screens/Meta';
 import { OnlineMenu, Ranked, Room } from './screens/Online';
 import { SignIn } from './screens/Account';
+import { Learn } from './screens/Learn';
 import { PlayerScreen } from './screens/History';
 import { SideNav } from './screens/SideNav';
 
@@ -41,7 +42,7 @@ function Router({ path }: { path: string }) {
     case 'ranked':
       if (!parts[1]) return parts[0] === 'ranked' ? <Ranked /> : <OnlineMenu />;
       return <Room key={parts[1]} code={parts[1]} ranked={parts[1].toUpperCase().startsWith('R-')} />;
-    case 'learn': return <Learn />;
+    case 'learn': return <Learn lessonId={parts[1]} />;
     case 'shop': return <Shop />;
     case 'profile': return <ProfileScreen />;
     case 'signin': return <SignIn />;

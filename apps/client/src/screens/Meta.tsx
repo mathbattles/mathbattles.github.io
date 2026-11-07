@@ -280,53 +280,6 @@ export function Leaderboard() {
   );
 }
 
-export function Learn() {
-  return (
-    <div class="page">
-      <TopBar title="Learn" />
-      <div class="sheet">
-        <h3>How a shot works</h3>
-        <p>The field runs from x = -25 to 25 and y of about -14.6 to 14.6. In team matches you always see your team on the left, and your shot travels right.</p>
-        <p>In <code>y =</code> mode, the game adds a constant so your curve passes through your soldier. Typing <code>x+5</code> and <code>x</code> gives the same shot, so only the shape matters.</p>
-        <p>A shot passes through every soldier it touches, teammates included, and stops at a rock, the edge of the field, or an invalid value. It carves a small hole where it ends.</p>
-      </div>
-      <div class="grid-2">
-        <div class="sheet">
-          <h3>What you can type</h3>
-          <table><tbody>
-            <tr><td><code>+ - * / ^</code></td><td>Math. <code>2x</code> also works.</td></tr>
-            <tr><td><code>sin cos tan</code></td><td>Trig, in radians</td></tr>
-            <tr><td><code>sqrt abs</code></td><td>Square root, absolute value</td></tr>
-            <tr><td><code>ln log exp</code></td><td>Natural log, base-10 log, e to the x</td></tr>
-            <tr><td><code>pi e</code></td><td>Constants</td></tr>
-            <tr><td><code>y</code>, <code>y'</code></td><td>Only in the y′ and y″ modes</td></tr>
-          </tbody></table>
-        </div>
-        <div class="sheet">
-          <h3>Why did my shot explode?</h3>
-          <p><strong>Invalid value:</strong> <code>sqrt(x)</code> fails at negative x, and you stand at negative x. Use <code>sqrt(abs(x))</code>.</p>
-          <p><strong>A jump:</strong> a sudden break in the curve ends the shot. Use a smooth step instead.</p>
-          <p><strong>Too long:</strong> <code>sin(100*x)</code> uses up its length quickly. Lower the frequency.</p>
-          <p><strong>Off the field:</strong> <code>x^2</code> reaches 100 at x = 10. Scale it: <code>x^2/50</code>.</p>
-        </div>
-      </div>
-      <div class="sheet">
-        <h3>Tricks</h3>
-        <table><tbody>
-          <tr><td><code>a/(1+exp(-k*(x-b)))</code></td><td>Smooth step of height a at x = b. Larger k makes it sharper. Add several together to climb walls.</td></tr>
-          <tr><td><code>a*sin(x/b)</code></td><td>Weave through a row of targets. a sets height and b sets width.</td></tr>
-          <tr><td><code>-(x-b)^2/c</code></td><td>Arc over a rock with the peak at x = b.</td></tr>
-          <tr><td><code>a*abs(x-b)</code></td><td>Change direction sharply at x = b.</td></tr>
-          <tr><td><code>y' = -y/3</code></td><td>Drifts toward y = 0 wherever you start.</td></tr>
-          <tr><td><code>y'' = -0.1</code></td><td>Gravity. Raise your angle and lob over cover.</td></tr>
-          <tr><td><code>y'' = -y'/4</code></td><td>Drag. The shot flattens out as it flies.</td></tr>
-        </tbody></table>
-      </div>
-      <a class="btn primary" href="#/practice">Try these in Practice</a>
-    </div>
-  );
-}
-
 export function Privacy() {
   return (
     <div class="page">

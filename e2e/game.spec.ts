@@ -453,19 +453,127 @@ test('larger screens: a left tab bar replaces the tiles, and steps aside during 
   const nav = page.getByRole('navigation', { name: 'Main' });
   await expect(nav).toBeVisible();
   await expect(page.locator('.menu-list')).toBeHidden();
-  for (const name of ['Campaign', 'Daily Challenge', 'Practice', 'Ranked', 'Learn', 'Shop', 'Profile', 'Settings']) {
-    await expect(nav.getByRole('link', { name, exact: true })).toBeVisible();
+  // Home stands alone, then the three sections, each holding its own tabs in order.
+  const sections: Record<string, string[]> = {
+    Play: ['Play Online', 'Ranked', 'Bots and Friends'],
+    Practice: ['Free Play', 'Daily Challenge', 'Learn', 'Campaign'],
+    Misc: ['Shop', 'Leaderboard', 'Profile', 'Settings'],
+  };
+  await expect(nav.getByRole('link', { name: 'Home', exact: true })).toBeVisible();
+  await expect(nav.getByRole('region')).toHaveCount(3);
+  for (const [section, tabs] of Object.entries(sections)) {
+    const group = nav.getByRole('region', { name: section });
+    await expect(group.getByRole('heading', { name: section })).toBeVisible();
+    await expect(group.locator('svg.nav-icon')).toBeVisible();
+    await expect(group.getByRole('link')).toHaveText(tabs);
   }
+  // Moving over a section brings it to life.
+  const play = nav.getByRole('region', { name: 'Play' });
+  const quiet = await play.evaluate((el) => getComputedStyle(el).borderTopColor);
+  await play.hover();
+  await expect.poll(() => play.evaluate((el) => getComputedStyle(el).borderTopColor)).not.toBe(quiet);
   const box = await nav.boundingBox();
   expect(box!.x).toBe(0);
   await nav.getByRole('link', { name: 'Learn', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Learn', exact: true })).toBeVisible();
   await expect(nav.getByRole('link', { name: 'Learn', exact: true })).toHaveAttribute('aria-current', 'page');
-  await nav.getByRole('link', { name: 'Practice', exact: true }).click();
+  await nav.getByRole('link', { name: 'Free Play', exact: true }).click();
   await expect(page.locator('.game canvas')).toBeVisible();
   await expect(nav).toBeHidden();
   await page.getByRole('link', { name: 'Menu', exact: true }).click();
   await expect(nav).toBeVisible();
+});
+
+test('Learn: the overview, a lesson, examples, sliders, challenges, hints, and quizzes all work', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Student');
+  const errors: string[] = [];
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(m.text());
+  });
+  await page.goto('/#/learn');
+  await expect(page.getByRole('progressbar', { name: 'Course progress' })).toBeVisible();
+  await expect(page.getByText(/0 of \d+ lessons complete/)).toBeVisible();
+  await page.getByRole('link', { name: 'Start the first lesson' }).click();
+  await expect(page.getByRole('heading', { name: 'Type a function, fire a shot' })).toBeVisible();
+
+  // Examples load into the box, and the board explains what the shot did.
+  const play = page.locator('.lesson-box').first();
+  await play.getByRole('button', { name: /A wave/ }).click();
+  await expect(play.getByRole('textbox')).toHaveValue('3*sin(x)');
+  await play.getByRole('button', { name: 'Fire', exact: true }).click();
+  await expect(play.locator('.box-info')).toContainText('It ended at', { timeout: 15_000 });
+
+  // A wrong answer says how far off it was, and hints lead to the answer.
+  const challenge = page.locator('[data-challenge="first-shot-1"]');
+  await challenge.getByRole('textbox').fill('x/3');
+  await challenge.getByRole('button', { name: 'Fire', exact: true }).click();
+  await expect(challenge.locator('.miss')).toContainText('above', { timeout: 15_000 });
+  await challenge.getByRole('button', { name: 'Show a hint' }).click();
+  await expect(challenge.locator('.hint')).toHaveCount(1);
+  await challenge.getByRole('button', { name: 'Show another hint' }).click();
+  await challenge.getByRole('button', { name: 'Fill in the answer' }).click();
+  await expect(challenge.getByRole('textbox')).toHaveValue('0');
+  await challenge.getByRole('button', { name: 'Fire', exact: true }).click();
+  await expect(challenge.getByText('Direct hit')).toBeVisible({ timeout: 15_000 });
+
+  // Quizzes correct you, and only the right answer counts.
+  const quiz = page.locator('[data-quiz="first-shot-q"]');
+  await quiz.getByRole('button', { name: /hold Fire/ }).click();
+  await expect(quiz.getByRole('status')).toContainText('Not quite');
+  await quiz.getByRole('button', { name: /graph of the function/ }).click();
+  await expect(quiz.getByRole('status')).toContainText('Right');
+  await expect(page.getByText('Lesson complete.')).toBeVisible();
+
+  // Progress is saved and shown on the overview.
+  await page.getByRole('link', { name: /^Next:/ }).click();
+  await expect(page.getByRole('heading', { name: 'Reading the board' })).toBeVisible();
+  await page.goto('/#/learn/slope');
+  const slider = page.locator('.lesson-box').filter({ has: page.locator('input[type=range]') }).first();
+  const before = await slider.locator('.slider-expr').textContent();
+  await slider.locator('input[type=range]').fill('1.5');
+  await expect(slider.locator('.slider-expr')).not.toHaveText(before!);
+  await expect(slider.locator('.slider-expr code')).toHaveText('1.5*x');
+  await page.reload();
+  await page.goto('/#/learn');
+  await expect(page.getByText(/1 of \d+ lessons complete/)).toBeVisible();
+  await expect(page.getByRole('link', { name: /Continue: Reading the board/ })).toBeVisible();
+  await page.goto('/#/learn/not-a-lesson');
+  await expect(page.getByRole('heading', { name: "That lesson doesn't exist" })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('Learn: every lesson opens with no errors, and the firing-left lesson can be finished', async ({ browser }) => {
+  test.setTimeout(150_000);
+  const page = await newPlayer(browser, 'Reader');
+  page.on('console', (m) => {
+    if (m.type() === 'error') throw new Error(m.text());
+  });
+  await page.goto('/#/learn');
+  const links = await page.locator('a.lesson-link').evaluateAll((els) => els.map((e) => e.getAttribute('href')!));
+  expect(links.length).toBeGreaterThanOrEqual(20);
+  for (const href of links) {
+    await page.goto(`/${href}`);
+    await expect(page.locator('.lesson h2').first()).toBeVisible();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow, href).toBeLessThanOrEqual(0);
+  }
+  await page.goto('/#/learn/free-for-all');
+  const c = page.locator('[data-challenge="ffa-1"]');
+  await c.getByRole('textbox').fill('x/5');
+  await c.getByRole('button', { name: 'Fire', exact: true }).click();
+  await expect(c.locator('.miss')).toBeVisible({ timeout: 15_000 });
+  await c.getByRole('button', { name: /toward −x/ }).click();
+  await c.getByRole('button', { name: 'Fire', exact: true }).click();
+  await expect(c.getByText('Direct hit')).toBeVisible({ timeout: 15_000 });
+  await page.goto('/#/learn/terrain');
+  const dig = page.locator('[data-challenge="terrain-1"]');
+  await dig.getByRole('textbox').fill('0');
+  for (let i = 0; i < 6 && !(await dig.getByText('Direct hit').isVisible()); i++) {
+    await dig.getByRole('button', { name: 'Fire', exact: true }).click();
+    await expect(dig.getByRole('button', { name: 'Fire', exact: true }).or(dig.getByText('Direct hit')).first()).toBeEnabled({ timeout: 15_000 }).catch(() => {});
+    await page.waitForTimeout(4500);
+  }
+  await expect(dig.getByText('Direct hit')).toBeVisible();
 });
 
 test('shot history lists shots, rewinds like chess, and returns to live', async ({ browser }) => {
@@ -677,7 +785,7 @@ for (const [name, width, height] of [
     await page.addInitScript(() => {
       if (!localStorage.getItem('mathbattles.profile.v1')) localStorage.setItem('mathbattles.profile.v1', JSON.stringify({ name: 'Fit', analytics: 'no' }));
     });
-    for (const path of ['/#/', '/#/practice', '/#/campaign', '/#/learn', '/#/shop', '/#/settings', '/#/local', '/#/profile', '/#/online', '/#/ranked', '/#/leaderboard', '/#/signin', '/#/level/0-1', '/#/daily']) {
+    for (const path of ['/#/', '/#/practice', '/#/campaign', '/#/learn', '/#/learn/slope', '/#/learn/winning', '/#/shop', '/#/settings', '/#/local', '/#/profile', '/#/online', '/#/ranked', '/#/leaderboard', '/#/signin', '/#/level/0-1', '/#/daily']) {
       await page.goto(path);
       await page.waitForTimeout(250);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);

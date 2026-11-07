@@ -10,7 +10,7 @@ import { GameView } from './GameView';
 import { ResultCard } from './Local';
 import { TopBar, useProfile } from './Shared';
 
-const UNAVAILABLE = "Online play isn't reachable right now. Bots, the campaign, and practice still work.";
+const UNAVAILABLE = "Online play isn't reachable right now. Bots, the campaign, and Free Play still work.";
 
 export function OnlineMenu() {
   const [rooms, setRooms] = useState<RoomInfo[] | null>(null);

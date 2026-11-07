@@ -33,7 +33,7 @@ export function winnerText(state: MatchState, viewer?: string): string {
   return `${state.players.find((p) => p.id === state.winner)?.name ?? 'Someone'} wins`;
 }
 
-function Tex({ expr, prefix }: { expr: string; prefix: string }) {
+export function Tex({ expr, prefix }: { expr: string; prefix: string }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let live = true;

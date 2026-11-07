@@ -14,6 +14,7 @@ export interface Mergeable {
   owned: string[];
   achievements: string[];
   questsPaid: string[];
+  learnDone: string[];
   stars: Record<string, number>;
   mastery: Record<string, number>;
   questProgress: Record<string, number>;
@@ -22,7 +23,7 @@ export interface Mergeable {
 }
 
 const NUMBERS = ['xp', 'sparks', 'matches', 'wins', 'kills', 'bestCombo', 'dailiesDone', 'lastWinDay', 'questDay', 'questWeek'] as const;
-const LISTS = ['owned', 'achievements', 'questsPaid'] as const;
+const LISTS = ['owned', 'achievements', 'questsPaid', 'learnDone'] as const;
 const HIGHEST = ['stars', 'mastery', 'questProgress'] as const;
 
 /**

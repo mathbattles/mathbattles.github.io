@@ -20,10 +20,13 @@ import {
   currentPlayer,
   currentSoldier,
   COSMETICS,
+  terrainOf,
+  validate,
   armMissile,
   removePlayer,
   useTeleport,
 } from '@mathbattles/sim';
+import { LESSONS, ME, challengeState, requiredIds, type Challenge } from '../src/content/learn';
 import { mergeProgress } from '../src/profileMerge';
 import { OBSTACLE_STYLES } from '../src/render/obstacles';
 import { CHAPTERS, LEVELS, buildLevel, starsFor } from '../src/content/campaign';
@@ -147,7 +150,7 @@ describe('replay contents', () => {
 describe('merging progress', () => {
   const base = (o: object) => ({
     xp: 0, sparks: 0, matches: 0, wins: 0, kills: 0, bestCombo: 0, dailiesDone: 0, lastWinDay: 0, questDay: 0, questWeek: 0,
-    owned: [], achievements: [], questsPaid: [], stars: {}, mastery: {}, questProgress: {}, daily: {}, updatedAt: 0, name: 'x', ...o,
+    owned: [], achievements: [], questsPaid: [], learnDone: [], stars: {}, mastery: {}, questProgress: {}, daily: {}, updatedAt: 0, name: 'x', ...o,
   });
   it('keeps everything from an account when a nearly empty, newer guest copy signs in', () => {
     const phone = base({ xp: 10, sparks: 5, stars: { '0-1': 1 }, updatedAt: 500, name: 'Phone' });
@@ -172,6 +175,68 @@ describe('merging progress', () => {
     const out = mergeProgress(base({ xp: 5, updatedAt: 1 }), { xp: 'lots' as unknown as number, stars: undefined, updatedAt: 0 });
     expect(out.xp).toBe(5);
     expect(out.stars).toEqual({});
+  });
+});
+
+describe('the Learn course', () => {
+  const challenges: Challenge[] = LESSONS.flatMap((l) => l.blocks.filter((b): b is Challenge => b.t === 'challenge'));
+  it('is a full course with unique exercise ids', () => {
+    expect(LESSONS.length).toBeGreaterThanOrEqual(20);
+    expect(challenges.length).toBeGreaterThanOrEqual(25);
+    const ids = LESSONS.flatMap((l) => requiredIds(l));
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(new Set(LESSONS.map((l) => l.id)).size).toBe(LESSONS.length);
+  });
+
+  const inField = (p: { x: number; y: number }) => p.x > 0 && p.x < PLANE_W && p.y > 0 && p.y < PLANE_H;
+  for (const c of challenges) {
+    it(`"${c.id}" can be cleared with its answer`, () => {
+      const start = challengeState(c);
+      for (const s of start.soldiers) expect(inField(s), `soldier ${s.id} in field`).toBe(true);
+      const terrain = terrainOf(start);
+      let shots = 0;
+      while (!soloCleared(start) && shots < (c.shots ?? 1)) {
+        fire(start, ME, { expr: c.solution, angle: c.angle, dir: c.dir }, terrain);
+        soloNext(start);
+        shots++;
+      }
+      expect(soloCleared(start), 'targets cleared').toBe(true);
+      expect(soloHitFriend(start), 'teammate safe').toBe(false);
+      if (c.requires) expect(new RegExp(c.requires.pattern).test(c.solution.replace(/\s/g, ''))).toBe(true);
+      // The last hint or answer button must actually help: hints exist on everything.
+      expect(c.hints.length).toBeGreaterThan(0);
+    });
+    if (c.blocksStraight) {
+      it(`"${c.id}" really does block a straight shot`, () => {
+        const state = challengeState(c);
+        const me = state.soldiers[0]!;
+        const t = state.soldiers.find((s) => s.playerId === 'targets')!;
+        const slope = (me.y - t.y) / (t.x - me.x);
+        fire(state, ME, { expr: slope < 0 ? `(${slope})*x` : `${slope}*x` }, terrainOf(state));
+        expect(soloCleared(state)).toBe(false);
+      });
+    }
+  }
+
+  it('quizzes have a valid answer', () => {
+    for (const l of LESSONS) for (const b of l.blocks) {
+      if (b.t !== 'quiz') continue;
+      expect(b.options[b.answer], b.id).toBeTruthy();
+      expect(b.why.length).toBeGreaterThan(10);
+    }
+  });
+
+  it('every example, slider start, and starter function is valid math', () => {
+    for (const l of LESSONS) for (const b of l.blocks) {
+      if (b.t === 'play') {
+        expect(validate(b.start, b.mode), `${l.id} start ${b.start}`).toBeNull();
+        for (const ex of b.examples) expect(validate(ex.expr, b.mode), `${l.id} ${ex.expr}`).toBeNull();
+      }
+      if (b.t === 'sliders') {
+        const expr = b.template.replace(/\{(\w+)\}/g, (_, n: string) => String(Math.abs(b.params.find((p) => p.name === n)!.value)));
+        expect(validate(expr, b.mode), `${l.id} ${expr}`).toBeNull();
+      }
+    }
   });
 });
 

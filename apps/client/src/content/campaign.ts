@@ -1,5 +1,18 @@
 import { Terrain, createSolo, simulateShot, toPxX, toPxY, type Circle, type ShotMode, type SoloDef } from '@mathbattles/sim';
 
+/** Everything needed to build a board around a known answer. */
+export interface LevelShape {
+  mode: ShotMode;
+  solution: string;
+  angle?: number;
+  /** Fires toward -x when set to -1. */
+  dir?: 1 | -1;
+  from: [number, number];
+  hits: number[];
+  rocks?: [number, number, number][];
+  friends?: [number, number][];
+}
+
 export interface Level {
   id: string;
   chapter: number;
@@ -97,15 +110,16 @@ export const LEVELS: Level[] = RAW.flatMap((chapter, c) =>
 );
 
 /** Builds the playable map, placing targets and rocks relative to the solution curve. */
-export function buildLevel(level: Level): SoloDef {
+export function buildLevel(level: LevelShape): SoloDef {
   const shooter = { x: toPxX(level.from[0]), y: toPxY(level.from[1]) };
   const base = (circles: Circle[] = []) =>
-    simulateShot({ mode: level.mode, expr: level.solution, angle: level.angle, from: shooter, terrain: new Terrain(circles), targets: [] });
+    simulateShot({ mode: level.mode, expr: level.solution, angle: level.angle, dir: level.dir, from: shooter, terrain: new Terrain(circles), targets: [] });
   const path = base();
   const curveAt = (gx: number): number => {
     const px = toPxX(gx);
+    const sign = level.dir ?? 1;
     for (let i = 0; i < path.steps; i++) {
-      if (path.xs[i]! >= px) return path.ys[i]!;
+      if (sign * path.xs[i]! >= sign * px) return path.ys[i]!;
     }
     return path.ys[path.steps - 1]!;
   };
