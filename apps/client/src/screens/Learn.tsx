@@ -147,7 +147,7 @@ function FunctionBox(props: {
             if (e.key === 'Enter') props.onFire();
           }}
         />
-        <button class="primary fire" disabled={props.disabled || !props.expr.trim() || !!bad} onClick={props.onFire}>{props.fireLabel ?? 'Fire'}</button>
+        <button class="primary fire" data-sfx="none" disabled={props.disabled || !props.expr.trim() || !!bad} onClick={props.onFire}>{props.fireLabel ?? 'Fire'}</button>
       </div>
       {props.expr.trim() && !bad && <Tex expr={props.expr} prefix={modeLabel(props.mode)} />}
       {(bad || props.error) && <p class="error" role="alert">{bad?.message ?? props.error}</p>}

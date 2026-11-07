@@ -33,6 +33,10 @@ export function runDemo(stage: Stage, opts: { rocks?: number; onCaption?: (label
       const r = 26 + ((k * 13) % 22);
       circles.push({ x: p.x, y: p.y + (k % 2 === 0 ? 1 : -1) * (r + 22), r });
     }
+    // A rock on the curve near its end, so the shot explodes where it can be seen.
+    const stop = at(0.95);
+    circles.push({ x: stop.x, y: stop.y, r: 20 });
+    const path = simulateShot({ mode: 'fn', expr: demo.expr, from, terrain: new Terrain(circles), targets: [] });
     const state = {
       config: { kind: 'teams', mode: 'fn', abilities: false, soldiers: 1, seed: 0 },
       players: [
@@ -59,8 +63,8 @@ export function runDemo(stage: Stage, opts: { rocks?: number; onCaption?: (label
     if (!live) return;
     const hit = (s: { x: number; y: number }, id: number) => {
       let step = 0;
-      for (let k = 0; k < probe.steps; k++) {
-        if (Math.hypot(probe.xs[k]! - s.x, probe.ys[k]! - s.y) < 7) {
+      for (let k = 0; k < path.steps; k++) {
+        if (Math.hypot(path.xs[k]! - s.x, path.ys[k]! - s.y) < 7) {
           step = k;
           break;
         }
@@ -70,9 +74,9 @@ export function runDemo(stage: Stage, opts: { rocks?: number; onCaption?: (label
     await stage.playShot(
       {
         playerId: 'a', soldierId: 0, expr: demo.expr, mode: 'fn', dir: 1, angle: 0, from, mirrored: false,
-        steps: probe.steps, reason: probe.reason, end: probe.end, hits: [hit(a, 1), hit(b, 2)], blastR: 12, blastKills: [],
+        steps: path.steps, reason: path.reason, end: path.end, hits: [hit(a, 1), hit(b, 2)], blastR: 12, blastKills: [],
       },
-      { xs: probe.xs, ys: probe.ys, steps: probe.steps },
+      { xs: path.xs, ys: path.ys, steps: path.steps },
     );
     // Hidden tabs finish shots at once, so wait here rather than looping quickly.
     if (document.hidden) await new Promise((r) => setTimeout(r, 2000));

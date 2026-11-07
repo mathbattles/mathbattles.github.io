@@ -682,6 +682,106 @@ test('the shop previews items before buying, including obstacle designs', async 
   expect(errors).toEqual([]);
 });
 
+test('shop items run from cheapest to most expensive, with earned items last', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Sorter');
+  await page.goto('/#/shop');
+  const sections = page.locator('.shop-items .sheet');
+  await expect(sections).toHaveCount(5);
+  for (let i = 0; i < 5; i++) {
+    const prices = await sections.nth(i).locator('.item').evaluateAll((items) => items.map((el) => {
+      if (el.textContent?.includes('Earn:')) return Infinity;
+      const m = el.textContent?.match(/Buy for (\d+)/);
+      // Free items, and owned ones, which here are only the free starters.
+      return m ? Number(m[1]) : 0;
+    }));
+    expect(prices).toEqual([...prices].sort((a, b) => a - b));
+  }
+});
+
+test('the shop preview shows explosions inside the field, and goes full screen and back', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Boomer');
+  await page.goto('/#/shop');
+  await page.getByRole('button', { name: 'Preview Ring' }).click();
+  const canvas = page.locator('.shop-preview canvas');
+  // Watch the field for a while and count the brightest orange pixels the explosion makes.
+  const orange = await canvas.evaluate(async (cv: HTMLCanvasElement) => {
+    let best = 0;
+    const end = performance.now() + 9000;
+    while (performance.now() < end) {
+      await new Promise((r) => requestAnimationFrame(r));
+      const small = document.createElement('canvas');
+      small.width = cv.width / 2;
+      small.height = cv.height / 2;
+      const g = small.getContext('2d')!;
+      g.drawImage(cv, 0, 0, small.width, small.height);
+      const d = g.getImageData(0, 0, small.width, small.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i]! > 235 && d[i + 1]! > 110 && d[i + 1]! < 200 && d[i + 2]! < 90) n++;
+      best = Math.max(best, n);
+    }
+    return best;
+  });
+  expect(orange).toBeGreaterThan(150);
+
+  const before = (await canvas.boundingBox())!.width;
+  await page.getByRole('button', { name: 'Full screen' }).click();
+  await expect(page.locator('.shop-preview.full')).toBeVisible();
+  await expect.poll(async () => (await canvas.boundingBox())!.width).toBeGreaterThan(before * 1.5);
+  await page.getByRole('button', { name: 'Exit full screen' }).click();
+  await expect(page.locator('.shop-preview.full')).toHaveCount(0);
+  // Escape also leaves it.
+  await page.getByRole('button', { name: 'Full screen' }).click();
+  await expect(page.locator('.shop-preview.full')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.shop-preview.full')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Hats' })).toBeVisible();
+});
+
+test('music and sound settings work, and every track renders cleanly', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Listener');
+  await page.goto('/#/settings');
+  await expect(page.getByLabel('Play music')).toBeChecked();
+  await page.getByLabel('Mute sound effects').check();
+  await page.getByLabel('Mute sound effects').uncheck();
+  await page.getByRole('button', { name: 'Slow Orbit' }).click();
+  await expect(page.getByRole('button', { name: 'Slow Orbit' })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByLabel('Play music').uncheck();
+  await page.reload();
+  await expect(page.getByLabel('Play music')).not.toBeChecked();
+  await expect(page.getByRole('button', { name: 'Slow Orbit' })).toHaveAttribute('aria-pressed', 'true');
+  test.skip(!!process.env.E2E_BASE, 'The source modules are only served by the local dev server.');
+  // Render 16 bars of each track offline: it should be audible but never clip.
+  const levels = await page.evaluate(async () => {
+    const music = await import('/src/audio/music.ts' as string);
+    const compose = await import('/src/audio/compose.ts' as string);
+    const out: { peak: number; rms: number }[] = [];
+    for (const track of compose.TRACKS) {
+      const beat = 60 / track.bpm;
+      const seconds = 16 * 4 * beat + 4;
+      const ctx = new OfflineAudioContext(2, Math.ceil(22050 * seconds), 22050);
+      const mixer = new music.MusicMixer(ctx, ctx.destination);
+      mixer.startNoise(0);
+      for (let bar = 8; bar < 24; bar++) {
+        for (const ev of compose.composeBar(track, bar)) mixer.play(ev, (bar - 8) * 4 * beat, beat);
+      }
+      const buf = await ctx.startRendering();
+      let peak = 0;
+      let sum = 0;
+      const data = buf.getChannelData(0);
+      for (const v of data) {
+        peak = Math.max(peak, Math.abs(v));
+        sum += v * v;
+      }
+      out.push({ peak, rms: Math.sqrt(sum / data.length) });
+    }
+    return out;
+  });
+  for (const l of levels) {
+    expect(l.peak).toBeLessThan(0.9);
+    expect(l.rms).toBeGreaterThan(0.005);
+  }
+});
+
 test('an owned obstacle design is used on the real field', async ({ browser }) => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();

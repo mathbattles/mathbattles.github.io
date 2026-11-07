@@ -13,6 +13,7 @@ import { SignIn } from './screens/Account';
 import { Learn } from './screens/Learn';
 import { PlayerScreen } from './screens/History';
 import { SideNav } from './screens/SideNav';
+import { initAudioUi } from './audio/ui';
 
 function route(): string {
   return location.hash.replace(/^#/, '') || '/';
@@ -145,6 +146,7 @@ function applyDesign(): void {
 }
 applyDesign();
 subscribeProfile(applyDesign);
+initAudioUi();
 
 render(<App />, document.getElementById('app')!);
 void initAuth();

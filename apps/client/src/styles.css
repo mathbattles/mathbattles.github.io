@@ -89,7 +89,7 @@ code { font-family: 'Cambria Math', 'STIX Two Text', Georgia, serif; font-style:
 :focus-visible { outline: 3px solid var(--pink); outline-offset: 2px; }
 
 /* Page transitions */
-.route { animation: route-in .24s ease-out both; transition: opacity .13s ease-in, transform .13s ease-in; }
+.route { animation: route-in .24s ease-out backwards; transition: opacity .13s ease-in, transform .13s ease-in; }
 .route.leaving { opacity: 0; transform: translateY(-6px) scale(.995); }
 @keyframes route-in {
   from { opacity: 0; transform: translateY(10px); }
@@ -129,7 +129,7 @@ code { font-family: 'Cambria Math', 'STIX Two Text', Georgia, serif; font-style:
 
   /* A section lifts as one group when you move over it, and its icon comes alive. */
   .nav-section {
-    position: relative; margin-top: 7px; padding: 4px 5px 6px;
+    position: relative; margin-top: 7px; padding: 8px 10px 9px;
     border: 2.5px dashed transparent; border-radius: var(--wobble-2);
     transition: transform .18s cubic-bezier(.3, 1.6, .5, 1), border-color .15s, background-color .15s, box-shadow .15s;
   }
@@ -240,7 +240,7 @@ input:disabled { opacity: .6; }
   background: var(--card);
   border: 2.5px solid var(--ink);
   border-radius: var(--wobble-2);
-  padding: 18px;
+  padding: 22px 26px;
   margin-bottom: 16px;
 }
 
@@ -359,7 +359,7 @@ button.dir-plus[aria-pressed='false']:hover:not(:disabled), button.dir-minus[ari
 .charge i { width: 14px; height: 14px; border: 2px solid var(--ink); border-radius: 4px; }
 .charge i.full { background: var(--yellow); }
 
-.mini { padding: 10px 12px; border-radius: 12px; border: 2px solid var(--ink); background: var(--card); }
+.mini { padding: 13px 16px; border-radius: 12px; border: 2px solid var(--ink); background: var(--card); }
 .mini h3 { margin-bottom: .3em; font-size: 1rem; }
 .mini code, .last-shot code { display: block; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
 .history { display: flex; flex-direction: column; min-height: 0; }
@@ -402,7 +402,7 @@ button.shot .hits { font-weight: 800; font-size: .82rem; }
 
 /* Lists */
 .levels { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-.level { padding: 8px 10px; text-align: left; border-radius: var(--wobble-2); }
+.level { padding: 10px 14px; text-align: left; border-radius: var(--wobble-2); }
 .level small { display: block; font-weight: 400; color: inherit; opacity: .8; }
 .stars { color: var(--pink); letter-spacing: 1px; }
 .shop { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
@@ -413,8 +413,20 @@ button.shot .hits { font-weight: 800; font-size: .82rem; }
 .shop-layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
 .shop-preview canvas { display: block; width: 100%; height: auto; border: 2.5px solid var(--ink); border-radius: 10px; }
 .preview-name { margin: 8px 0 0; }
-.shop-preview { position: sticky; top: 0; z-index: 2; margin-bottom: 0; padding: 10px; }
-.shop-preview h3 { margin-bottom: .3em; font-size: 1rem; }
+.shop-preview { position: sticky; top: 0; z-index: 2; margin-bottom: 0; padding: 16px 22px 14px; }
+.shop-preview h3 { margin: 0; font-size: 1rem; }
+.preview-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.preview-name { padding: 0 2px; }
+/* Full screen: the preview fills the window. */
+.shop-preview.full { position: fixed; inset: 0; z-index: 60; margin: 0; border-radius: 0; border: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px 28px; background: var(--page); animation: route-in .2s ease-out both; }
+.shop-preview.full .preview-head, .shop-preview.full .preview-name { width: min(100%, calc((100dvh - 130px) * 770 / 450)); }
+.shop-preview.full h3 { font-size: 1.3rem; }
+.shop-preview.full canvas { width: min(100%, calc((100dvh - 130px) * 770 / 450)); max-height: none; height: auto; }
+.shop-preview:fullscreen { background: var(--page); }
+.no-scroll, .no-scroll body { overflow: hidden; }
+.sound-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 24px; align-items: center; }
+.sound-grid .slider { display: flex; flex-direction: column; gap: 4px; font-weight: 600; }
+.sound-grid input[type="range"] { width: 100%; accent-color: var(--blue); }
 @media (max-width: 999px) {
   /* Keep the preview small enough on phones to see the items beneath it. */
   .shop-preview canvas { max-height: 30dvh; object-fit: contain; }
@@ -435,7 +447,7 @@ button.shot .hits { font-weight: 800; font-size: .82rem; }
 @media (max-width: 600px) {
   .lesson-table td:first-child { white-space: normal; overflow-wrap: anywhere; min-width: 7em; }
 }
-.lesson-box { background: var(--card); border: 2.5px solid var(--ink); border-radius: var(--wobble-2); padding: 14px; margin: 16px 0; transition: box-shadow .2s, border-color .2s; }
+.lesson-box { background: var(--card); border: 2.5px solid var(--ink); border-radius: var(--wobble-2); padding: 18px 22px; margin: 16px 0; transition: box-shadow .2s, border-color .2s; }
 .lesson-box.cleared { border-color: var(--good); box-shadow: 3px 4px 0 var(--green); }
 .lesson-box h3 { margin-bottom: .35em; }
 .box-note { margin-bottom: .6em; }
@@ -488,7 +500,7 @@ table { border-collapse: collapse; width: 100%; }
 td, th { text-align: left; padding: 4px 8px; border-bottom: 1.5px solid var(--page-line); }
 .bar { height: 12px; border: 2px solid var(--ink); border-radius: 8px; overflow: hidden; background: var(--field-bg); }
 .bar > i { display: block; height: 100%; background: var(--green); transition: width .5s ease-out; }
-.consent { position: fixed; right: 12px; bottom: 12px; z-index: 5; max-width: min(380px, calc(100vw - 24px)); margin: 0; padding: 12px; font-size: .92rem; }
+.consent { position: fixed; right: 12px; bottom: 12px; z-index: 5; max-width: min(380px, calc(100vw - 24px)); margin: 0; padding: 16px 20px; font-size: .92rem; }
 .consent p { margin-bottom: .5em; }
 
 @media (max-width: 860px) {
@@ -518,4 +530,8 @@ td, th { text-align: left; padding: 4px 8px; border-bottom: 1.5px solid var(--pa
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+@media (max-width: 600px) {
+  .sheet { padding: 18px 18px; }
+  .shop-preview.full { padding: 14px 12px; }
 }

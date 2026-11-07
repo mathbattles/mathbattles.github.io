@@ -1,3 +1,5 @@
+import { audioContext, sfxBus } from './audio/engine';
+
 /** Turns a typed function into TeX for the preview. Display only: never used for the math. */
 export function exprToTex(src: string): string {
   let s = src.toLowerCase().replace(/\s+/g, '').replace(/,/g, '.');
@@ -58,15 +60,17 @@ export function go(path: string): void {
   location.hash = path;
 }
 
-let audio: AudioContext | null = null;
+export type SoundKind =
+  | 'fire' | 'boom' | 'kill' | 'turn' | 'tick' | 'go' | 'win' | 'lose'
+  | 'click' | 'hover' | 'toggle' | 'page' | 'buy' | 'equip' | 'error' | 'slide' | 'open' | 'close' | 'key';
 
-type SoundKind = 'fire' | 'boom' | 'kill' | 'turn' | 'tick' | 'go' | 'win' | 'lose' | 'click';
+let out: AudioNode | null = null;
 
 function tone(ctx: AudioContext, type: OscillatorType, from: number, to: number, dur: number, vol: number, delay = 0): void {
   const t = ctx.currentTime + delay;
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
-  osc.connect(gain).connect(ctx.destination);
+  osc.connect(gain).connect(out ?? ctx.destination);
   osc.type = type;
   osc.frequency.setValueAtTime(from, t);
   osc.frequency.exponentialRampToValueAtTime(to, t + dur);
@@ -76,7 +80,7 @@ function tone(ctx: AudioContext, type: OscillatorType, from: number, to: number,
   osc.stop(t + dur);
 }
 
-function noise(ctx: AudioContext, dur: number, vol: number, cutoff: number): void {
+function noise(ctx: AudioContext, dur: number, vol: number, cutoff: number, delay = 0): void {
   const size = Math.floor(ctx.sampleRate * dur);
   const buffer = ctx.createBuffer(1, size, ctx.sampleRate);
   const data = buffer.getChannelData(0);
@@ -88,15 +92,16 @@ function noise(ctx: AudioContext, dur: number, vol: number, cutoff: number): voi
   filter.frequency.value = cutoff;
   const gain = ctx.createGain();
   gain.gain.value = vol;
-  src.connect(filter).connect(gain).connect(ctx.destination);
-  src.start();
+  src.connect(filter).connect(gain).connect(out ?? ctx.destination);
+  src.start(ctx.currentTime + delay);
 }
 
 export function sound(kind: SoundKind, muted: boolean): void {
   if (muted) return;
   try {
-    audio ??= new AudioContext();
-    const c = audio;
+    const c = audioContext();
+    if (!c) return;
+    out = sfxBus();
     switch (kind) {
       case 'fire':
         tone(c, 'sawtooth', 220, 880, 0.16, 0.08);
@@ -128,7 +133,47 @@ export function sound(kind: SoundKind, muted: boolean): void {
         [392, 330, 262].forEach((f, i) => tone(c, 'triangle', f, f * 0.96, 0.28, 0.1, i * 0.16));
         break;
       case 'click':
-        tone(c, 'sine', 500, 720, 0.05, 0.05);
+        // A soft pencil tap.
+        tone(c, 'triangle', 640, 430, 0.06, 0.06);
+        noise(c, 0.025, 0.035, 4200);
+        break;
+      case 'hover':
+        tone(c, 'sine', 1180, 1260, 0.035, 0.018);
+        break;
+      case 'toggle':
+        tone(c, 'triangle', 660, 660, 0.05, 0.05);
+        tone(c, 'triangle', 990, 990, 0.07, 0.05, 0.05);
+        break;
+      case 'page':
+        // A paper page turning.
+        noise(c, 0.16, 0.05, 1900);
+        tone(c, 'sine', 320, 540, 0.14, 0.025);
+        break;
+      case 'buy':
+        tone(c, 'square', 988, 988, 0.08, 0.045);
+        tone(c, 'square', 1319, 1319, 0.26, 0.045, 0.08);
+        tone(c, 'triangle', 2637, 2637, 0.2, 0.02, 0.1);
+        break;
+      case 'equip':
+        tone(c, 'triangle', 523, 784, 0.12, 0.07);
+        tone(c, 'triangle', 1047, 1047, 0.12, 0.05, 0.1);
+        break;
+      case 'error':
+        tone(c, 'square', 220, 185, 0.12, 0.04);
+        tone(c, 'square', 196, 165, 0.16, 0.04, 0.13);
+        break;
+      case 'slide':
+        tone(c, 'sine', 900, 900, 0.025, 0.02);
+        break;
+      case 'open':
+        tone(c, 'sine', 380, 900, 0.2, 0.05);
+        noise(c, 0.18, 0.025, 2600);
+        break;
+      case 'close':
+        tone(c, 'sine', 900, 380, 0.18, 0.05);
+        break;
+      case 'key':
+        noise(c, 0.018, 0.03, 5200);
         break;
     }
   } catch {

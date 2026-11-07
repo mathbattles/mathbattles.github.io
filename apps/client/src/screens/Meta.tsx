@@ -1,5 +1,5 @@
 import { ACHIEVEMENTS, COSMETICS, levelFromXp, rankFor, type AbilityId, type Cosmetic, type CosmeticKind } from '@mathbattles/sim';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { authState, setAnalyticsConsent, useAuth } from '../auth';
 import { fetchLeaderboard, serverReachable, type LeaderRow } from '../net/api';
 import { runDemo } from '../render/demo';
@@ -10,6 +10,8 @@ import { buy, cosmeticValue, equip, profile, saveProfile } from '../store';
 import { AccountPanel } from './Account';
 import { MyHistory } from './History';
 import { TopBar, useProfile } from './Shared';
+import { sound } from '../util';
+import { TRACKS } from '../audio/compose';
 
 const INK = '#2b2f7a';
 
@@ -47,7 +49,7 @@ function ItemThumb({ item }: { item: Cosmetic }) {
       }
       strokeTrail(c, xs, ys, xs.length, '#2b50e8', item.value, true);
     } else if (item.kind === 'blast') {
-      drawBlast(c, 70, 40, 16, 0.3, '#ee3a57', item.value);
+      drawBlast(c, 70, 40, 12, 0.2, '#ee3a57', item.value);
     } else if (item.kind === 'obstacle') {
       const style = obstacleStyle(item.value);
       drawObstacle(c, style, 34, 44, 26, 0);
@@ -67,7 +69,10 @@ function ItemThumb({ item }: { item: Cosmetic }) {
 /** Tries an item on in a live scene, before buying it. */
 function ShopPreview({ item }: { item: Cosmetic }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Stage | null>(null);
+  const [full, setFull] = useState(false);
+  const fullRef = useRef(false);
   const apply = (stage: Stage) => {
     const value = (kind: CosmeticKind) => (item.kind === kind ? item.value : cosmeticValue(kind));
     stage.looks = { a: { hat: value('hat'), trail: value('trail'), blast: value('blast') } };
@@ -80,7 +85,11 @@ function ShopPreview({ item }: { item: Cosmetic }) {
     apply(stage);
     stage.start();
     const stopDemo = runDemo(stage, { rocks: 6, gapMs: 500 });
+    // The canvas changes size when going full screen, and the drawing should stay sharp.
+    const sizer = new ResizeObserver(() => stage.resize());
+    sizer.observe(ref.current!);
     return () => {
+      sizer.disconnect();
       stopDemo();
       stage.stop();
     };
@@ -88,10 +97,48 @@ function ShopPreview({ item }: { item: Cosmetic }) {
   useEffect(() => {
     if (stageRef.current) apply(stageRef.current);
   }, [item.id]);
+  // Attached before the next paint, so an Escape pressed right away still closes the view.
+  useLayoutEffect(() => {
+    fullRef.current = full;
+    if (!full) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') exitFull(); };
+    // Leaving the browser's full screen (Esc, or the browser's own control) also leaves this view.
+    const onChange = () => { if (!document.fullscreenElement && fullRef.current) exitFull(); };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('fullscreenchange', onChange);
+    document.documentElement.classList.add('no-scroll');
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('fullscreenchange', onChange);
+      document.documentElement.classList.remove('no-scroll');
+    };
+  }, [full]);
+  const enterFull = () => {
+    setFull(true);
+    sound('open', profile.muted);
+    // The real browser full screen where it exists; the page-filling view works everywhere else.
+    fullRef.current = true;
+    boxRef.current?.requestFullscreen?.()
+      // The view may have been closed while the browser was still switching to full screen.
+      .then(() => { if (!fullRef.current && document.fullscreenElement) void document.exitFullscreen().catch(() => {}); })
+      .catch(() => {});
+  };
+  const exitFull = () => {
+    if (!fullRef.current) return;
+    fullRef.current = false;
+    setFull(false);
+    sound('close', profile.muted);
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+  };
   const title = item.kind === 'title' ? item.value : COSMETICS.find((c) => c.id === profile.equipped.title)?.value;
   return (
-    <div class="sheet shop-preview" aria-label={`Preview of ${item.name}`}>
-      <h3>Previewing: {item.name}</h3>
+    <div ref={boxRef} class={`sheet shop-preview ${full ? 'full' : ''}`} aria-label={`Preview of ${item.name}`} role={full ? 'dialog' : undefined} aria-modal={full ? true : undefined}>
+      <div class="preview-head">
+        <h3>Previewing: {item.name}</h3>
+        <button class="small" data-sfx="none" onClick={full ? exitFull : enterFull} aria-pressed={full}>
+          {full ? 'Exit full screen' : 'Full screen'}
+        </button>
+      </div>
       <canvas ref={ref} width={770} height={450} aria-hidden="true" />
       <p class="preview-name"><strong>{profile.name}</strong>{title ? `, ${title}` : ''}</p>
     </div>
@@ -99,6 +146,12 @@ function ShopPreview({ item }: { item: Cosmetic }) {
 }
 
 const KIND_NAMES: Record<CosmeticKind, string> = { hat: 'Hats', trail: 'Shot trails', obstacle: 'Obstacles', blast: 'Explosions', title: 'Titles' };
+
+/** Cheapest first. Items that can only be earned have no price, so they go last. */
+function shopOrder(items: Cosmetic[]): Cosmetic[] {
+  const price = (c: Cosmetic) => (c.earn ? Infinity : c.cost);
+  return items.slice().sort((a, b) => price(a) - price(b));
+}
 
 export function Shop() {
   useProfile();
@@ -114,11 +167,19 @@ export function Shop() {
         <strong>{c.name}</strong>
         <button class={`small ${previewId === c.id ? 'on' : ''}`} aria-label={`Preview ${c.name}`} aria-pressed={previewId === c.id} onClick={() => setPreviewId(c.id)}>Preview</button>
         {owned ? (
-          <button class="small" disabled={on} onClick={() => equip(c.id)}>{on ? 'Equipped' : 'Equip'}</button>
+          <button class="small" data-sfx="none" disabled={on} onClick={() => { equip(c.id); sound('equip', profile.muted); }}>{on ? 'Equipped' : 'Equip'}</button>
         ) : c.earn ? (
           <span class="muted small-note">Earn: {ACHIEVEMENTS.find((a) => a.id === c.earn)?.detail}</span>
         ) : (
-          <button class="small" onClick={() => setError(buy(c.id) ?? '')}>Buy for {c.cost} Sparks</button>
+          <button
+            class="small"
+            data-sfx="none"
+            onClick={() => {
+              const problem = buy(c.id);
+              setError(problem ?? '');
+              sound(problem ? 'error' : 'buy', profile.muted);
+            }}
+          >Buy for {c.cost} Sparks</button>
         )}
       </div>
     );
@@ -134,7 +195,7 @@ export function Shop() {
           {(Object.keys(KIND_NAMES) as CosmeticKind[]).map((k) => (
             <div class="sheet">
               <h3>{KIND_NAMES[k]}</h3>
-              <div class="shop">{COSMETICS.filter((c) => c.kind === k).map(item)}</div>
+              <div class="shop">{shopOrder(COSMETICS.filter((c) => c.kind === k)).map(item)}</div>
             </div>
           ))}
         </div>
@@ -244,11 +305,30 @@ export function Settings() {
         <p class="muted" style={{ marginTop: 8 }}>Each enemy hit adds 1 charge. Using an ability costs 2. Teleport moves your soldier a short way, and you still shoot. Missile triples your next blast, which also hits soldiers inside it.</p>
       </div>
       <div class="sheet">
-        <h3>Sound and chat</h3>
-        <div class="row">
-          <label><input type="checkbox" checked={profile.muted} onChange={(e) => { profile.muted = (e.target as HTMLInputElement).checked; saveProfile(); }} /> Mute sound</label>
-          <label><input type="checkbox" checked={profile.chatOff} onChange={(e) => { profile.chatOff = (e.target as HTMLInputElement).checked; saveProfile(); }} /> Hide chat</label>
+        <h3>Sound and music</h3>
+        <div class="sound-grid">
+          <label><input type="checkbox" checked={profile.muted} onChange={(e) => { profile.muted = (e.target as HTMLInputElement).checked; saveProfile(); }} /> Mute sound effects</label>
+          <label class="slider">Effects volume
+            <input type="range" min={0} max={1} step={0.05} value={profile.sfxVolume} disabled={profile.muted}
+              onInput={(e) => { profile.sfxVolume = Number((e.target as HTMLInputElement).value); saveProfile(); }} />
+          </label>
+          <label><input type="checkbox" checked={profile.music} onChange={(e) => { profile.music = (e.target as HTMLInputElement).checked; saveProfile(); }} /> Play music</label>
+          <label class="slider">Music volume
+            <input type="range" min={0} max={1} step={0.05} value={profile.musicVolume} disabled={!profile.music}
+              onInput={(e) => { profile.musicVolume = Number((e.target as HTMLInputElement).value); saveProfile(); }} />
+          </label>
         </div>
+        <p style={{ marginTop: 12, marginBottom: 6 }}>Music: three calm tracks made for focus.</p>
+        <div class="row" role="group" aria-label="Music track">
+          <button class={profile.musicTrack === -1 ? 'on' : ''} aria-pressed={profile.musicTrack === -1} onClick={() => { profile.musicTrack = -1; saveProfile(); }}>All, in order</button>
+          {TRACKS.map((t, i) => (
+            <button class={profile.musicTrack === i ? 'on' : ''} aria-pressed={profile.musicTrack === i} onClick={() => { profile.musicTrack = i; saveProfile(); }}>{t.name}</button>
+          ))}
+        </div>
+      </div>
+      <div class="sheet">
+        <h3>Chat</h3>
+        <label><input type="checkbox" checked={profile.chatOff} onChange={(e) => { profile.chatOff = (e.target as HTMLInputElement).checked; saveProfile(); }} /> Hide chat</label>
       </div>
       <div class="sheet">
         <h3>Analytics</h3>

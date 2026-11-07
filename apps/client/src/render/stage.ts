@@ -70,7 +70,7 @@ interface Particle {
   max: number;
   size: number;
   color: string;
-  kind: 'spark' | 'smoke' | 'chunk' | 'confetti' | 'star';
+  kind: 'spark' | 'smoke' | 'chunk' | 'confetti' | 'star' | 'ember';
   spin: number;
 }
 
@@ -197,22 +197,24 @@ export function strokeTrail(
 export function drawBlast(c: CanvasRenderingContext2D, x: number, y: number, r: number, t: number, color: string, style: string): void {
   c.strokeStyle = color;
   c.fillStyle = color;
-  c.lineWidth = 4 * (1 - t) + 1;
+  c.lineWidth = 6 * (1 - t) + 1.5;
+  c.lineCap = 'round';
   if (style === 'star') {
     c.beginPath();
     for (let a = 0; a < 12; a++) {
       const ang = (a / 12) * Math.PI * 2 + t;
-      c.moveTo(x + Math.cos(ang) * r * 0.7, y + Math.sin(ang) * r * 0.7);
-      c.lineTo(x + Math.cos(ang) * (r + 34 * t + 6), y + Math.sin(ang) * (r + 34 * t + 6));
+      const len = a % 2 === 0 ? 1 : 0.7;
+      c.moveTo(x + Math.cos(ang) * r * 0.8, y + Math.sin(ang) * r * 0.8);
+      c.lineTo(x + Math.cos(ang) * (r + (64 * t + 10) * len), y + Math.sin(ang) * (r + (64 * t + 10) * len));
     }
     c.stroke();
   } else if (style === 'sigma' || style === 'pi') {
-    c.font = `800 ${Math.round(r * 2.4 + 40 * t)}px "Shantell Sans", serif`;
+    c.font = `800 ${Math.round(r * 3 + 70 * t)}px "Shantell Sans", serif`;
     c.textAlign = 'center';
     c.textBaseline = 'middle';
     c.fillText(style === 'pi' ? 'π' : 'Σ', x, y);
   } else if (style === 'heart') {
-    const size = r * 0.9 + 26 * t;
+    const size = r * 1.2 + 46 * t;
     c.beginPath();
     c.moveTo(x, y + size);
     c.bezierCurveTo(x - size * 1.7, y - size * 0.3, x - size * 0.7, y - size * 1.2, x, y - size * 0.35);
@@ -221,14 +223,33 @@ export function drawBlast(c: CanvasRenderingContext2D, x: number, y: number, r: 
   } else if (style === 'shock') {
     for (const k of [1, 0.65, 0.3]) {
       c.beginPath();
-      c.arc(x, y, r + 44 * t * k, 0, Math.PI * 2);
+      c.arc(x, y, r + 80 * t * k, 0, Math.PI * 2);
       c.stroke();
     }
   } else {
     c.beginPath();
-    c.arc(x, y, r + 36 * t, 0, Math.PI * 2);
+    c.arc(x, y, r + 70 * t, 0, Math.PI * 2);
+    c.stroke();
+    c.lineWidth = 3 * (1 - t) + 1;
+    c.beginPath();
+    c.arc(x, y, r * 0.6 + 38 * t, 0, Math.PI * 2);
     c.stroke();
   }
+}
+
+/** The bright flash of an explosion: a white core inside a fading orange ball. t goes from 0 to 1. */
+export function drawFireball(c: CanvasRenderingContext2D, x: number, y: number, r: number, t: number): void {
+  const size = r * (1.5 + 3.4 * Math.sqrt(t));
+  const g = c.createRadialGradient(x, y, 0, x, y, size);
+  const a = 1 - t;
+  g.addColorStop(0, `rgba(255,255,255,${a})`);
+  g.addColorStop(0.25, `rgba(255,236,140,${a})`);
+  g.addColorStop(0.55, `rgba(255,150,40,${a * 0.85})`);
+  g.addColorStop(1, 'rgba(255,90,30,0)');
+  c.fillStyle = g;
+  c.beginPath();
+  c.arc(x, y, size, 0, Math.PI * 2);
+  c.fill();
 }
 
 export interface PastView {
@@ -260,6 +281,7 @@ export class Stage {
   private holes: Circle[] = [];
   private shot: ActiveShot | null = null;
   private rings: Ring[] = [];
+  private fireballs: { x: number; y: number; r: number; at: number }[] = [];
   private particles: Particle[] = [];
   private floaters: Floater[] = [];
   private flyers: Flyer[] = [];
@@ -446,8 +468,12 @@ export class Stage {
         vx: Math.cos(a) * v,
         vy: Math.sin(a) * v,
         life: 0,
-        max: kind === 'smoke' ? 0.7 + Math.random() * 0.7 : 0.35 + Math.random() * 0.45,
-        size: kind === 'smoke' ? 6 + Math.random() * 9 : kind === 'chunk' ? 2 + Math.random() * 4 : 1.2 + Math.random() * 2.2,
+        max: kind === 'smoke' ? 0.9 + Math.random() * 0.8 : kind === 'ember' ? 0.8 + Math.random() * 0.7 : 0.4 + Math.random() * 0.5,
+        size:
+          kind === 'smoke' ? 10 + Math.random() * 13
+          : kind === 'chunk' ? 3.5 + Math.random() * 5
+          : kind === 'ember' ? 2.5 + Math.random() * 2.5
+          : 2.4 + Math.random() * 2.6,
         color,
         kind,
         spin: Math.random() * 6,
@@ -648,14 +674,16 @@ export class Stage {
     const { x, y } = shot.record.end;
     const big = r > BLAST_R;
     const theme = THEMES[this.themeId];
-    this.burst(x, y, big ? 28 : 16, theme.smoke, 'smoke', big ? 1.1 : 0.7);
-    this.burst(x, y, big ? 34 : 18, '#ffb02e', 'spark', big ? 3.4 : 2.4);
-    this.burst(x, y, big ? 26 : 14, this.rockColorAt(x, y), 'chunk', big ? 2.6 : 1.8);
+    this.burst(x, y, big ? 34 : 22, theme.smoke, 'smoke', big ? 1.2 : 0.8);
+    this.burst(x, y, big ? 48 : 32, '#ffb02e', 'spark', big ? 4.4 : 3.4);
+    this.burst(x, y, big ? 22 : 14, '#ff6a2a', 'ember', big ? 2 : 1.5);
+    this.burst(x, y, big ? 30 : 20, this.rockColorAt(x, y), 'chunk', big ? 3 : 2.3);
     this.holes.push({ x, y, r });
     this.terrainDirty = true;
+    if (!reducedMotion()) this.fireballs.push({ x, y, r: big ? r * 0.8 : Math.max(r * 1.3, 17), at: now });
     this.rings.push({ x, y, r, at: now, color: shot.color, style: shot.blast });
-    this.shake = Math.max(this.shake, big ? 12 : 5);
-    this.flash = Math.max(this.flash, big ? 0.35 : 0.12);
+    this.shake = Math.max(this.shake, big ? 14 : 8);
+    this.flash = Math.max(this.flash, big ? 0.38 : 0.18);
     for (const id of shot.record.blastKills ?? []) {
       const s = this.soldiers.find((q) => q.id === id);
       if (s && s.alive) this.knockOut(s, now, shot);
@@ -679,6 +707,9 @@ export class Stage {
       if (p.kind === 'smoke') {
         p.vx *= 0.94;
         p.vy = p.vy * 0.94 - 18 * dt;
+      } else if (p.kind === 'ember') {
+        p.vx *= 0.96;
+        p.vy = p.vy * 0.96 + 40 * dt;
       } else if (p.kind === 'confetti') {
         p.vx += Math.sin(p.spin) * 30 * dt;
       } else {
@@ -709,7 +740,7 @@ export class Stage {
       const x = this.px(p.x);
       c.fillStyle = p.color;
       if (p.kind === 'smoke') {
-        c.globalAlpha = (1 - t) * 0.5;
+        c.globalAlpha = (1 - t) * 0.3;
         c.beginPath();
         c.arc(x, p.y, p.size * (0.6 + t * 1.4), 0, Math.PI * 2);
         c.fill();
@@ -733,6 +764,26 @@ export class Stage {
         c.closePath();
         c.fill();
         c.restore();
+      } else if (p.kind === 'spark') {
+        // A streak along its direction of travel, so fast sparks read clearly.
+        c.globalAlpha = 1 - t;
+        c.strokeStyle = p.color;
+        c.lineCap = 'round';
+        c.lineWidth = p.size * (1 - t * 0.5);
+        c.beginPath();
+        c.moveTo(x, p.y);
+        c.lineTo(x - (this.mirror ? -p.vx : p.vx) * 0.05, p.y - p.vy * 0.05);
+        c.stroke();
+      } else if (p.kind === 'ember') {
+        c.globalAlpha = (1 - t) * 0.35;
+        c.beginPath();
+        c.arc(x, p.y, p.size * 2.2, 0, Math.PI * 2);
+        c.fill();
+        c.globalAlpha = 1 - t;
+        c.fillStyle = t < 0.4 ? '#ffe28a' : p.color;
+        c.beginPath();
+        c.arc(x, p.y, p.size * (1 - t * 0.4), 0, Math.PI * 2);
+        c.fill();
       } else {
         c.globalAlpha = 1 - t;
         const s = p.kind === 'chunk' ? p.size : p.size * (1 - t * 0.5);
@@ -750,9 +801,12 @@ export class Stage {
       c.restore();
     }
 
-    this.rings = this.rings.filter((b) => now - b.at < 620);
+    this.fireballs = this.fireballs.filter((f) => now - f.at < 560);
+    for (const f of this.fireballs) drawFireball(c, this.px(f.x), f.y, f.r, (now - f.at) / 560);
+
+    this.rings = this.rings.filter((b) => now - b.at < 820);
     for (const b of this.rings) {
-      const t = (now - b.at) / 620;
+      const t = (now - b.at) / 820;
       const x = this.px(b.x);
       c.globalAlpha = 1 - t;
       drawBlast(c, x, b.y, b.r, t, b.color, b.style);

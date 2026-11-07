@@ -427,7 +427,7 @@ export function GameView(props: {
                   }
                 }}
               />
-              <button class="primary fire" onClick={doFire} disabled={!canAct || !!check}>Fire</button>
+              <button class="primary fire" data-sfx="none" onClick={doFire} disabled={!canAct || !!check}>Fire</button>
             </div>
             {expr.trim() && !check && <Tex expr={expr} prefix={modeLabel(mode)} />}
             {(check || error) && <p class="error" role="alert">{check?.message ?? error}</p>}

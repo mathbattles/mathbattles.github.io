@@ -40,7 +40,13 @@ export interface Profile {
   lookVersion: number;
   /** The account this progress belongs to, or null for a guest. */
   ownerUid: string | null;
+  /** Sound effects off. */
   muted: boolean;
+  sfxVolume: number;
+  music: boolean;
+  musicVolume: number;
+  /** Which music track repeats, or -1 to play all of them in order. */
+  musicTrack: number;
   chatOff: boolean;
   analytics: 'unset' | 'yes' | 'no';
   updatedAt: number;
@@ -98,6 +104,10 @@ function fresh(): Profile {
     lookVersion: LOOK_VERSION,
     ownerUid: null,
     muted: false,
+    sfxVolume: 0.8,
+    music: true,
+    musicVolume: 0.45,
+    musicTrack: -1,
     chatOff: false,
     analytics: 'unset',
     updatedAt: 0,
@@ -147,7 +157,7 @@ export function saveProfile(): void {
 
 /** Settings that belong to this device, not to whoever is signed in. */
 function deviceSettings(p: Profile) {
-  return { guestToken: p.guestToken, theme: p.theme, lookVersion: p.lookVersion, muted: p.muted, chatOff: p.chatOff, analytics: p.analytics };
+  return { guestToken: p.guestToken, theme: p.theme, lookVersion: p.lookVersion, muted: p.muted, sfxVolume: p.sfxVolume, music: p.music, musicVolume: p.musicVolume, musicTrack: p.musicTrack, chatOff: p.chatOff, analytics: p.analytics };
 }
 
 /**
