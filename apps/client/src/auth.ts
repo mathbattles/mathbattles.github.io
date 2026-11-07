@@ -91,7 +91,7 @@ export async function initAuth(): Promise<void> {
     authState.ready = true;
     emit();
   }
-  if (profile.analytics === 'yes') void startAnalytics();
+  if (profile.analytics === 'yes' && profile.ageBand !== 'child') void startAnalytics();
 }
 
 function readProviders(user: import('firebase/auth').User): void {
@@ -294,11 +294,49 @@ export async function signIn(): Promise<void> {
   try {
     await watchAuth();
     const { auth, mod } = await getAuthApi();
-    await mod.signInWithPopup(auth, new mod.GoogleAuthProvider());
+    try {
+      await mod.signInWithPopup(auth, new mod.GoogleAuthProvider());
+    } catch (e) {
+      // Some browsers block pop-ups. A full-page redirect works there, and comes back here.
+      if ((e as { code?: string }).code !== 'auth/popup-blocked') throw e;
+      rememberSignedIn(true);
+      await mod.signInWithRedirect(auth, new mod.GoogleAuthProvider());
+      return;
+    }
     rememberSignedIn(true);
   } catch (e) {
     authState.error = errorText(e);
     emit();
+  }
+}
+
+/**
+ * Proves it's really you again, for changes Firebase protects with a recent sign-in.
+ * Google accounts confirm in a pop-up; password accounts use the current password.
+ */
+async function reauthenticate(currentPassword?: string): Promise<void> {
+  const { auth, mod } = await getAuthApi();
+  const user = auth.currentUser;
+  if (!user) throw Object.assign(new Error('Sign in first'), { code: 'auth/no-current-user' });
+  const ids = user.providerData.map((p) => p.providerId);
+  if (ids.includes('google.com')) {
+    await mod.reauthenticateWithPopup(user, new mod.GoogleAuthProvider());
+    return;
+  }
+  if (!currentPassword) throw Object.assign(new Error('Password needed'), { code: 'auth/requires-recent-login' });
+  const email = user.email ?? user.providerData.find((p) => p.email)?.email;
+  if (!email) throw Object.assign(new Error('No email'), { code: 'auth/requires-recent-login' });
+  await mod.reauthenticateWithCredential(user, mod.EmailAuthProvider.credential(email, currentPassword));
+}
+
+/** Runs a protected change, confirming the sign-in first if Firebase asks for it. */
+async function withRecentLogin<T>(task: () => Promise<T>, currentPassword?: string): Promise<T> {
+  try {
+    return await task();
+  } catch (e) {
+    if ((e as { code?: string }).code !== 'auth/requires-recent-login') throw e;
+    await reauthenticate(currentPassword);
+    return task();
   }
 }
 
@@ -319,29 +357,51 @@ export async function linkGoogle(): Promise<AuthResult> {
 export async function addUsernameAndPassword(username: string, password: string): Promise<AuthResult> {
   const bad = checkNewCredentials(username, password);
   if (bad) return { error: bad };
-  const { auth, mod } = await getAuthApi();
+  const { auth } = await getAuthApi();
   const user = auth.currentUser;
   if (!user) return { error: 'Sign in first.' };
-  // A Google account's own email stays its login, and the server uses it for username sign-in.
-  const email = user.email ?? user.providerData.find((p) => p.email)?.email;
-  if (!email) return { error: 'This account has no email to attach a password to.' };
+  if (!(user.email ?? user.providerData.find((p) => p.email)?.email)) return { error: 'This account has no email to attach a password to.' };
   // Saying the same username again is allowed, so this can be retried if the second step fails.
   const claim = await claimUsername(await user.getIdToken(), username);
   if (!claim.username) return { error: claim.error ?? 'That username is taken.' };
   authState.username = claim.username;
   profile.name = claim.username;
   saveProfile();
+  const added = await addPassword(password);
+  if (added.error) return { error: `Your username is saved. To finish, add a password below. (${added.error.replace(/\.$/, '')}.)` };
+  return { message: 'Username and password added. You can now sign in with either one, or with Google.' };
+}
+
+/**
+ * Adds a password to an account that only had Google. The password is tied to the account's
+ * email, and the server is told that email, so signing in with the username works afterwards.
+ */
+export async function addPassword(password: string): Promise<AuthResult> {
+  if (password.length < MIN_PASSWORD) return { error: `Passwords need at least ${MIN_PASSWORD} characters.` };
+  const { auth, mod } = await getAuthApi();
+  const user = auth.currentUser;
+  if (!user) return { error: 'Sign in first.' };
+  const email = user.email ?? user.providerData.find((p) => p.email)?.email;
+  if (!email) return { error: 'This account has no email to attach a password to.' };
   try {
-    await mod.linkWithCredential(user, mod.EmailAuthProvider.credential(email, password));
+    await withRecentLogin(() => mod.linkWithCredential(user, mod.EmailAuthProvider.credential(email, password)));
   } catch (e) {
-    if ((e as { code?: string }).code !== 'auth/provider-already-linked') {
-      emit();
-      return { error: `Your username is saved, but the password wasn't. Try again: ${errorText(e)}` };
+    const code = (e as { code?: string }).code;
+    if (code === 'auth/provider-already-linked') {
+      // A password is already on the account: set it to the one just typed instead.
+      try {
+        await withRecentLogin(() => mod.updatePassword(user, password));
+      } catch (err) {
+        return { error: errorText(err) };
+      }
+    } else {
+      return { error: errorText(e) };
     }
   }
   await refreshAfterChange();
-  await syncEmail(await user.getIdToken());
-  return { message: 'Username and password added.' };
+  const synced = await syncEmail(await user.getIdToken(true));
+  if (!synced?.ok) return { message: 'Password added. If signing in with your username fails, sign in with Google once and it will start working.' };
+  return { message: 'Password added. You can now sign in with your username and password.' };
 }
 
 /** Adds a real email. Firebase mails a link, and the address takes effect once it's clicked. */
@@ -357,16 +417,17 @@ export async function addEmail(email: string): Promise<AuthResult> {
   }
 }
 
-/** Sets a new password. Firebase requires a recent sign-in, and says so if it isn't. */
-export async function changePassword(password: string): Promise<AuthResult> {
+/** Sets a new password. Firebase wants a recent sign-in, so it confirms with Google or the current password. */
+export async function changePassword(password: string, currentPassword?: string): Promise<AuthResult> {
   if (password.length < MIN_PASSWORD) return { error: `Passwords need at least ${MIN_PASSWORD} characters.` };
   const { auth, mod } = await getAuthApi();
   const user = auth.currentUser;
   if (!user) return { error: 'Sign in first.' };
   try {
-    await mod.updatePassword(user, password);
+    await withRecentLogin(() => mod.updatePassword(user, password), currentPassword);
     return { message: 'Your password was changed.' };
   } catch (e) {
+    if ((e as { code?: string }).code === 'auth/requires-recent-login') return { error: 'Enter your current password too, to confirm it is you.' };
     return { error: errorText(e) };
   }
 }
@@ -408,14 +469,14 @@ async function retryPendingDelete(): Promise<void> {
 }
 
 /** Permanently removes the account and its online data. Progress on this device stays as a guest. */
-export async function deleteAccount(): Promise<AuthResult> {
+export async function deleteAccount(currentPassword?: string): Promise<AuthResult> {
   const { auth } = await getAuthApi();
   const user = auth.currentUser;
   if (!user) return { error: 'Sign in first.' };
   try {
     const token = await user.getIdToken(true);
     // Firebase refuses without a recent login, and then nothing has been removed.
-    await user.delete();
+    await withRecentLogin(() => user.delete(), currentPassword);
     // Stop syncing, or a delayed save could recreate the data just deleted.
     clearTimeout(pendingPush);
     setSyncHook(null);
@@ -433,6 +494,7 @@ export async function deleteAccount(): Promise<AuthResult> {
     }
     return {};
   } catch (e) {
+    if ((e as { code?: string }).code === 'auth/requires-recent-login') return { error: 'Enter your password to confirm, then try again.' };
     return { error: errorText(e) };
   }
 }
@@ -450,6 +512,8 @@ async function startAnalytics(): Promise<void> {
 }
 
 export function setAnalyticsConsent(yes: boolean): void {
+  // Players under 13 never get analytics.
+  if (profile.ageBand === 'child') yes = false;
   profile.analytics = yes ? 'yes' : 'no';
   saveProfile();
   if (yes) void startAnalytics();

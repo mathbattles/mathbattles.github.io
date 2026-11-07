@@ -3,7 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "workspaces": ["packages/*", "apps/*"],
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
     "dev": "npm run dev -w @mathbattles/client",
     "dev:server": "npm run dev -w @mathbattles/server",
@@ -13,8 +16,12 @@
     "e2e": "playwright test"
   },
   "devDependencies": {
-    "@playwright/test": "^1.49.0",
+    "@playwright/test": "^1.65.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vite": "^8.3.6",
+    "vitest": "^5.1.0"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.3"
   }
 }

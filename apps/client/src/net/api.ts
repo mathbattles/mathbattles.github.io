@@ -169,5 +169,53 @@ export interface AdminData {
   stats: Record<string, number>;
   reports: { id: number; code: string; reported: string; text: string; created_at: number }[];
 }
-export const adminData = () => authed<AdminData>('/api/admin');
-export const adminDeleteReport = (id: number) => authed<{ ok: boolean }>(`/api/admin/reports/${id}`, { method: 'DELETE' });
+/** The admin's two-step session lives only in this tab, and only for 30 minutes. */
+const ADMIN_KEY = 'mathbattles.adminSession';
+export function adminSession(): string | null {
+  try {
+    const raw = JSON.parse(sessionStorage.getItem(ADMIN_KEY) ?? 'null') as { token: string; expires: number } | null;
+    return raw && raw.expires > Date.now() ? raw.token : null;
+  } catch {
+    return null;
+  }
+}
+function setAdminSession(token: string | null, expires = 0): void {
+  try {
+    if (token) sessionStorage.setItem(ADMIN_KEY, JSON.stringify({ token, expires }));
+    else sessionStorage.removeItem(ADMIN_KEY);
+  } catch {
+    /* no storage */
+  }
+}
+const adminHeaders = (): Record<string, string> => {
+  const s = adminSession();
+  return s ? { 'x-admin-session': s } : {};
+};
+async function adminCall<T>(path: string, init: RequestInit = {}): Promise<{ data?: T; error?: string; mfa?: boolean; reauth?: boolean }> {
+  const { authState } = await import('../auth');
+  if (!authState.token) return { error: 'Sign in first.' };
+  try {
+    const res = await fetch(`${SERVER_URL}${path}`, {
+      ...init,
+      headers: { ...(init.body ? { 'content-type': 'application/json' } : {}), authorization: `Bearer ${authState.token}`, ...adminHeaders() },
+    });
+    const body = (await res.json()) as T & { error?: string; mfa?: boolean; reauth?: boolean };
+    if (body.mfa) setAdminSession(null);
+    return res.ok ? { data: body } : { error: body.error ?? 'Something went wrong.', mfa: body.mfa, reauth: body.reauth };
+  } catch {
+    return { error: "The game server isn't reachable. Try again soon." };
+  }
+}
+export const adminMfaStatus = () => adminCall<{ active: boolean }>('/api/admin/mfa');
+export const adminMfaSetup = () => adminCall<{ secret: string; uri: string }>('/api/admin/mfa/setup', { method: 'POST', body: '{}' });
+export async function adminMfaVerify(code: string) {
+  const r = await adminCall<{ session: string; expires: number }>('/api/admin/mfa/verify', { method: 'POST', body: JSON.stringify({ code }) });
+  if (r.data) setAdminSession(r.data.session, r.data.expires);
+  return r;
+}
+export async function adminLogout() {
+  await adminCall('/api/admin/logout', { method: 'POST', body: '{}' });
+  setAdminSession(null);
+}
+export const adminData = () => adminCall<AdminData>('/api/admin');
+export const adminDeleteReport = (id: number) => adminCall<{ ok: boolean }>(`/api/admin/reports/${id}`, { method: 'DELETE' });

@@ -6,7 +6,7 @@ async function newPlayer(browser: Browser, name: string): Promise<Page> {
   const page = await ctx.newPage();
   await page.addInitScript((n) => {
     if (!localStorage.getItem('mathbattles.profile.v1')) {
-      localStorage.setItem('mathbattles.profile.v1', JSON.stringify({ name: n, analytics: 'no' }));
+      localStorage.setItem('mathbattles.profile.v1', JSON.stringify({ name: n, analytics: 'no', ageBand: 'adult' }));
     }
   }, name);
   page.on('pageerror', (e) => {
@@ -1016,6 +1016,55 @@ test('friends and parties between two accounts: request, accept, invite, party, 
     await deleteAccount(a);
     await deleteAccount(b);
   }
+});
+
+test('the admin page stays closed to everyone but the owner', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Curious');
+  await page.goto('/#/admin');
+  await expect(page.getByText("This page is only for the game's owner.")).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Add|Unlock every cosmetic/ })).toHaveCount(0);
+});
+
+test('accounts ask for age first, and under-13 players stay guests without chat', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(() => {
+    if (!localStorage.getItem('mathbattles.profile.v1')) localStorage.setItem('mathbattles.profile.v1', JSON.stringify({ name: 'Kid', analytics: 'unset' }));
+  });
+  const page = await ctx.newPage();
+  await page.goto('/#/signin');
+  await page.getByRole('button', { name: 'Create account' }).first().click();
+  await expect(page.getByText('What year were you born?')).toBeVisible();
+  await expect(page.getByLabel('Username')).toHaveCount(0);
+  const year = String(new Date().getFullYear() - 10);
+  await choose(page.getByRole('button', { name: 'Birth year' }), year);
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByText('Accounts are for players 13 and older.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign in with Google' })).toHaveCount(0);
+  // The answer sticks: reloading doesn't ask again.
+  await page.reload();
+  await page.getByRole('button', { name: 'Create account' }).first().click();
+  await expect(page.getByText('Accounts are for players 13 and older.')).toBeVisible();
+  // No analytics prompt, and no chat box in online rooms.
+  await page.goto('/#/');
+  await expect(page.getByRole('dialog', { name: 'Analytics choice' })).toHaveCount(0);
+  await page.goto('/#/online');
+  await page.getByRole('button', { name: 'Create private room' }).click();
+  await expect(page).toHaveURL(/#\/room\//);
+  await expect(page.getByLabel('Chat message')).toHaveCount(0);
+  await ctx.close();
+});
+
+test('an adult who answers the age check gets the sign-up form', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto('/#/signin');
+  await page.getByRole('button', { name: 'Create account' }).first().click();
+  await choose(page.getByRole('button', { name: 'Birth year' }), '1995');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByLabel('Username')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign in with Google' })).toBeVisible();
+  await ctx.close();
 });
 
 test('an owned obstacle design is used on the real field', async ({ browser }) => {

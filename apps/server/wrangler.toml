@@ -26,4 +26,4 @@ crons = ["0 3 * * *"]
 FIREBASE_PROJECT_ID = "mathbattles-98eee"
 # The public web key, also present in the code of the site.
 FIREBASE_API_KEY = "AIzaSyAEpVeNtZMpX-mj_iVvGJ0Fmy_1XhBGCKQ"
-ALLOWED_ORIGINS = "https://mathbattles.github.io,http://localhost:5173"
+ALLOWED_ORIGINS = "https://mathbattles.github.io"

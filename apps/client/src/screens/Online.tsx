@@ -138,7 +138,9 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
     setChatText('');
   };
 
-  const chatPanel = profile.chatOff || watch ? null : (
+  const chatPanel = profile.ageBand === 'child' ? (
+    <div class="mini"><h3>Chat</h3><p class="muted small-note" style={{ margin: 0 }}>Chat is off for players under 13. You'll still see when people join, leave, and win.</p></div>
+  ) : profile.chatOff || watch ? null : (
     <div class="mini">
       <h3>Chat</h3>
       <div class="chatlog" ref={chatRef} aria-live="polite">

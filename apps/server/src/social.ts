@@ -1,5 +1,7 @@
 import { START_RATING, cleanMap } from '@mathbattles/sim';
 import { overLimit } from './limits';
+import { checkCode, decryptSecret, encryptSecret, newSecret, newSessionToken } from './mfa';
+import { newId, sha256Hex } from './security';
 
 /** What these routes need from the main worker, passed in so this file stays independent. */
 export interface ApiContext {
@@ -9,6 +11,10 @@ export interface ApiContext {
   json: (data: unknown, status?: number) => Response;
   /** The signed-in player's id, or null for guests. */
   uid: string | null;
+  /** When that player last really signed in, in seconds. */
+  authTime: number;
+  /** The key that encrypts the admin's two-step secret, if set. */
+  mfaKey?: string;
   newCode: () => string;
   ip: string | null;
 }
@@ -105,7 +111,7 @@ async function socialState(db: D1Database, uid: string) {
   const invites = (await db.prepare(
     `SELECT i.id AS id, u.display AS "from", i.kind AS kind, i.target AS target FROM invites i
      JOIN usernames u ON u.uid = i.from_uid WHERE i.to_uid = ? AND i.created_at > ? ORDER BY i.created_at DESC LIMIT 10`,
-  ).bind(uid, now - 10 * 60_000).all<{ id: number; from: string; kind: string; target: string }>()).results;
+  ).bind(uid, now - 10 * 60_000).all<{ id: string; from: string; kind: string; target: string }>()).results;
 
   return { me: await nameOf(db, uid), friends, incoming, outgoing, party, invites };
 }
@@ -194,9 +200,9 @@ export async function handleSocial(ctx: ApiContext): Promise<Response | null> {
   if (route === 'invites' && req.method === 'POST') {
     if (!uid) return signIn();
     if (await overLimit(db, `invites:${uid}`, 120, 3_600_000)) return tooMany();
-    const b = await body<{ action?: string; name?: string; room?: string; id?: number }>(req);
+    const b = await body<{ action?: string; name?: string; room?: string; id?: string }>(req);
     if (b?.action === 'dismiss') {
-      await db.prepare('DELETE FROM invites WHERE id = ? AND to_uid = ?').bind(Number(b.id) || 0, uid).run();
+      await db.prepare('DELETE FROM invites WHERE id = ? AND to_uid = ?').bind(String(b.id ?? '').slice(0, 64), uid).run();
       return json({ ok: true });
     }
     if (b?.action === 'room') {
@@ -205,7 +211,7 @@ export async function handleSocial(ctx: ApiContext): Promise<Response | null> {
       const room = typeof b.room === 'string' && /^[A-Z0-9-]{4,24}$/.test(b.room) ? b.room : null;
       if (!room) return json({ error: 'Join a room first, then invite people to it.' }, 400);
       await db.prepare("DELETE FROM invites WHERE from_uid = ? AND to_uid = ? AND kind = 'room'").bind(uid, other.uid).run();
-      await db.prepare("INSERT INTO invites (from_uid, to_uid, kind, target, created_at) VALUES (?, ?, 'room', ?, ?)").bind(uid, other.uid, room, Date.now()).run();
+      await db.prepare("INSERT INTO invites (id, from_uid, to_uid, kind, target, created_at) VALUES (?, ?, ?, 'room', ?, ?)").bind(newId(), uid, other.uid, room, Date.now()).run();
       return json({ ok: true, message: `Invited ${other.display}.` });
     }
     return json({ error: 'Unknown action' }, 400);
@@ -219,7 +225,7 @@ export async function handleSocial(ctx: ApiContext): Promise<Response | null> {
     switch (b?.action) {
       case 'create': {
         await leaveParty(db, uid);
-        const id = `P-${ctx.newCode()}`;
+        const id = newId();
         await db.batch([
           db.prepare('INSERT INTO parties (id, leader, created_at) VALUES (?, ?, ?)').bind(id, uid, now),
           db.prepare('INSERT INTO party_members (uid, party_id, joined_at) VALUES (?, ?, ?)').bind(uid, id, now),
@@ -232,11 +238,11 @@ export async function handleSocial(ctx: ApiContext): Promise<Response | null> {
         const other = await byName(db, b.name);
         if (!other || !(await areFriends(db, uid, other.uid))) return json({ error: 'You can only invite friends.' }, 400);
         await db.prepare("DELETE FROM invites WHERE from_uid = ? AND to_uid = ? AND kind = 'party'").bind(uid, other.uid).run();
-        await db.prepare("INSERT INTO invites (from_uid, to_uid, kind, target, created_at) VALUES (?, ?, 'party', ?, ?)").bind(uid, other.uid, mine.party_id, now).run();
+        await db.prepare("INSERT INTO invites (id, from_uid, to_uid, kind, target, created_at) VALUES (?, ?, ?, 'party', ?, ?)").bind(newId(), uid, other.uid, mine.party_id, now).run();
         return json({ ok: true, message: `Invited ${other.display} to your party.` });
       }
       case 'join': {
-        const id = String(b.id ?? '');
+        const id = String(b.id ?? '').slice(0, 64);
         const invited = await db.prepare("SELECT 1 AS x FROM invites WHERE to_uid = ? AND kind = 'party' AND target = ?").bind(uid, id).first();
         if (!invited) return json({ error: 'That party invite has expired.' }, 400);
         const exists = await db.prepare('SELECT 1 AS x FROM parties WHERE id = ?').bind(id).first();
@@ -334,12 +340,63 @@ export async function handleSocial(ctx: ApiContext): Promise<Response | null> {
   }
 
   if (route === 'admin') {
+    // Only the owner's account, and the server decides that, not the page.
     if (!(await isAdmin(db, uid))) return json({ error: 'Not allowed' }, 403);
+    const owner = uid!;
+    const now = Date.now();
+    const recent = (seconds: number) => ctx.authTime > 0 && now / 1000 - ctx.authTime < seconds;
+    if (!ctx.mfaKey) return json({ error: 'Two-step sign-in is not set up on the server yet.' }, 503);
+
+    if (parts[2] === 'mfa') {
+      const row = await db.prepare('SELECT secret_enc, active, last_step FROM admin_mfa WHERE uid = ?').bind(owner).first<{ secret_enc: string; active: number; last_step: number }>();
+      if (req.method === 'GET') return json({ active: row?.active === 1 });
+      if (parts[3] === 'setup' && req.method === 'POST') {
+        // Once set up, it can't be replaced from the web, so a stolen password can't move it.
+        if (row?.active === 1) return json({ error: 'Two-step sign-in is already set up.' }, 409);
+        if (!recent(15 * 60)) return json({ error: 'Sign out and back in, then set this up within 15 minutes.', reauth: true }, 401);
+        if (await overLimit(db, `mfa-setup:${owner}`, 5, 3_600_000)) return tooMany();
+        const secret = newSecret();
+        await db.prepare('INSERT INTO admin_mfa (uid, secret_enc, active, last_step, created_at) VALUES (?, ?, 0, 0, ?) ON CONFLICT (uid) DO UPDATE SET secret_enc = excluded.secret_enc, last_step = 0, created_at = excluded.created_at')
+          .bind(owner, await encryptSecret(secret, ctx.mfaKey), now).run();
+        const label = encodeURIComponent(`MathBattles.io:${ADMIN_USERNAME}`);
+        return json({ secret, uri: `otpauth://totp/${label}?secret=${secret}&issuer=MathBattles.io&algorithm=SHA1&digits=6&period=30` });
+      }
+      if (parts[3] === 'verify' && req.method === 'POST') {
+        if (!row) return json({ error: 'Set up two-step sign-in first.' }, 400);
+        if (await overLimit(db, `mfa-verify:${owner}`, 6, 10 * 60_000)) return tooMany();
+        // A sign-in more than 12 hours old has to be renewed first.
+        if (!recent(12 * 3600)) return json({ error: 'Sign out and back in, then enter a code.', reauth: true }, 401);
+        const b = await body<{ code?: string }>(req);
+        const code = String(b?.code ?? '').replace(/\s/g, '');
+        const step = await checkCode(await decryptSecret(row.secret_enc, ctx.mfaKey), code, now, row.last_step);
+        if (step === null) return json({ error: 'That code is wrong or already used. Wait for the next one.' }, 401);
+        const token = newSessionToken();
+        const expires = now + 30 * 60_000;
+        await db.batch([
+          db.prepare('UPDATE admin_mfa SET active = 1, last_step = ? WHERE uid = ?').bind(step, owner),
+          db.prepare('DELETE FROM admin_sessions WHERE uid = ? OR expires_at < ?').bind(owner, now),
+          db.prepare('INSERT INTO admin_sessions (token_hash, uid, expires_at) VALUES (?, ?, ?)').bind(await sha256Hex(token), owner, expires),
+        ]);
+        return json({ session: token, expires });
+      }
+      return json({ error: 'Not found' }, 404);
+    }
+
+    // Everything else needs a two-step session from the last 30 minutes, tied to this account.
+    const session = req.headers.get('x-admin-session') ?? '';
+    const valid = session.length >= 32 && !!(await db.prepare('SELECT 1 AS x FROM admin_sessions WHERE token_hash = ? AND uid = ? AND expires_at > ?')
+      .bind(await sha256Hex(session), owner, now).first());
+    if (!valid) return json({ error: 'Enter a code from your authenticator app.', mfa: true }, 401);
+
+    if (parts[2] === 'logout' && req.method === 'POST') {
+      await db.prepare('DELETE FROM admin_sessions WHERE uid = ?').bind(owner).run();
+      return json({ ok: true });
+    }
     if (parts[2] === 'reports' && parts[3] && req.method === 'DELETE') {
       await db.prepare('DELETE FROM reports WHERE id = ?').bind(Number(parts[3]) || 0).run();
       return json({ ok: true });
     }
-    const now = Date.now();
+    if (req.method !== 'GET' || parts[2]) return json({ error: 'Not found' }, 404);
     const count = async (sql: string, ...args: unknown[]) => (await db.prepare(sql).bind(...args).first<{ n: number }>())?.n ?? 0;
     const stats = {
       accounts: await count('SELECT COUNT(*) AS n FROM usernames'),
@@ -363,5 +420,6 @@ export function socialCleanup(db: D1Database, now: number): Promise<unknown>[] {
   return [
     db.prepare('DELETE FROM invites WHERE created_at < ?').bind(now - 86_400_000).run(),
     db.prepare('DELETE FROM presence WHERE last_seen < ?').bind(now - 7 * 86_400_000).run(),
+    db.prepare('DELETE FROM admin_sessions WHERE expires_at < ?').bind(now).run(),
   ];
 }

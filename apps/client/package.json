@@ -10,12 +10,13 @@
   },
   "dependencies": {
     "@mathbattles/sim": "*",
-    "firebase": "^11.0.0",
-    "katex": "^0.16.11",
-    "preact": "^10.24.0"
+    "firebase": "^13.2.0",
+    "katex": "^0.19.1",
+    "preact": "^10.24.0",
+    "qrcode-generator": "1.4.4"
   },
   "devDependencies": {
     "@types/katex": "^0.16.7",
-    "vite": "^5.4.0"
+    "vite": "^8.3.6"
   }
 }

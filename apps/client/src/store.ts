@@ -61,6 +61,8 @@ export interface Profile {
   mathKeys: 'auto' | 'on' | 'off';
   chatOff: boolean;
   analytics: 'unset' | 'yes' | 'no';
+  /** Set by the age check before making an account. Only the band is kept, never the birth year. */
+  ageBand?: 'adult' | 'child';
   updatedAt: number;
 }
 
@@ -172,7 +174,7 @@ export function saveProfile(): void {
 
 /** Settings that belong to this device, not to whoever is signed in. */
 function deviceSettings(p: Profile) {
-  return { guestToken: p.guestToken, theme: p.theme, lookVersion: p.lookVersion, muted: p.muted, sfxVolume: p.sfxVolume, music: p.music, musicVolume: p.musicVolume, musicTrack: p.musicTrack, mathKeys: p.mathKeys, chatOff: p.chatOff, analytics: p.analytics };
+  return { guestToken: p.guestToken, theme: p.theme, lookVersion: p.lookVersion, muted: p.muted, sfxVolume: p.sfxVolume, music: p.music, musicVolume: p.musicVolume, musicTrack: p.musicTrack, mathKeys: p.mathKeys, chatOff: p.chatOff, analytics: p.analytics, ageBand: p.ageBand };
 }
 
 /**

@@ -40,7 +40,7 @@ export function Tex({ expr, prefix }: { expr: string; prefix: string }) {
     void import('katex').then(async ({ default: katex }) => {
       await import('katex/dist/katex.min.css');
       if (!live || !ref.current) return;
-      katex.render(`${prefix.replaceAll("'", "'")} ${exprToTex(expr)}`, ref.current, { throwOnError: false, trust: false, strict: false });
+      katex.render(`${prefix.replaceAll("'", "'")} ${exprToTex(expr)}`, ref.current, { throwOnError: false, trust: false, strict: false, maxSize: 20, maxExpand: 50 });
     });
     return () => {
       live = false;

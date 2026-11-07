@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ME,
   PLANE_H,
   PLANE_W,
   createSolo,

@@ -5,44 +5,60 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+# Nothing gets more access than it needs. Each job asks for its own.
+permissions: {}
 
 concurrency:
   group: pages
   cancel-in-progress: true
 
+# Every action is pinned to one exact, reviewed commit (its version is in the comment), so a
+# moved or hijacked tag can't change what runs here. Dependabot proposes updates to the pins.
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
+      # Installs exactly what the lockfile says, checking every package's integrity hash.
       - run: npm ci
+      - name: Check for known vulnerabilities
+        run: npm audit --audit-level=high
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Check the build has no source maps and keeps its integrity hashes
+        run: |
+          if find apps/client/dist -name '*.map' | grep -q .; then echo "::error::Source maps found in the build"; exit 1; fi
+          grep -q 'integrity="sha384-' apps/client/dist/index.html || { echo "::error::Integrity hashes missing"; exit 1; }
+          grep -q 'Content-Security-Policy' apps/client/dist/index.html || { echo "::error::Security policy missing"; exit 1; }
       - run: npx playwright install --with-deps chromium
       - run: npm run migrate:local -w @mathbattles/server
       # Tests that create real accounts run by hand against the live site, not on every push.
       - run: npx playwright test --grep-invert "account|ranked|username"
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: apps/client/dist
 
   server:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -61,9 +77,12 @@ jobs:
   deploy:
     needs: server
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

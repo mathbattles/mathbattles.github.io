@@ -25,6 +25,38 @@ test('badly formed requests get clean answers, not server errors', async ({ requ
   expect((await request.get(`${API}/api/nothing`)).status()).toBe(404);
 });
 
+test('answers are never cached and carry safety headers', async ({ request }) => {
+  const res = await request.get(`${API}/api/health`);
+  const h = res.headers();
+  expect(h['cache-control']).toContain('no-store');
+  expect(h['x-content-type-options']).toBe('nosniff');
+  expect(h['x-frame-options']).toBe('DENY');
+  expect(h['referrer-policy']).toBe('no-referrer');
+  expect(h['content-security-policy']).toContain("frame-ancestors 'none'");
+});
+
+test('other websites, forms and odd methods are turned away', async ({ request }) => {
+  const evil = await request.post(`${API}/api/rooms`, { headers: { origin: 'https://evil.example' }, data: { public: false } });
+  expect(evil.status()).toBe(403);
+  // Plain form posts aren't JSON, so they're refused before doing anything.
+  const form = await request.post(`${API}/api/report`, { headers: { 'content-type': 'application/x-www-form-urlencoded' }, data: 'text=hi' });
+  expect(form.status()).toBe(415);
+  expect((await request.fetch(`${API}/api/health`, { method: 'PATCH' })).status()).toBe(405);
+  // A browser asking from another site gets no permission to read answers.
+  const pre = await request.fetch(`${API}/api/rooms`, { method: 'OPTIONS', headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST' } });
+  expect(pre.headers()['access-control-allow-origin']).toBeUndefined();
+  // A malformed login header is treated as no login at all.
+  expect((await request.get(`${API}/api/profile`, { headers: { authorization: 'Bearer <script>' } })).status()).toBe(401);
+});
+
+test('the admin page needs the owner account and a two-step code', async ({ request }) => {
+  for (const path of ['/api/admin', '/api/admin/mfa', '/api/admin/reports/1']) {
+    expect((await request.get(`${API}${path}`)).status()).toBe(403);
+  }
+  expect((await request.post(`${API}/api/admin/mfa/setup`, { data: {} })).status()).toBe(403);
+  expect((await request.post(`${API}/api/admin/mfa/verify`, { data: { code: '123456' } })).status()).toBe(403);
+});
+
 test('private routes need a real login', async ({ request }) => {
   const forged = { authorization: 'Bearer not.a.real-token' };
   expect((await request.get(`${API}/api/profile`)).status()).toBe(401);

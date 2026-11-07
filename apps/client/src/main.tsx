@@ -20,6 +20,15 @@ import { Friends, InviteToasts } from './screens/Friends';
 import { MapEditor, MapsPage, SharedMapScreen } from './screens/Maps';
 import { initSocial } from './social';
 
+// Another site could frame the game to trick clicks. If it's framed, break out of the frame.
+if (window.top !== window.self) {
+  try {
+    window.top!.location.href = window.self.location.href;
+  } catch {
+    document.documentElement.innerHTML = '';
+  }
+}
+
 function route(): string {
   return location.hash.replace(/^#/, '') || '/';
 }
@@ -93,7 +102,7 @@ class ErrorBoundary extends Component<{ children: ComponentChildren }, { failed:
 
 function Consent() {
   useProfile();
-  if (profile.analytics !== 'unset') return null;
+  if (profile.analytics !== 'unset' || profile.ageBand === 'child') return null;
   return (
     <div class="sheet consent" role="dialog" aria-label="Analytics choice">
       <p>Allow anonymous usage stats? They help improve the game. You can change this in Settings.</p>

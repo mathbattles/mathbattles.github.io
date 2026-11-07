@@ -2,6 +2,7 @@ import { MIN_PASSWORD, rankFor } from '@mathbattles/sim';
 import { useEffect, useState } from 'preact/hooks';
 import {
   addEmail,
+  addPassword,
   addUsernameAndPassword,
   changePassword,
   deleteAccount,
@@ -15,7 +16,9 @@ import {
   type AuthResult,
 } from '../auth';
 import { go } from '../util';
-import { TopBar } from './Shared';
+import { profile, saveProfile } from '../store';
+import { Dropdown } from './Dropdown';
+import { TopBar, useProfile } from './Shared';
 
 function Notice({ result }: { result: AuthResult | null }) {
   if (!result) return null;
@@ -72,7 +75,46 @@ function Credentials(props: {
   );
 }
 
+/**
+ * Asks for a birth year before an account is made, without hinting at the right answer.
+ * Only "13 or older" or "under 13" is kept, on this device. Under 13 can keep playing as a guest.
+ */
+function AgeCheck() {
+  const [year, setYear] = useState<number | null>(null);
+  const now = new Date().getFullYear();
+  const years = Array.from({ length: 100 }, (_, i) => now - i);
+  const confirm = () => {
+    if (year === null) return;
+    // Someone born this year minus 13 might not have had their birthday yet, so they count as under 13.
+    profile.ageBand = now - year > 13 ? 'adult' : 'child';
+    if (profile.ageBand === 'child') profile.analytics = 'no';
+    saveProfile();
+  };
+  return (
+    <div class="sheet age-check">
+      <h3>Before you make an account</h3>
+      <p>What year were you born?</p>
+      <div class="row">
+        <Dropdown label="Birth year" value={year} placeholder="Choose a year" onChange={setYear} options={years.map((y) => ({ value: y, label: String(y) }))} />
+        <button class="primary" disabled={year === null} onClick={confirm}>Continue</button>
+      </div>
+      <p class="muted small-note">We only keep whether you're 13 or older, on this device. Your birth year isn't saved or sent anywhere.</p>
+    </div>
+  );
+}
+
+function UnderThirteen() {
+  return (
+    <div class="age-check">
+      <p><strong>Accounts are for players 13 and older.</strong></p>
+      <p>You can still play everything as a guest: bots, Free Play, the campaign, Learn, custom maps, and online matches. Your progress stays on this device.</p>
+      <a class="btn primary" href="#/">Keep playing</a>
+    </div>
+  );
+}
+
 export function SignIn() {
+  useProfile();
   const auth = useAuth();
   const [mode, setMode] = useState<'in' | 'new' | 'forgot'>('in');
   const [email, setEmail] = useState('');
@@ -91,7 +133,9 @@ export function SignIn() {
           <button class={mode === 'new' ? 'on' : ''} aria-pressed={mode === 'new'} onClick={() => setMode('new')}>Create account</button>
         </div>
         {mode === 'in' && <Credentials key="in" submitLabel="Sign in" newPassword={false} onSubmit={signInWithUsername} />}
-        {mode === 'new' && <Credentials key="new" submitLabel="Create account" newPassword onSubmit={register} />}
+        {mode === 'new' && !profile.ageBand && <AgeCheck />}
+        {mode === 'new' && profile.ageBand === 'child' && <UnderThirteen />}
+        {mode === 'new' && profile.ageBand === 'adult' && <Credentials key="new" submitLabel="Create account" newPassword onSubmit={register} />}
         {mode === 'forgot' && (
           <form class="stack" onSubmit={(e) => { e.preventDefault(); void resetPassword(email).then(setForgot); }}>
             <p>Enter the email you added to your account, and we'll send a reset link.</p>
@@ -110,7 +154,13 @@ export function SignIn() {
       </div>
       <div class="sheet">
         <h3>Or use Google</h3>
-        <button onClick={() => void signIn()}>Sign in with Google</button>
+        {profile.ageBand === 'adult' ? (
+          <button onClick={() => void signIn()}>Sign in with Google</button>
+        ) : profile.ageBand === 'child' ? (
+          <p class="muted">Google sign-in can make a new account, so it's for players 13 and older.</p>
+        ) : (
+          <button onClick={() => setMode('new')}>Sign in with Google</button>
+        )}
         {auth.error && <p class="error" role="alert">{auth.error}</p>}
         <p class="muted small-note" style={{ marginTop: 10 }}>You can also keep playing as a guest. Your progress stays on this device.</p>
       </div>
@@ -124,6 +174,16 @@ export function AccountPanel() {
   const [result, setResult] = useState<AuthResult | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [newPassword, setNewPassword] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [addedPassword, setAddedPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const run = async (task: Promise<AuthResult>) => {
+    setBusy(true);
+    const r = await task;
+    setResult(r);
+    setBusy(false);
+    return r;
+  };
 
   if (!auth.ready) return <p>Checking your account.</p>;
   if (!auth.user) {
@@ -163,12 +223,31 @@ export function AccountPanel() {
         </div>
       )}
 
+      {auth.username && !auth.hasPassword && (
+        <form class="stack" onSubmit={(e) => { e.preventDefault(); void run(addPassword(addedPassword)).then((r) => { if (!r.error) setAddedPassword(''); }); }}>
+          <h3>Add a password</h3>
+          <p class="muted small-note">Then you can sign in with your username, <strong>{auth.username}</strong>, and this password, as well as with Google.</p>
+          <input type="hidden" name="username" autocomplete="username" value={auth.username} />
+          <label>Password
+            <input name="new-password" type="password" autocomplete="new-password" value={addedPassword} onInput={(e) => setAddedPassword((e.target as HTMLInputElement).value)} />
+          </label>
+          <button class="primary" disabled={busy || addedPassword.length < MIN_PASSWORD}>{busy ? 'One moment' : 'Add password'}</button>
+          <p class="muted small-note">At least {MIN_PASSWORD} characters.</p>
+        </form>
+      )}
+
       {auth.hasPassword && (
-        <form class="stack" onSubmit={(e) => { e.preventDefault(); void changePassword(newPassword).then((r) => { setResult(r); if (!r.error) setNewPassword(''); }); }}>
+        <form class="stack" onSubmit={(e) => { e.preventDefault(); void run(changePassword(newPassword, currentPassword || undefined)).then((r) => { if (!r.error) { setNewPassword(''); setCurrentPassword(''); } }); }}>
+          <h3>Change password</h3>
+          {!auth.hasGoogle && (
+            <label>Current password
+              <input name="current-password" type="password" autocomplete="current-password" value={currentPassword} onInput={(e) => setCurrentPassword((e.target as HTMLInputElement).value)} />
+            </label>
+          )}
           <label>New password
             <input name="new-password" type="password" autocomplete="new-password" value={newPassword} onInput={(e) => setNewPassword((e.target as HTMLInputElement).value)} />
           </label>
-          <button disabled={!newPassword}>Change password</button>
+          <button disabled={busy || !newPassword}>Change password</button>
         </form>
       )}
 
@@ -179,10 +258,17 @@ export function AccountPanel() {
         {!confirming && <button class="plain" onClick={() => setConfirming(true)}>Delete account</button>}
       </div>
       {confirming && (
-        <div class="row">
+        <div class="stack">
           <span>Delete your account, rank, and online progress for good?</span>
-          <button class="danger" onClick={() => void deleteAccount().then((r) => { setConfirming(false); setResult(r.error ? r : { message: 'Your account was deleted.' }); })}>Delete for good</button>
-          <button onClick={() => setConfirming(false)}>Keep my account</button>
+          {auth.hasPassword && !auth.hasGoogle && (
+            <label>Your password, to confirm
+              <input name="confirm-password" type="password" autocomplete="current-password" value={currentPassword} onInput={(e) => setCurrentPassword((e.target as HTMLInputElement).value)} />
+            </label>
+          )}
+          <div class="row">
+            <button class="danger" disabled={busy} onClick={() => void run(deleteAccount(currentPassword || undefined)).then((r) => { if (!r.error) { setConfirming(false); setResult({ message: 'Your account was deleted.' }); setCurrentPassword(''); } })}>Delete for good</button>
+            <button onClick={() => setConfirming(false)}>Keep my account</button>
+          </div>
         </div>
       )}
     </div>

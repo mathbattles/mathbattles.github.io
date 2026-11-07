@@ -368,11 +368,23 @@ export function Privacy() {
   return (
     <div class="page">
       <TopBar title="Privacy" />
-      <div class="sheet">
-        <p>You can play without an account. Guest progress stays in this browser.</p>
-        <p>If you make an account, we store your username, your game progress, and a login ID. Your password goes to our sign-in provider, Google Firebase, and we never save it. An email or Google account is optional and is only used for signing in and resetting your password.</p>
-        <p>Online matches pass your game name, chat messages, and shots through our server. Reports you send about chat are stored for review.</p>
-        <p>You can delete your account at any time from your profile. Anonymous analytics load only if you allow them in <a href="#/settings">Settings</a>.</p>
+      <div class="sheet legal">
+        <p class="muted small-note">Last updated November 2026.</p>
+        <h3>Playing as a guest</h3>
+        <p>You can play without an account. Guest progress, settings and match history stay in this browser. Online matches pass your game name, chat messages and shots through our server while you play.</p>
+        <h3>If you make an account</h3>
+        <p>We store your username, your game progress (levels, Sparks, items, stars, season pass), your ranked rating, your last 100 matches, your friends list and party, which room you're in while the game is open (shown only to your friends), and maps you choose to share. A login ID links these to you.</p>
+        <p>Your password goes to our sign-in provider, Google Firebase. We never store it. An email address or Google account is optional, and is only used for signing in and resetting your password.</p>
+        <h3>Children</h3>
+        <p>Accounts are only for players 13 and older, and we ask before making one. We keep only whether you're 13 or older, on your own device, never your birth date. Players under 13 can play as guests, with online chat and analytics turned off. If you think a child under 13 has made an account, contact us below and we'll delete it.</p>
+        <h3>Chat and reports</h3>
+        <p>Chat messages aren't saved. Reports you send about chat are kept for up to 90 days for review, then deleted.</p>
+        <h3>Analytics</h3>
+        <p>Anonymous usage stats load only if you allow them in <a href="#/settings">Settings</a>, and never for players under 13. We don't use session recording, advertising, or tracking across other sites. Fonts and other files are served from this site, not from third parties.</p>
+        <h3>Your choices</h3>
+        <p>You can delete your account at any time from your profile. That removes your username, progress, rating, match history, friends, party and shared maps from our server.</p>
+        <h3>Contact, and copyright</h3>
+        <p>For privacy questions, deletion requests, or to report content that infringes your copyright (such as a shared map or a username), open an issue at <a href="https://github.com/mathbattles/mathbattles.github.io/issues" target="_blank" rel="noopener noreferrer">github.com/mathbattles/mathbattles.github.io/issues</a>, or report a security problem privately from that repository's Security tab.</p>
       </div>
     </div>
   );

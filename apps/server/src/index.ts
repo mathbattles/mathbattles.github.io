@@ -19,6 +19,7 @@ import { MessageBucket, callerIp, overLimit } from './limits';
 import { cleanName, isBlockedName } from './moderation';
 import { RoomCore } from './roomCore';
 import { handleSocial, socialCleanup } from './social';
+import { SECURITY_HEADERS, allowedOrigins, logError, originOk } from './security';
 
 export interface Env {
   ROOM: DurableObjectNamespace;
@@ -27,6 +28,8 @@ export interface Env {
   FIREBASE_PROJECT_ID: string;
   FIREBASE_API_KEY: string;
   ALLOWED_ORIGINS: string;
+  /** Encrypts the admin's two-step secret. Set with `wrangler secret put ADMIN_MFA_KEY`. */
+  ADMIN_MFA_KEY?: string;
 }
 
 const PRIVATE_DOMAIN = '@users.mathbattles.invalid';
@@ -39,6 +42,8 @@ interface Claims {
   uid: string;
   email: string | null;
   emailVerified: boolean;
+  /** When the player last actually signed in (seconds), not just refreshed a token. */
+  authTime: number;
 }
 
 async function verifyClaims(env: Env, token: string | null | undefined): Promise<Claims | null> {
@@ -53,6 +58,7 @@ async function verifyClaims(env: Env, token: string | null | undefined): Promise
       uid: payload.sub,
       email: typeof payload.email === 'string' ? payload.email : null,
       emailVerified: payload.email_verified === true,
+      authTime: typeof payload.auth_time === 'number' ? payload.auth_time : 0,
     };
   } catch {
     return null;
@@ -60,22 +66,26 @@ async function verifyClaims(env: Env, token: string | null | undefined): Promise
 }
 
 function bearer(req: Request): string | undefined {
-  return req.headers.get('authorization')?.replace(/^Bearer /, '');
+  const value = req.headers.get('authorization') ?? '';
+  const m = value.match(/^Bearer ([\w.-]{20,4096})$/);
+  return m ? m[1] : undefined;
 }
 
 function cors(env: Env, req: Request): Record<string, string> {
   const origin = req.headers.get('origin') ?? '';
-  const allowed = env.ALLOWED_ORIGINS.split(',').includes(origin);
+  const allowed = allowedOrigins(env.ALLOWED_ORIGINS, req.url).includes(origin);
   return {
-    ...(allowed ? { 'access-control-allow-origin': origin, vary: 'origin' } : {}),
+    ...SECURITY_HEADERS,
+    vary: 'origin',
+    ...(allowed ? { 'access-control-allow-origin': origin } : {}),
     'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    'access-control-allow-headers': 'content-type,authorization',
+    'access-control-allow-headers': 'content-type,authorization,x-admin-session',
+    'access-control-max-age': '600',
   };
 }
 
 function originAllowed(env: Env, req: Request): boolean {
-  const origin = req.headers.get('origin');
-  return !origin || env.ALLOWED_ORIGINS.split(',').includes(origin);
+  return originOk(allowedOrigins(env.ALLOWED_ORIGINS, req.url), req);
 }
 
 const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -157,7 +167,7 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
 
   if (['social', 'friends', 'invites', 'party', 'maps', 'cosmetics', 'ranked', 'admin'].includes(parts[1] ?? '')) {
     const claims = await verifyClaims(env, bearer(req));
-    const handled = await handleSocial({ db: env.DB, req, parts, json, uid: claims?.uid ?? null, newCode, ip });
+    const handled = await handleSocial({ db: env.DB, req, parts, json, uid: claims?.uid ?? null, authTime: claims?.authTime ?? 0, mfaKey: env.ADMIN_MFA_KEY, newCode, ip });
     if (handled) return handled;
   }
   switch (parts[1]) {
@@ -255,6 +265,8 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
       const uid = claims.uid;
       if (action === 'claim' && req.method === 'POST') {
         if (await overLimit(env.DB, `claim:${uid}`, 20, HOUR)) return tooMany();
+        // One device can't make an endless stream of accounts.
+        if (await limitIp('claim-ip', 10, 24 * HOUR)) return tooMany();
         const body = await readJson<{ username?: string }>(req);
         const name = String(body?.username ?? '');
         const problem = usernameProblem(name) ?? (isBlockedName(name) ? 'Choose a different username' : null);
@@ -267,8 +279,11 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
             : json({ error: 'This account already has a username' }, 409);
         }
         try {
-          await env.DB.prepare('INSERT INTO usernames (username_lc, uid, display, created_at) VALUES (?, ?, ?, ?)')
-            .bind(name.toLowerCase(), uid, name, Date.now()).run();
+          // A verified real email (from Google, say) becomes the login address right away, so a
+          // password added later works with the username even if a later sync step fails.
+          const loginEmail = claims.email && claims.emailVerified && !claims.email.endsWith(PRIVATE_DOMAIN) ? claims.email : null;
+          await env.DB.prepare('INSERT INTO usernames (username_lc, uid, display, login_email, created_at) VALUES (?, ?, ?, ?, ?)')
+            .bind(name.toLowerCase(), uid, name, loginEmail, Date.now()).run();
         } catch {
           return json({ error: 'That username is taken' }, 409);
         }
@@ -285,7 +300,6 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
         await env.DB.batch([
           env.DB.prepare('DELETE FROM usernames WHERE uid = ?').bind(uid),
           env.DB.prepare('DELETE FROM players WHERE uid = ?').bind(uid),
-          env.DB.prepare('DELETE FROM daily_scores WHERE who = ?').bind(uid),
           env.DB.prepare('DELETE FROM match_history WHERE uid = ?').bind(uid),
           // Friends, presence, invites, party places and shared maps go too.
           env.DB.prepare('DELETE FROM friends WHERE uid = ? OR friend_uid = ?').bind(uid, uid),
@@ -358,7 +372,6 @@ export default {
     // Each job stands alone, so one failing can't stop the others.
     const jobs: Promise<unknown>[] = [
       env.DB.prepare('DELETE FROM rooms WHERE updated_at < ?').bind(now.getTime() - 86_400_000).run(),
-      env.DB.prepare('DELETE FROM daily_scores').run(),
       env.DB.prepare('DELETE FROM reports WHERE created_at < ?').bind(now.getTime() - 90 * 86_400_000).run(),
       env.DB.prepare('DELETE FROM rate_limits WHERE window_start < ?').bind(now.getTime() - 86_400_000).run(),
       ...socialCleanup(env.DB, now.getTime()),
@@ -372,7 +385,7 @@ export default {
       }));
     }
     const results = await Promise.allSettled(jobs);
-    for (const r of results) if (r.status === 'rejected') console.error('Scheduled job failed', r.reason);
+    for (const r of results) if (r.status === 'rejected') logError('Scheduled job failed', r.reason);
   },
 
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -395,9 +408,17 @@ export default {
         return await env.MATCHMAKER.get(env.MATCHMAKER.idFromName('global')).fetch(req);
       }
       if (parts[0] !== 'api') return json({ error: 'Not found' }, 404);
+      // Pages on other sites can't use the API from someone's browser.
+      if (!originAllowed(env, req)) return json({ error: 'Not allowed from this site' }, 403);
+      if (!['GET', 'POST', 'PUT', 'DELETE'].includes(req.method)) return json({ error: 'Not allowed' }, 405);
+      // Writes must be JSON, which also keeps plain HTML forms on other sites from posting here.
+      if (req.method !== 'GET' && req.method !== 'DELETE' && req.headers.get('content-length') !== '0') {
+        const type = req.headers.get('content-type') ?? '';
+        if (!type.startsWith('application/json')) return json({ error: 'Send JSON' }, 415);
+      }
       return await handleApi(req, env, parts, json);
     } catch (e) {
-      console.error('Request failed', e);
+      logError('Request failed', e);
       return json({ error: 'Something went wrong on the server' }, 500);
     }
   },
@@ -482,7 +503,7 @@ export class RoomObject implements DurableObject {
       const record = ratingDelta === undefined ? base : { ...base, ratingDelta: base.result === 'win' ? ratingDelta : -ratingDelta };
       statements.push(...historyStatements(this.env, uid, record, 'server'));
     }
-    if (statements.length) void this.env.DB.batch(statements).catch((e) => console.error('Saving match history failed', e));
+    if (statements.length) void this.env.DB.batch(statements).catch((e) => logError('Saving match history failed', e));
   }
 
   private async settleRanked(winnerSeat: string, loserSeat: string): Promise<number | undefined> {
@@ -588,7 +609,7 @@ export class RoomObject implements DurableObject {
           return;
         }
         core.handle(connId, msg);
-      })().catch((e) => console.error('Room message failed', e));
+      })().catch((e) => logError('Room message failed', e));
     });
     const closed = () => {
       if (!this.sockets.delete(connId)) return;
@@ -657,7 +678,7 @@ export class MatchmakerObject implements DurableObject {
         this.queue.push({ ws: server, uid: claims.uid, rating: row?.rating ?? START_RATING, joined: Date.now() });
         await this.pairUp();
         void this.ctx.storage.setAlarm(Date.now() + 5000);
-      })().catch((e) => console.error('Matchmaking failed', e));
+      })().catch((e) => logError('Matchmaking failed', e));
     });
     const closed = () => {
       open = false;
