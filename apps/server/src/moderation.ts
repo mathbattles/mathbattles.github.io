@@ -1,5 +1,8 @@
-// A short starter list, matched on whole words after simple letter swaps. Reports cover what it misses.
-const BLOCKED = ['fuck', 'shit', 'bitch', 'cunt', 'nigger', 'nigga', 'faggot', 'retard', 'whore', 'slut', 'kys'];
+// Short starter lists. Reports cover what they miss.
+// Long, unambiguous words are blocked anywhere inside a word.
+const BLOCKED_ANYWHERE = ['fuck', 'shit', 'bitch', 'cunt', 'nigger', 'nigga', 'faggot'];
+// Short words appear inside innocent words ("Skysurfer", "Slutsky"), so these must match exactly.
+const BLOCKED_EXACT = ['retard', 'whore', 'slut', 'kys'];
 
 function normalize(word: string): string {
   return word
@@ -14,12 +17,15 @@ function normalize(word: string): string {
 
 function isBlocked(word: string): boolean {
   const n = normalize(word);
-  return BLOCKED.some((b) => n === b || n === `${b}s` || n === `${b}ing` || n === `${b}er`);
+  if (BLOCKED_ANYWHERE.some((b) => n.includes(b))) return true;
+  return BLOCKED_EXACT.some((b) => n === b || n === `${b}s`);
 }
 
+// Control and formatting characters, direction overrides, and blank-looking letters.
+const INVISIBLE = /[\p{Cc}\p{Cf}ᅟᅠ⠀ㅤﾠ]/gu;
+
 function strip(text: string): string {
-  // Removes control characters and direction overrides that can disguise text.
-  return text.replace(/[\u0000-\u001f\u007f​-‏‪-‮⁦-⁩]/g, '');
+  return text.replace(INVISIBLE, '');
 }
 
 export function cleanChat(text: string): string {
@@ -32,12 +38,11 @@ export function cleanChat(text: string): string {
 
 export function cleanName(name: unknown): string {
   const t = strip(String(name ?? '')).trim().slice(0, 16);
-  if (!t || t.split(/\s+/).some(isBlocked)) return `Player${Math.floor(Math.random() * 9000) + 1000}`;
+  if (!t || isBlockedName(t)) return `Player${Math.floor(Math.random() * 9000) + 1000}`;
   return t;
 }
 
-/** Catches blocked words inside a username, where no spaces separate them. */
+/** Names have no reliable word breaks, so check the whole name and each part of it. */
 export function isBlockedName(name: string): boolean {
-  const n = normalize(name);
-  return BLOCKED.some((b) => n.includes(b));
+  return isBlocked(name) || name.split(/[\s_]+/).some(isBlocked);
 }

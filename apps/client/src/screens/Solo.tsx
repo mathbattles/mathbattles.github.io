@@ -170,7 +170,14 @@ export function Daily() {
 export function ReplayScreen({ data }: { data: string }) {
   const replay = useMemo<Replay | null>(() => decodeReplay(data), [data]);
   const [key, setKey] = useState(1);
-  const session = useMemo(() => (replay ? new ReplaySession(replay) : null), [replay, key]);
+  const session = useMemo(() => {
+    if (!replay) return null;
+    try {
+      return new ReplaySession(replay);
+    } catch {
+      return null; // A hand-edited link can describe a match that can't exist.
+    }
+  }, [replay, key]);
   if (!session) {
     return <div class="page"><TopBar /><h2>This replay link is broken</h2><p>Ask for the link again, or <a href="#/">go back to the menu</a>.</p></div>;
   }

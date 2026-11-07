@@ -18,7 +18,12 @@ import {
   soloHitFriend,
   soloNext,
   currentPlayer,
+  currentSoldier,
+  armMissile,
+  removePlayer,
+  useTeleport,
 } from '@mathbattles/sim';
+import { mergeProgress } from '../src/profileMerge';
 import { CHAPTERS, LEVELS, buildLevel, starsFor } from '../src/content/campaign';
 import { exprToTex } from '../src/util';
 
@@ -96,6 +101,78 @@ describe('replays', () => {
   });
 });
 
+describe('replay contents', () => {
+  it('rebuilds teleports, missiles, timeouts, and players leaving', () => {
+    const setups = [
+      { id: 'a', name: 'Ana', team: 1 as const, ability: 'teleport' as const },
+      { id: 'b', name: 'Bo', team: 2 as const, ability: 'missile' as const },
+      { id: 'c', name: 'Cy', team: 1 as const, ability: 'missile' as const },
+    ];
+    const m = createMatch({ kind: 'teams', mode: 'fn', abilities: true, soldiers: 1, seed: 11 }, setups);
+    m.circles.length = 0;
+    const play = createMatch({ kind: 'teams', mode: 'fn', abilities: true, soldiers: 1, seed: 11 }, setups);
+    // Abilities need charge, so grant it the same way in both copies.
+    const grant = (s: typeof m) => s.players.forEach((p) => { p.charge = 4; });
+    grant(play);
+    const cur = currentPlayer(play);
+    const soldier = currentSoldier(play)!;
+    if (cur.ability === 'missile') armMissile(play, cur.id);
+    else useTeleport(play, cur.id, Math.max(30, Math.min(740, soldier.x + (soldier.x < 385 ? -5 : 5))), soldier.y);
+    fire(play, currentPlayer(play).id, { expr: 'x/9' });
+    skipTurn(play);
+    removePlayer(play, play.players.find((p) => p.id !== currentPlayer(play).id)!.id);
+    const replay = decodeReplay(encodeReplay(makeReplay(play, setups)))!;
+    expect(replay.actions.map((a) => a.a)).toEqual(expect.arrayContaining(['f', 's', 'l']));
+    const again = replayStart(replay);
+    grant(again);
+    for (const a of replay.actions) applyAction(again, a);
+    expect(again.soldiers).toEqual(play.soldiers);
+    expect(again.holes).toEqual(play.holes);
+  });
+  it('refuses links describing impossible matches', () => {
+    const encode = (o: unknown) => btoa(JSON.stringify(o)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+    const config = { kind: 'teams', mode: 'fn', abilities: false, soldiers: 1, seed: 1 };
+    const setups = [{ id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 2 }];
+    expect(decodeReplay(encode({ v: 1, config, setups, actions: [] }))).not.toBeNull();
+    expect(decodeReplay(encode({ v: 1, config, setups: [], actions: [] }))).toBeNull();
+    const crowd = Array.from({ length: 400 }, (_, i) => ({ id: `p${i}`, name: 'x', team: 1 }));
+    expect(decodeReplay(encode({ v: 1, config, setups: crowd, actions: [] }))).toBeNull();
+    expect(decodeReplay(encode({ v: 1, config: { ...config, soldiers: 99 }, setups, actions: [] }))).toBeNull();
+    expect(decodeReplay(encode({ v: 1, config, setups: [setups[0], setups[0]], actions: [] }))).toBeNull();
+  });
+});
+
+describe('merging progress', () => {
+  const base = (o: object) => ({
+    xp: 0, sparks: 0, matches: 0, wins: 0, kills: 0, bestCombo: 0, dailiesDone: 0, lastWinDay: 0, questDay: 0, questWeek: 0,
+    owned: [], achievements: [], questsPaid: [], stars: {}, mastery: {}, questProgress: {}, daily: {}, updatedAt: 0, name: 'x', ...o,
+  });
+  it('keeps everything from an account when a nearly empty, newer guest copy signs in', () => {
+    const phone = base({ xp: 10, sparks: 5, stars: { '0-1': 1 }, updatedAt: 500, name: 'Phone' });
+    const cloud = base({ xp: 900, sparks: 500, stars: { '0-1': 3, '1-1': 2 }, owned: ['hat-crown'], updatedAt: 100, name: 'Cloud' });
+    const out = mergeProgress(phone, cloud);
+    expect(out.xp).toBe(900);
+    expect(out.sparks).toBe(500);
+    expect(out.stars).toEqual({ '0-1': 3, '1-1': 2 });
+    expect(out.owned).toContain('hat-crown');
+    expect(out.name).toBe('Phone');
+    expect(out.updatedAt).toBe(500);
+  });
+  it('takes the best score and adds items from both sides', () => {
+    const a = base({ owned: ['x'], daily: { 5: { score: 2000, shots: 2, chars: 0 } }, updatedAt: 1 });
+    const b = base({ owned: ['y'], daily: { 5: { score: 1000, shots: 1, chars: 0 }, 6: { score: 3000, shots: 3, chars: 0 } }, updatedAt: 2 });
+    const out = mergeProgress(a, b);
+    expect(out.owned.sort()).toEqual(['x', 'y']);
+    expect(out.daily[5]!.score).toBe(1000);
+    expect(out.daily[6]!.score).toBe(3000);
+  });
+  it('survives a damaged cloud copy', () => {
+    const out = mergeProgress(base({ xp: 5, updatedAt: 1 }), { xp: 'lots' as unknown as number, stars: undefined, updatedAt: 0 });
+    expect(out.xp).toBe(5);
+    expect(out.stars).toEqual({});
+  });
+});
+
 describe('formula preview', () => {
   it('produces TeX without passing through commands', () => {
     expect(exprToTex('x^2+sin(x)')).toBe('x^{2}+\\sin (x)');
@@ -105,3 +182,4 @@ describe('formula preview', () => {
 });
 
 void soloNext;
+void currentSoldier;

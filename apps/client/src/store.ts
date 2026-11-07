@@ -9,6 +9,7 @@ import {
   type CosmeticKind,
   type ShotMode,
 } from '@mathbattles/sim';
+import { mergeProgress } from './profileMerge';
 import type { ThemeId } from './render/stage';
 
 export interface Profile {
@@ -35,6 +36,8 @@ export interface Profile {
   ability: AbilityId;
   theme: ThemeId;
   lookVersion: number;
+  /** The account this progress belongs to, or null for a guest. */
+  ownerUid: string | null;
   muted: boolean;
   chatOff: boolean;
   analytics: 'unset' | 'yes' | 'no';
@@ -86,6 +89,7 @@ function fresh(): Profile {
     ability: 'teleport',
     theme: 'paper',
     lookVersion: LOOK_VERSION,
+    ownerUid: null,
     muted: false,
     chatOff: false,
     analytics: 'unset',
@@ -134,13 +138,52 @@ export function saveProfile(): void {
   syncHook?.(profile);
 }
 
-/** Cloud copy replaces local only when it's newer. Progress values never go backward. */
-export function mergeCloud(cloud: Partial<Profile>): void {
-  const keepToken = profile.guestToken;
-  if ((cloud.updatedAt ?? 0) > profile.updatedAt) Object.assign(profile, cloud);
-  profile.guestToken = keepToken;
+/** Settings that belong to this device, not to whoever is signed in. */
+function deviceSettings(p: Profile) {
+  return { guestToken: p.guestToken, theme: p.theme, lookVersion: p.lookVersion, muted: p.muted, chatOff: p.chatOff, analytics: p.analytics };
+}
+
+/**
+ * Brings an account's cloud progress onto this device.
+ * - Guest progress, or an older copy of this account: both are combined, losing nothing.
+ * - Another account's progress on a shared device: it's replaced, never mixed in.
+ */
+export function mergeCloud(uid: string, cloud: Partial<Profile> | null): void {
+  const device = deviceSettings(profile);
+  const base = profile.ownerUid && profile.ownerUid !== uid ? { ...fresh(), updatedAt: 0 } : { ...profile };
+  const merged = cloud ? mergeProgress(base, cloud) : base;
+  Object.assign(profile, merged, device, { ownerUid: uid });
   normalizeLook(profile);
   saveProfile();
+}
+
+/** After signing out, this device goes back to a clean guest. The account's progress is in the cloud. */
+export function resetToGuest(): void {
+  const device = deviceSettings(profile);
+  Object.assign(profile, fresh(), device, { ownerUid: null });
+  saveProfile();
+}
+
+/** The account no longer exists, so what's here becomes this device's guest progress. */
+export function releaseOwner(): void {
+  profile.ownerUid = null;
+  saveProfile();
+}
+
+// Another tab saved: take its copy, so this tab's next save can't undo that tab's progress.
+try {
+  globalThis.addEventListener?.('storage', (e: StorageEvent) => {
+    if (e.key !== KEY || !e.newValue) return;
+    try {
+      Object.assign(profile, JSON.parse(e.newValue) as Partial<Profile>);
+      normalizeLook(profile);
+      listeners.forEach((l) => l());
+    } catch {
+      /* ignore a damaged copy */
+    }
+  });
+} catch {
+  /* no window here */
 }
 
 export function cosmeticValue(kind: CosmeticKind): string {

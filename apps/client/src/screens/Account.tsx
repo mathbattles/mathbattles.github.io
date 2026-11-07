@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import {
   addEmail,
   addUsernameAndPassword,
+  changePassword,
   deleteAccount,
   linkGoogle,
   register,
@@ -44,11 +45,11 @@ function Credentials(props: {
   };
   return (
     <form class="stack" onSubmit={(e) => void submit(e)}>
-      <label>Username
+      <label>{props.newPassword ? 'Username' : 'Username or email'}
         <input
           name="username"
           value={username}
-          maxLength={16}
+          maxLength={props.newPassword ? 16 : 254}
           autocomplete="username"
           autocapitalize="off"
           spellcheck={false}
@@ -99,7 +100,7 @@ export function SignIn() {
             </label>
             <button class="primary">Send reset link</button>
             <Notice result={forgot} />
-            <p class="muted small-note">No email on your account? Sign in with Google if you linked it, then set a new one from your profile. Accounts with neither can't be recovered.</p>
+            <p class="muted small-note">No email on your account? If you linked Google, sign in with it, then choose a new password on your profile. Accounts with neither can't be recovered.</p>
           </form>
         )}
         <div class="row" style={{ marginTop: 14 }}>
@@ -122,6 +123,7 @@ export function AccountPanel() {
   const [email, setEmail] = useState('');
   const [result, setResult] = useState<AuthResult | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
 
   if (!auth.ready) return <p>Checking your account.</p>;
   if (!auth.user) {
@@ -159,6 +161,15 @@ export function AccountPanel() {
           <h3>Add a username and password</h3>
           <Credentials submitLabel="Save username and password" newPassword onSubmit={addUsernameAndPassword} />
         </div>
+      )}
+
+      {auth.hasPassword && (
+        <form class="stack" onSubmit={(e) => { e.preventDefault(); void changePassword(newPassword).then((r) => { setResult(r); if (!r.error) setNewPassword(''); }); }}>
+          <label>New password
+            <input name="new-password" type="password" autocomplete="new-password" value={newPassword} onInput={(e) => setNewPassword((e.target as HTMLInputElement).value)} />
+          </label>
+          <button disabled={!newPassword}>Change password</button>
+        </form>
       )}
 
       <Notice result={result} />

@@ -54,6 +54,10 @@ export function GameView(props: {
   extraSide?: ComponentChildren;
   showFunctions?: boolean;
   soloInfo?: string;
+  /** A passing message that must not get in the way of playing. */
+  notice?: string;
+  /** The room screen owns online sessions, which outlive one match. */
+  keepSession?: boolean;
 }) {
   const { session } = props;
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -71,6 +75,7 @@ export function GameView(props: {
   const [celebrated, setCelebrated] = useState(false);
   const [now, setNow] = useState(Date.now());
   const chatBox = useRef<HTMLDivElement>(null);
+  const lastTurn = useRef(session.state.turnNumber);
 
   const state = session.state;
   const canAct = session.canAct();
@@ -103,7 +108,8 @@ export function GameView(props: {
       clearInterval(t);
       window.removeEventListener('resize', onResize);
       stage.stop();
-      session.dispose();
+      if (session.stage === stage) session.stage = null;
+      if (!props.keepSession) session.dispose();
     };
   }, [session]);
 
@@ -154,9 +160,13 @@ export function GameView(props: {
 
   useEffect(() => {
     if (canAct) {
-      setExpr('');
-      setError('');
-      setTeleporting(false);
+      // Only a new turn clears the box. Opening the screen must not erase what's being typed.
+      if (lastTurn.current !== state.turnNumber) {
+        lastTurn.current = state.turnNumber;
+        setExpr('');
+        setError('');
+        setTeleporting(false);
+      }
       input.current?.focus({ preventScroll: true });
     }
   }, [canAct, state.turnNumber]);
@@ -251,6 +261,7 @@ export function GameView(props: {
           {!counting && !showGo && turnSlam === state.turnNumber && canAct && <div class="slam turn" key={turnSlam}><span>Your turn!</span></div>}
           {knockout && <div class="slam knockout"><span>Final knockout!</span></div>}
         </div>
+        {props.notice && <p class="error" role="alert" style={{ marginTop: 8 }}>{props.notice}</p>}
         {props.result}
         {!state.over && !props.result && (
           <div class="shotbar">

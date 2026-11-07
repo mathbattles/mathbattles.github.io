@@ -29,7 +29,8 @@ export interface SpawnSlot {
   side: 0 | 1 | null;
 }
 
-const FFA_SEPARATION = 110;
+// Free-for-all spreads soldiers out, and packs them closer only when the match is too big for that.
+const FFA_SEPARATIONS = [110, 80, 55, 35, 22];
 const MAX_TRIES = 600;
 
 /**
@@ -42,9 +43,12 @@ export function placeSoldiers(
   slots: SpawnSlot[],
 ): { circles: Circle[]; spots: { x: number; y: number }[] } {
   let current = [...circles];
+  const ffa = slots.some((s) => s.side === null);
   for (;;) {
-    const spots = tryPlace(rng, current, slots);
-    if (spots) return { circles: current, spots };
+    for (const gap of ffa ? FFA_SEPARATIONS : [SPAWN_SEPARATION]) {
+      const spots = tryPlace(rng, current, slots, gap);
+      if (spots) return { circles: current, spots };
+    }
     if (current.length === 0) throw new Error('Too many soldiers to place');
     let big = 0;
     current.forEach((c, i) => {
@@ -54,7 +58,7 @@ export function placeSoldiers(
   }
 }
 
-function tryPlace(rng: Rng, circles: Circle[], slots: SpawnSlot[]): { x: number; y: number }[] | null {
+function tryPlace(rng: Rng, circles: Circle[], slots: SpawnSlot[], gap: number): { x: number; y: number }[] | null {
   const spots: { x: number; y: number }[] = [];
   for (const slot of slots) {
     let placed = false;
@@ -63,7 +67,7 @@ function tryPlace(rng: Rng, circles: Circle[], slots: SpawnSlot[]): { x: number;
       let x = rng.int(halfW - 2 * SOLDIER_R) + SOLDIER_R;
       const y = rng.int(PLANE_H - 2 * SOLDIER_R) + SOLDIER_R;
       if (slot.side === 1) x += PLANE_W / 2;
-      if (clear(x, y, spots, circles, slot.side === null)) {
+      if (clear(x, y, spots, circles, slot.side === null, gap)) {
         spots.push({ x, y });
         placed = true;
       }
@@ -79,10 +83,11 @@ function clear(
   spots: { x: number; y: number }[],
   circles: Circle[],
   ffa: boolean,
+  gap: number,
 ): boolean {
   for (const s of spots) {
     if (ffa) {
-      if (Math.hypot(s.x - x, s.y - y) < FFA_SEPARATION) return false;
+      if (Math.hypot(s.x - x, s.y - y) < gap) return false;
     } else if (Math.abs(s.x - x) < SPAWN_SEPARATION && Math.abs(s.y - y) < SPAWN_SEPARATION) {
       return false;
     }

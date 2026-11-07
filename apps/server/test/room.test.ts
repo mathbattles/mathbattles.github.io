@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { RECONNECT_GRACE_MS, TURN_MS, currentPlayer, type ClientMsg, type ServerMsg } from '@mathbattles/sim';
-import { cleanChat, cleanName } from '../src/moderation';
+import { cleanChat, cleanName, isBlockedName } from '../src/moderation';
+import { MessageBucket } from '../src/limits';
 import { RoomCore, type RoomIO } from '../src/roomCore';
 
-function harness(opts: { ranked?: boolean } = {}) {
+function harness(opts: { ranked?: boolean; rankedPair?: [string, string] } = {}) {
   const sent: Record<string, ServerMsg[]> = {};
   const clock = { t: 1_000_000, wake: null as number | null };
   let seed = 0.37;
@@ -12,7 +13,7 @@ function harness(opts: { ranked?: boolean } = {}) {
     now: () => clock.t,
     wake: (at) => void (clock.wake = at),
     random: () => (seed = (seed * 9301 + 0.49297) % 1),
-    botBudgetMs: 30,
+    botMaxEvals: 200,
   };
   const room = new RoomCore('TEST', io, opts);
   const join = (conn: string, token: string, name = conn) => room.join(conn, `g:${token}`, { t: 'join', name, token });
@@ -97,6 +98,8 @@ describe('match on the server', () => {
     state.soldiers.forEach((s, i) => { s.x = i < 2 ? 100 : 600; s.y = 40 + i * 90; });
     h.room.handle(connFor(cur, h), forged);
     expect(state.soldiers.filter((s) => s.alive).length).toBe(aliveBefore);
+    const shot = h.last(connFor(cur, h), 'shot') as { shot: { hits: unknown[] } };
+    expect(shot.shot.hits).toEqual([]);
   });
   it('makes the next player wait for the shot to land', () => {
     const h = startDuel();
@@ -175,7 +178,7 @@ describe('match on the server', () => {
     expect(h.room.state).toBeNull();
   });
   it('ranked rooms use fixed rules and start automatically', () => {
-    const h = harness({ ranked: true });
+    const h = harness({ ranked: true, rankedPair: ['g:1', 'g:2'] });
     h.join('a', '1');
     expect(h.room.state).toBeNull();
     h.room.handle('a', { t: 'settings', settings: { soldiers: 4 } });
@@ -183,6 +186,120 @@ describe('match on the server', () => {
     expect(h.room.state).not.toBeNull();
     expect(h.room.state!.config.soldiers).toBe(1);
     expect(h.room.seats.map((s) => s.team)).toEqual([1, 2]);
+  });
+});
+
+describe('review fixes', () => {
+  it('a connection cannot take a second seat, so it cannot leave ghosts', () => {
+    const h = harness();
+    h.join('a', 'one');
+    h.room.join('a', 'g:two', { t: 'join', name: 'ghost', token: 'two' });
+    h.room.join('a', 'g:three', { t: 'join', name: 'ghost', token: 'three' });
+    expect(h.room.seats.length).toBe(1);
+    h.room.disconnect('a');
+    expect(h.room.seats[0]!.connected).toBe(false);
+  });
+  it('ranked rooms admit only the matched pair', () => {
+    const noPair = harness({ ranked: true });
+    noPair.join('x', 'farmer');
+    expect((noPair.last('x', 'closed') as { message: string }).message).toMatch(/two other players/);
+    expect(noPair.room.seats.length).toBe(0);
+    const h = harness({ ranked: true, rankedPair: ['g:1', 'g:2'] });
+    h.join('x', 'stranger');
+    expect(h.last('x', 'closed')).toBeTruthy();
+    expect(h.room.seats.length).toBe(0);
+  });
+  it('a finished ranked room cannot start another match', () => {
+    const h = harness({ ranked: true, rankedPair: ['g:1', 'g:2'] });
+    h.join('a', '1');
+    h.join('b', '2');
+    const first = h.room.state!;
+    h.room.handle('b', { t: 'leave' });
+    expect(first.over).toBe(true);
+    h.advance(60_000);
+    h.join('a2', '1');
+    expect(h.room.state).toBe(first);
+    expect(h.last('a2', 'over')).toBeTruthy();
+  });
+  it('a ranked no-show cancels the match with no rating change', () => {
+    const h = harness({ ranked: true, rankedPair: ['g:1', 'g:2'] });
+    h.join('a', '1');
+    h.advance(31_000);
+    expect(h.room.state).toBeNull();
+    expect((h.last('a', 'closed') as { message: string }).message).toMatch(/didn't connect/);
+    h.join('b', '2');
+    expect(h.room.state).toBeNull();
+  });
+  it('rejects teleports with missing or impossible coordinates', () => {
+    const h = harness();
+    h.join('a', '1');
+    h.join('b', '2');
+    h.room.settings.abilities = true;
+    h.room.handle('b', { t: 'ready', ready: true });
+    h.room.handle('a', { t: 'start' });
+    h.advance(5001);
+    const state = h.room.state!;
+    const cur = currentPlayer(state);
+    cur.ability = 'teleport';
+    cur.charge = 2;
+    const conn = connFor(cur.id, h);
+    const before = state.soldiers.map((s) => [s.x, s.y]);
+    h.room.handle(conn, { t: 'teleport' } as unknown as ClientMsg);
+    h.room.handle(conn, { t: 'teleport', x: -500, y: 20 });
+    expect(state.soldiers.map((s) => [s.x, s.y])).toEqual(before);
+    expect(cur.charge).toBe(2);
+    expect((h.last(conn, 'error') as { message: string }).message).toMatch(/inside the field/);
+  });
+  it('a room gets a new host when the old one is gone', () => {
+    const h = harness();
+    h.join('a', '1');
+    h.join('b', '2');
+    h.room.disconnect('a');
+    h.room.disconnect('b');
+    h.clock.t += 1000;
+    h.advance(RECONNECT_GRACE_MS - 500);
+    expect(h.room.host).toBe('');
+    h.join('b2', '2');
+    expect(h.room.host).toBe(h.room.seats.find((s) => s.conns.has('b2'))!.id);
+  });
+  it('leaving frees the seat at once', () => {
+    const h = startDuel();
+    const a = h.room.seats[0]!.id;
+    h.room.handle('b', { t: 'leave' });
+    expect(h.room.seats.length).toBe(1);
+    expect(h.room.state!.over).toBe(true);
+    expect(h.room.host).toBe(a);
+  });
+  it('a too-big match gives a message instead of failing silently', () => {
+    const h = harness();
+    h.join('a', '1');
+    h.room.handle('a', { t: 'settings', settings: { kind: 'ffa', soldiers: 4 } });
+    for (let i = 0; i < 9; i++) h.room.handle('a', { t: 'addBot', level: 'easy' });
+    expect(h.room.seats.length).toBe(10);
+    h.room.handle('a', { t: 'start' });
+    expect(h.room.state).not.toBeNull();
+    expect(h.room.state!.soldiers.length).toBe(40);
+  });
+  it('sends the exact setups used, so replays match', () => {
+    const h = startDuel();
+    const m = h.last('a', 'match') as { setups: { id: string }[]; state: { players: { id: string }[] } };
+    expect(m.setups.map((s) => s.id).sort()).toEqual(m.state.players.map((p) => p.id).sort());
+  });
+  it('names in a room stay unique, chat carries the seat id, and unknown hats are dropped', () => {
+    const h = harness();
+    h.room.join('a', 'g:1', { t: 'join', name: 'Sam', token: '1', hat: 'not-a-hat' });
+    h.room.join('b', 'g:2', { t: 'join', name: 'sam', token: '2', hat: 'cone' });
+    expect(h.room.seats.map((s) => s.name)).toEqual(['Sam', 'sam 2']);
+    expect(h.room.seats.map((s) => s.hat)).toEqual([undefined, 'cone']);
+    h.room.handle('a', { t: 'chat', text: 'hello' });
+    const chat = h.last('b', 'chat') as { line: { fromId?: string } };
+    expect(chat.line.fromId).toBe(h.room.seats[0]!.id);
+  });
+  it('-skip is throttled like other chat', () => {
+    const h = startDuel();
+    h.room.handle('a', { t: 'chat', text: '-skip' });
+    h.room.handle('a', { t: 'chat', text: '-skip' });
+    expect((h.last('a', 'error') as { message: string }).message).toMatch(/too quickly/);
   });
 });
 
@@ -195,5 +312,20 @@ describe('moderation', () => {
     expect(cleanName('fuck')).toMatch(/^Player\d+$/);
     expect(cleanName('Ana')).toBe('Ana');
     expect(cleanChat('hi‮evil')).toBe('hievil');
+    expect(cleanName('fuckface')).toMatch(/^Player\d+$/);
+    expect(cleanName('Skysurfer')).toBe('Skysurfer');
+    expect(cleanName('Slutsky')).toBe('Slutsky');
+    expect(cleanName('\u3164\u2800')).toMatch(/^Player\d+$/);
+    expect(isBlockedName('kys')).toBe(true);
+    expect(isBlockedName('Skysurfer')).toBe(false);
+  });
+});
+
+describe('message limits', () => {
+  it('allows bursts, then refuses, then refills', () => {
+    const b = new MessageBucket(3, 1, 0);
+    expect([b.take(0), b.take(0), b.take(0), b.take(0)]).toEqual([true, true, true, false]);
+    expect(b.take(1500)).toBe(true);
+    expect(b.take(1500)).toBe(false);
   });
 });

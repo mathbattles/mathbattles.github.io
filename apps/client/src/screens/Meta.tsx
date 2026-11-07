@@ -1,6 +1,6 @@
 import { ACHIEVEMENTS, COSMETICS, levelFromXp, rankFor, type AbilityId, type Cosmetic, type CosmeticKind } from '@mathbattles/sim';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { authState, setAnalyticsConsent } from '../auth';
+import { authState, setAnalyticsConsent, useAuth } from '../auth';
 import { fetchLeaderboard, serverReachable, type LeaderRow } from '../net/api';
 import { THEMES, type ThemeId } from '../render/stage';
 import { drawHat } from '../render/doodles';
@@ -67,18 +67,37 @@ export function Shop() {
 
 export function ProfileScreen() {
   useProfile();
+  const auth = useAuth();
   const lv = levelFromXp(profile.xp);
   const title = COSMETICS.find((c) => c.id === profile.equipped.title)?.value;
   const [name, setName] = useState(profile.name);
+  // The name can change after sign-in finishes, and a stale box must not write it back.
+  useEffect(() => setName(profile.name), [profile.name]);
   return (
     <div class="page">
       <TopBar title="Profile" />
       <div class="grid-2">
         <div class="sheet">
           <h3>{profile.name}{title ? `, ${title}` : ''}</h3>
-          <label>Name{' '}
-            <input style={{ width: 170 }} value={name} maxLength={16} onInput={(e) => setName((e.target as HTMLInputElement).value)} onBlur={() => { profile.name = name.trim().slice(0, 16) || profile.name; saveProfile(); }} />
-          </label>
+          {auth.username ? (
+            <p>Your name is your username.</p>
+          ) : (
+            <label>Name{' '}
+              <input
+                style={{ width: 170 }}
+                value={name}
+                maxLength={16}
+                onInput={(e) => setName((e.target as HTMLInputElement).value)}
+                onBlur={() => {
+                  const next = name.trim().slice(0, 16);
+                  if (next && next !== profile.name) {
+                    profile.name = next;
+                    saveProfile();
+                  }
+                }}
+              />
+            </label>
+          )}
           <p style={{ marginTop: 10, marginBottom: 4 }}>Level {lv.level}: {lv.into} of {lv.need} XP</p>
           <div class="bar" role="progressbar" aria-valuenow={lv.into} aria-valuemax={lv.need} aria-label="Progress to next level"><i style={{ width: `${(lv.into / lv.need) * 100}%` }} /></div>
           <p style={{ marginTop: 10 }}>{profile.wins} wins in {profile.matches} matches. {profile.kills} hits. Best shot: {profile.bestCombo} hits.</p>

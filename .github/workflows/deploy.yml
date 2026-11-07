@@ -27,12 +27,39 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run migrate:local -w @mathbattles/server
+      # Tests that create real accounts run by hand against the live site, not on every push.
+      - run: npx playwright test --grep-invert "account|ranked|username"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: apps/client/dist
 
-  deploy:
+  server:
     needs: build
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The server and database update first, so the site never expects something not there yet.
+      - name: Deploy server
+        working-directory: apps/server
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::warning::CLOUDFLARE_API_TOKEN is not set, so the server was not deployed."
+            exit 0
+          fi
+          npx wrangler d1 migrations apply mathbattles --remote
+          npx wrangler deploy
+
+  deploy:
+    needs: server
     runs-on: ubuntu-latest
     environment:
       name: github-pages

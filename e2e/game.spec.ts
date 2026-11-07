@@ -1,4 +1,5 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
+import { createMatch, currentPlayer, encodeReplay, fire as fireShot, makeReplay } from '../packages/sim/src/index';
 
 async function newPlayer(browser: Browser, name: string): Promise<Page> {
   const ctx = await browser.newContext();
@@ -78,6 +79,7 @@ test('two players can play online, with reconnect', async ({ browser }) => {
   await a.getByRole('button', { name: 'Create private room' }).click();
   await expect(a).toHaveURL(/#\/room\//);
   const code = a.url().split('/').pop()!;
+  await expect(a.getByRole('button', { name: 'Start match' })).toBeVisible();
 
   await b.goto('/#/online');
   await b.getByLabel('Room code').fill(code);
@@ -137,16 +139,122 @@ test('two players can play online, with reconnect', async ({ browser }) => {
   await expect(first.locator('.chatlog')).toContainText('new map');
 });
 
-test('a saved replay link plays back to the end', async ({ browser }) => {
+test('a saved replay link really plays a match back to its end', async ({ browser }) => {
+  const setups = [{ id: 'a', name: 'Ana', team: 1 as const }, { id: 'b', name: 'Bo', team: 2 as const }];
+  const match = createMatch({ kind: 'teams', mode: 'fn', abilities: false, soldiers: 1, seed: 5 }, setups);
+  fireShot(match, currentPlayer(match).id, { expr: 'x/9' });
+  fireShot(match, currentPlayer(match).id, { expr: 'sin(x)' });
+  const data = encodeReplay(makeReplay(match, setups));
   const page = await newPlayer(browser, 'Watcher');
-  const replay = { v: 1, config: { kind: 'teams', mode: 'fn', abilities: false, soldiers: 1, seed: 5 },
-    setups: [{ id: 'a', name: 'Ana', team: 1 }, { id: 'b', name: 'Bo', team: 2 }],
-    actions: [{ a: 'f', p: 'a', e: 'x/8' }, { a: 'l', p: 'b' }] };
-  const data = Buffer.from(JSON.stringify(replay)).toString('base64url');
   await page.goto(`/#/replay/${data}`);
   await expect(page.locator('.scores')).toContainText('Ana');
-  // The first shot is taken by whichever player the seed puts first, or the link stops safely.
+  await expect(page.locator('aside code')).toHaveText('x/9', { timeout: 15_000 });
+  await expect(page.locator('aside code')).toHaveText('sin(x)', { timeout: 25_000 });
   await expect(page.getByRole('heading', { name: /broken/ })).toHaveCount(0);
+});
+
+test('a replay link for an impossible match shows a message, not a crash', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Watcher');
+  const bad = Buffer.from(JSON.stringify({ v: 1, config: { kind: 'teams', mode: 'fn', abilities: false, soldiers: 1, seed: 1 }, setups: [], actions: [] })).toString('base64url');
+  await page.goto(`/#/replay/${bad}`);
+  await expect(page.getByRole('heading', { name: 'This replay link is broken' })).toBeVisible();
+});
+
+test('a mistyped room code says so, instead of opening an empty room', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Typo');
+  await page.goto('/#/room/ZZZZZ');
+  await expect(page.getByRole('heading', { name: "Can't join this room" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("There's no room with the code ZZZZZ")).toBeVisible();
+});
+
+test('a made-up ranked room is refused', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Farmer');
+  await page.goto('/#/room/R-FARM1');
+  await expect(page.getByRole('heading', { name: 'Ranked match unavailable' })).toBeVisible({ timeout: 15_000 });
+});
+
+test('after a match the room still works: leaving, rejoining, and a rematch', async ({ browser }) => {
+  test.setTimeout(150_000);
+  const a = await newPlayer(browser, 'Ana');
+  const b = await newPlayer(browser, 'Bo');
+  await a.goto('/#/online');
+  await a.getByRole('button', { name: 'Create private room' }).click();
+  await expect(a).toHaveURL(/#\/room\//);
+  const roomUrl = a.url();
+  const code = roomUrl.split('/').pop()!;
+  await expect(a.getByRole('button', { name: 'Start match' })).toBeVisible();
+  await b.goto(`/#/room/${code}`);
+  await expect(a.getByText('Bo', { exact: true })).toBeVisible();
+  await b.getByRole('button', { name: 'Mark ready' }).click();
+  await a.getByLabel('Soldiers each').selectOption('1');
+  await a.getByRole('button', { name: 'Start match' }).click();
+  await expect(a.locator('.game canvas')).toBeVisible();
+  await expect(b.locator('.game canvas')).toBeVisible();
+
+  // Bo leaves on purpose: Ana sees the result right away, with no 30-second wait.
+  await b.getByRole('link', { name: 'Leave' }).click();
+  await expect(a.getByRole('heading', { name: 'You win' })).toBeVisible({ timeout: 8_000 });
+
+  // The room returns to its lobby, and the connection still works.
+  await expect(a.getByRole('heading', { name: new RegExp(`Room ${code}`) })).toBeVisible({ timeout: 25_000 });
+  await a.getByLabel('Bot level').selectOption('easy');
+  await expect(a.getByText('(bot)')).toBeVisible();
+  await a.getByRole('button', { name: 'Remove' }).click();
+  await expect(a.getByText('(bot)')).toHaveCount(0);
+
+  // Bo returns for a rematch, and the old result doesn't reappear.
+  await b.goto(`/#/room/${code}`);
+  await expect(a.getByText('Bo', { exact: true })).toBeVisible();
+  await b.getByRole('button', { name: 'Mark ready' }).click();
+  await a.getByRole('button', { name: 'Start match' }).click();
+  await expect(a.locator('.game canvas')).toBeVisible();
+  await expect(a.getByRole('heading', { name: 'You win' })).toHaveCount(0);
+  await expect(a.locator('.who')).toHaveText(/Your turn|aiming|Get ready/);
+});
+
+test('a chat error does not hide the function box', async ({ browser }) => {
+  const a = await newPlayer(browser, 'Ana');
+  const b = await newPlayer(browser, 'Bo');
+  await a.goto('/#/online');
+  await a.getByRole('button', { name: 'Create private room' }).click();
+  await expect(a).toHaveURL(/#\/room\//);
+  await expect(a.getByRole('button', { name: 'Start match' })).toBeVisible();
+  await b.goto(`/#/room/${a.url().split('/').pop()}`);
+  await b.getByRole('button', { name: 'Mark ready' }).click();
+  await a.getByRole('button', { name: 'Start match' }).click();
+  await expect(a.locator('.game canvas')).toBeVisible();
+  await a.getByLabel('Chat message').fill('one');
+  await a.getByRole('button', { name: 'Send' }).click();
+  await a.getByLabel('Chat message').fill('two');
+  await a.getByRole('button', { name: 'Send' }).click();
+  await expect(a.getByRole('alert')).toContainText('too quickly');
+  await expect(a.locator('#fn-input')).toBeVisible();
+  await expect(a.getByRole('alert')).toHaveCount(0, { timeout: 8_000 });
+});
+
+test('a too-big local free-for-all starts normally', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Big');
+  await page.goto('/#/local');
+  await page.getByRole('button', { name: 'Free-for-all' }).click();
+  await page.getByLabel('Soldiers each').selectOption('4');
+  for (let i = 0; i < 8; i++) await page.getByRole('button', { name: 'Add player' }).click();
+  await page.getByRole('button', { name: 'Start match' }).click();
+  await expect(page.locator('.scores div')).toHaveCount(10);
+  await expect(page.getByText('Something went wrong')).toHaveCount(0);
+});
+
+test('two tabs do not undo each other', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const one = await ctx.newPage();
+  const two = await ctx.newPage();
+  await one.goto('/#/settings');
+  await two.goto('/#/settings');
+  await one.getByRole('group', { name: 'UI design' }).getByRole('button', { name: 'Blueprint' }).click();
+  await expect(two.locator('html')).toHaveAttribute('data-theme', 'blueprint');
+  await two.getByLabel('Mute sound').check();
+  await one.reload();
+  await expect(one.locator('html')).toHaveAttribute('data-theme', 'blueprint');
+  await expect(one.getByLabel('Mute sound')).toBeChecked();
 });
 
 test('free-for-all offers both firing directions and runs against bots', async ({ browser }) => {
@@ -218,6 +326,44 @@ test('username accounts: create, sign out, wrong password, sign back in, delete'
   await other.locator('form').getByRole('button', { name: 'Create account' }).click();
   await expect(other.getByRole('alert')).toContainText('taken');
 
+  await deleteAccount(page);
+});
+
+test('progress follows the account and never leaks to the next person on a device', async ({ browser }) => {
+  test.setTimeout(150_000);
+  const password = 'correct-horse-9';
+  const nameA = uniqueName('sa');
+  const nameB = uniqueName('sb');
+  const page = await createAccount(browser, nameA, password);
+  await page.goto('/#/level/0-1');
+  await fire(page, '0');
+  await expect(page.getByRole('heading', { name: /Level cleared/ })).toBeVisible({ timeout: 20_000 });
+  const sparksOf = async () => Number((await page.locator('.sparks').textContent())?.match(/\d+/)?.[0]);
+  await page.goto('/#/profile');
+  const earned = await sparksOf();
+  expect(earned).toBeGreaterThan(0);
+
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('link', { name: 'Sign in or create an account' })).toBeVisible();
+  await expect(page.locator('.sparks')).toHaveText('0 Sparks');
+
+  // A second account on the same device starts clean.
+  await page.goto('/#/signin');
+  await page.getByRole('button', { name: 'Create account' }).first().click();
+  await page.getByLabel('Username').fill(nameB);
+  await page.getByLabel('Password').fill(password);
+  await page.locator('form').getByRole('button', { name: 'Create account' }).click();
+  await expect(page.getByText('Signed in as')).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.sparks')).toHaveText('0 Sparks');
+  await deleteAccount(page);
+
+  // The first account gets its progress back.
+  await page.goto('/#/signin');
+  await page.getByLabel('Username').fill(nameA);
+  await page.getByLabel('Password').fill(password);
+  await page.locator('form').getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByText('Signed in as')).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('.sparks')).toHaveText(`${earned} Sparks`, { timeout: 10_000 });
   await deleteAccount(page);
 });
 

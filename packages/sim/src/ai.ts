@@ -89,6 +89,8 @@ export interface ThinkOptions {
   seed: number;
   /** Random change to the final numbers, so lower levels miss like people do. */
   aimError?: number;
+  /** Stops after simulating this many shots. Use where clocks can't be trusted during computation. */
+  maxEvals?: number;
   /** Stops evolving after this long and returns the best so far. */
   budgetMs?: number;
   now?: () => number;
@@ -116,7 +118,10 @@ export function chooseMove(state: MatchState, opts: ThinkOptions): BotMove {
   const vars = varsForMode(mode);
   const buffers = { xs: new Float64Array(MAX_STEPS), ys: new Float64Array(MAX_STEPS) };
 
+  let evals = 0;
+  const maxEvals = opts.maxEvals ?? Infinity;
   const evaluate = (g: Genome): number => {
+    evals++;
     let f;
     try {
       f = compile(exprOf(mode, g), { vars });
@@ -154,7 +159,7 @@ export function chooseMove(state: MatchState, opts: ThinkOptions): BotMove {
   const deadline = opts.budgetMs !== undefined ? now() + opts.budgetMs : Infinity;
 
   let pop: Genome[] = [];
-  for (let i = 0; i < POPULATION && (i < 5 || now() <= deadline); i++) {
+  for (let i = 0; i < POPULATION && (i < 5 || (now() <= deadline && evals < maxEvals)); i++) {
     const g = randomGenome(rng, mode, ffa);
     g.score = evaluate(g);
     pop.push(g);
@@ -162,9 +167,9 @@ export function chooseMove(state: MatchState, opts: ThinkOptions): BotMove {
   pop.sort((a, b) => b.score - a.score);
 
   for (let gen = 0; gen < opts.generations; gen++) {
-    if (now() > deadline) break;
+    if (now() > deadline || evals >= maxEvals) break;
     const next = pop.slice(0, 5);
-    while (next.length < POPULATION) {
+    while (next.length < POPULATION && evals < maxEvals) {
       if (rng.next() < 0.15) {
         const g = randomGenome(rng, mode, ffa);
         g.score = evaluate(g);

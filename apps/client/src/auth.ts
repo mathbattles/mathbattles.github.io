@@ -1,7 +1,7 @@
 import { MIN_PASSWORD, loginEmailFor, usernameProblem } from '@mathbattles/sim';
 import { useEffect, useState } from 'preact/hooks';
-import { claimUsername, deleteAccountData, pullProfile, pushProfile, resolveLogin, saveLoginEmail, usernameAvailable } from './net/api';
-import { mergeCloud, profile, saveProfile, setSyncHook, type Profile } from './store';
+import { claimUsername, deleteAccountData, pullProfile, pushProfile, resolveLogin, syncEmail, usernameAvailable } from './net/api';
+import { mergeCloud, profile, releaseOwner, resetToGuest, saveProfile, setSyncHook, type Profile } from './store';
 
 /** This config identifies the Firebase project and is meant to be public. */
 const firebaseConfig = {
@@ -72,6 +72,7 @@ async function getAuthApi() {
 
 /** Sets up auth only for people who have signed in before, so guests never load Firebase. */
 export async function initAuth(): Promise<void> {
+  void retryPendingDelete();
   let known = false;
   try {
     known = localStorage.getItem(SIGNED_IN_KEY) === '1';
@@ -112,11 +113,8 @@ function watchAuth(): Promise<void> {
           }
           readProviders(user);
           authState.token = await user.getIdToken();
-          // Tokens refresh about hourly; only load the cloud profile once per login.
-          if (loadedFor !== user.uid) {
-            loadedFor = user.uid;
-            await loadCloud(authState.token);
-          }
+          // Tokens refresh about hourly; load the cloud profile once per login, and retry if it failed.
+          if (loadedFor !== user.uid && (await loadCloud(user.uid, authState.token))) loadedFor = user.uid;
         } finally {
           authState.ready = true;
           emit();
@@ -128,27 +126,31 @@ function watchAuth(): Promise<void> {
   return watching;
 }
 
-async function loadCloud(token: string): Promise<void> {
+let pendingPush = 0;
+
+async function loadCloud(uid: string, token: string): Promise<boolean> {
   setSyncHook(null);
   const cloud = await pullProfile(token);
-  if (cloud) {
-    authState.rating = cloud.rating;
-    authState.username = cloud.username;
-    if (cloud.profile) mergeCloud(cloud.profile as Partial<Profile>);
-    if (cloud.username && profile.name !== cloud.username) {
-      profile.name = cloud.username;
-      saveProfile();
-    }
+  // Without the cloud copy, nothing is synced: an upload now could overwrite newer progress.
+  if (!cloud) return false;
+  authState.rating = cloud.rating;
+  // A brand-new account's claim may have finished while this was loading.
+  authState.username = cloud.username ?? authState.username;
+  mergeCloud(uid, cloud.profile as Partial<Profile> | null);
+  if (authState.username && profile.name !== authState.username) {
+    profile.name = authState.username;
+    saveProfile();
   }
-  let pending = 0;
   setSyncHook((p) => {
-    clearTimeout(pending);
-    pending = window.setTimeout(() => {
+    clearTimeout(pendingPush);
+    pendingPush = window.setTimeout(() => {
       if (authState.token) void pushProfile(authState.token, p);
     }, 2000);
   });
-  // First sign-in on this account: keep what the player earned as a guest.
-  if (cloud && !cloud.profile && authState.token) void pushProfile(authState.token, profile);
+  // Combined progress may differ from both copies, so save the result.
+  void pushProfile(token, profile);
+  void syncEmail(token);
+  return true;
 }
 
 function errorText(e: unknown): string {
@@ -221,12 +223,24 @@ export async function register(username: string, password: string): Promise<Auth
   try {
     await watchAuth();
     const { auth, mod } = await getAuthApi();
-    const cred = await mod.createUserWithEmailAndPassword(auth, loginEmailFor(username), password);
-    created = cred.user;
+    let isNew = true;
+    try {
+      created = (await mod.createUserWithEmailAndPassword(auth, loginEmailFor(username), password)).user;
+    } catch (e) {
+      if ((e as { code?: string }).code !== 'auth/email-already-in-use') throw e;
+      // A signup that stopped halfway can be finished with the same password.
+      isNew = false;
+      try {
+        created = (await mod.signInWithEmailAndPassword(auth, loginEmailFor(username), password)).user;
+      } catch {
+        return { error: 'That username is taken.' };
+      }
+    }
     const claim = await claimUsername(await created.getIdToken(), username);
     if (!claim.username) {
       // Don't leave behind a login without a username.
-      await created.delete().catch(() => {});
+      if (isNew) await created.delete().catch(() => {});
+      else await mod.signOut(auth);
       return { error: claim.error ?? 'That username is taken.' };
     }
     authState.username = claim.username;
@@ -244,18 +258,19 @@ export async function signInWithUsername(username: string, password: string): Pr
   if (!username.trim() || !password) return { error: 'Enter your username and password.' };
   await watchAuth();
   const { auth, mod } = await getAuthApi();
+  const isEmail = username.includes('@');
   try {
-    await mod.signInWithEmailAndPassword(auth, loginEmailFor(username.trim()), password);
+    await mod.signInWithEmailAndPassword(auth, isEmail ? username.trim() : loginEmailFor(username.trim()), password);
     rememberSignedIn(true);
     return {};
   } catch (e) {
     const code = (e as { code?: string }).code ?? '';
     const wrong = ['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found', 'auth/invalid-login-credentials', 'auth/invalid-email'];
-    if (!wrong.includes(code)) return { error: errorText(e) };
+    if (isEmail || !wrong.includes(code)) return { error: errorText(e) };
   }
   // This account may have moved to a real email.
   const found = await resolveLogin(username.trim(), password);
-  if (!found) return { error: 'Wrong username or password.' };
+  if (!found.email) return { error: found.error ? `${found.error.replace(/\.$/, '')}.` : 'Wrong username or password.' };
   try {
     await mod.signInWithEmailAndPassword(auth, found.email, password);
     rememberSignedIn(true);
@@ -298,26 +313,26 @@ export async function addUsernameAndPassword(username: string, password: string)
   const { auth, mod } = await getAuthApi();
   const user = auth.currentUser;
   if (!user) return { error: 'Sign in first.' };
+  // A Google account's own email stays its login, and the server uses it for username sign-in.
+  const email = user.email ?? user.providerData.find((p) => p.email)?.email;
+  if (!email) return { error: 'This account has no email to attach a password to.' };
+  // Saying the same username again is allowed, so this can be retried if the second step fails.
   const claim = await claimUsername(await user.getIdToken(), username);
   if (!claim.username) return { error: claim.error ?? 'That username is taken.' };
-  const finish = () => {
-    authState.username = claim.username!;
-    profile.name = claim.username!;
-    saveProfile();
-  };
+  authState.username = claim.username;
+  profile.name = claim.username;
+  saveProfile();
   try {
-    // A Google account's own email stays its login, so the server keeps that for username sign-in.
-    const email = user.email ?? user.providerData.find((p) => p.email)?.email;
-    if (!email) return { error: 'This account has no email to attach a password to.' };
     await mod.linkWithCredential(user, mod.EmailAuthProvider.credential(email, password));
-    await saveLoginEmail(await user.getIdToken(), email);
-    finish();
-    await refreshAfterChange();
-    return { message: 'Username and password added.' };
   } catch (e) {
-    finish();
-    return { error: `Your username is saved, but the password wasn't: ${errorText(e)}` };
+    if ((e as { code?: string }).code !== 'auth/provider-already-linked') {
+      emit();
+      return { error: `Your username is saved, but the password wasn't. Try again: ${errorText(e)}` };
+    }
   }
+  await refreshAfterChange();
+  await syncEmail(await user.getIdToken());
+  return { message: 'Username and password added.' };
 }
 
 /** Adds a real email. Firebase mails a link, and the address takes effect once it's clicked. */
@@ -327,9 +342,21 @@ export async function addEmail(email: string): Promise<AuthResult> {
   if (!user) return { error: 'Sign in first.' };
   try {
     await mod.verifyBeforeUpdateEmail(user, email.trim());
-    const saved = await saveLoginEmail(await user.getIdToken(), email.trim());
-    if (!saved) return { error: "The link was sent, but the game server didn't respond. Try again." };
-    return { message: `Check ${email.trim()} and click the link to finish. You'll keep signing in with your username.` };
+    return { message: `Check ${email.trim()} and click the link. After that, sign in once using that email and your password. Then your username works again too.` };
+  } catch (e) {
+    return { error: errorText(e) };
+  }
+}
+
+/** Sets a new password. Firebase requires a recent sign-in, and says so if it isn't. */
+export async function changePassword(password: string): Promise<AuthResult> {
+  if (password.length < MIN_PASSWORD) return { error: `Passwords need at least ${MIN_PASSWORD} characters.` };
+  const { auth, mod } = await getAuthApi();
+  const user = auth.currentUser;
+  if (!user) return { error: 'Sign in first.' };
+  try {
+    await mod.updatePassword(user, password);
+    return { message: 'Your password was changed.' };
   } catch (e) {
     return { error: errorText(e) };
   }
@@ -349,24 +376,53 @@ export async function resetPassword(email: string): Promise<AuthResult> {
 
 export async function signOutUser(): Promise<void> {
   const { auth, mod } = await getAuthApi();
+  // Save first: the next step clears this device.
+  clearTimeout(pendingPush);
+  setSyncHook(null);
+  if (authState.token && loadedFor) await pushProfile(authState.token, profile);
   await mod.signOut(auth);
   rememberSignedIn(false);
+  resetToGuest();
 }
 
-/** Permanently removes the account and its online data. Progress on this device stays. */
+const PENDING_DELETE_KEY = 'mathbattles.pendingDelete';
+
+/** Finishes removing server data if the connection failed right after the login was deleted. */
+async function retryPendingDelete(): Promise<void> {
+  let token: string | null = null;
+  try {
+    token = localStorage.getItem(PENDING_DELETE_KEY);
+  } catch {
+    return;
+  }
+  if (token && (await deleteAccountData(token))) localStorage.removeItem(PENDING_DELETE_KEY);
+}
+
+/** Permanently removes the account and its online data. Progress on this device stays as a guest. */
 export async function deleteAccount(): Promise<AuthResult> {
   const { auth } = await getAuthApi();
   const user = auth.currentUser;
   if (!user) return { error: 'Sign in first.' };
   try {
-    // Firebase checks for a recent login first, so server data isn't removed if this refuses.
-    await user.getIdToken(true);
-    const token = await user.getIdToken();
-    const uid = user.uid;
+    const token = await user.getIdToken(true);
+    // Firebase refuses without a recent login, and then nothing has been removed.
     await user.delete();
-    const removed = await deleteAccountData(token);
+    // Stop syncing, or a delayed save could recreate the data just deleted.
+    clearTimeout(pendingPush);
+    setSyncHook(null);
     rememberSignedIn(false);
-    return removed ? {} : { error: `Your login was deleted, but the game server didn't confirm removing data for ${uid}.` };
+    releaseOwner();
+    let removed = await deleteAccountData(token);
+    if (!removed) removed = await deleteAccountData(token);
+    if (!removed) {
+      try {
+        localStorage.setItem(PENDING_DELETE_KEY, token);
+      } catch {
+        /* no storage */
+      }
+      return { error: 'Your login was deleted, but the server could not be reached to remove your data. Reopen the game soon to finish.' };
+    }
+    return {};
   } catch (e) {
     return { error: errorText(e) };
   }

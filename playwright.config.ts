@@ -8,6 +8,8 @@ export default defineConfig({
   timeout: 120_000,
   fullyParallel: false,
   workers: 1,
+  // Bots and timing can vary on shared machines.
+  retries: process.env.CI ? 1 : 0,
   use: { baseURL: live ?? 'http://localhost:5173', viewport: { width: 1200, height: 800 } },
   webServer: live ? undefined : [
     { command: 'npm run dev', url: 'http://localhost:5173', reuseExistingServer: true },

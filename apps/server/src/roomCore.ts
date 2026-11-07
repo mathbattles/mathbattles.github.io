@@ -1,6 +1,7 @@
 import {
   BOT_LEVELS,
   BOT_NAMES,
+  COSMETICS,
   DEFAULT_ROOM_SETTINGS,
   DRAW_STEPS_PER_SEC,
   MAX_PLAYERS,
@@ -23,6 +24,7 @@ import {
   type ChatLine,
   type ClientMsg,
   type MatchState,
+  type PlayerSetup,
   type RoomSettings,
   type Seat,
   type ServerMsg,
@@ -36,8 +38,8 @@ export interface RoomIO {
   /** Requests a call to tick() at this time. Replaces any earlier request. */
   wake(at: number | null): void;
   random(): number;
-  /** Bots think on the server for at most this long per move. */
-  botBudgetMs: number;
+  /** The most shots a bot may simulate per move on the server. */
+  botMaxEvals: number;
   onLobbyChange?(info: { players: number; kind: string; mode: string; inLobby: boolean }): void;
   onRankedOver?(winnerSeat: string, loserSeat: string): Promise<number | undefined>;
 }
@@ -52,6 +54,8 @@ interface Internal extends Seat {
 const RANKED_SETTINGS: RoomSettings = { kind: 'teams', mode: 'fn', abilities: false, soldiers: 1, showFunctions: false };
 const MAX_SEATS = MAX_PLAYERS;
 const LOBBY_RETURN_MS = 12_000;
+const RANKED_NO_SHOW_MS = 30_000;
+const HAT_VALUES = new Set(COSMETICS.filter((c) => c.kind === 'hat').map((c) => c.value));
 
 /**
  * A room's full logic, free of Cloudflare APIs so it can be tested directly.
@@ -69,6 +73,9 @@ export class RoomCore {
   private botAt = 0;
   private lobbyAt = 0;
   private nextSeat = 1;
+  private setups: PlayerSetup[] = [];
+  private noShowAt = 0;
+  private cancelled = false;
   private readonly ranked: boolean;
 
   constructor(readonly code: string, private io: RoomIO, opts: { ranked?: boolean; rankedPair?: [string, string] } = {}) {
@@ -77,6 +84,13 @@ export class RoomCore {
     this.rankedPair = opts.rankedPair;
   }
   private rankedPair?: [string, string];
+
+  setRankedPair(pair: [string, string]): void {
+    this.rankedPair = pair;
+  }
+  hasRankedPair(): boolean {
+    return !!this.rankedPair;
+  }
 
   private broadcast(msg: ServerMsg): void {
     for (const conn of this.connSeat.keys()) this.io.send(conn, msg);
@@ -103,9 +117,18 @@ export class RoomCore {
 
   /** identity is proven by the transport layer: a verified user id or a guest token. */
   join(connId: string, identity: string, msg: Extract<ClientMsg, { t: 'join' }>): void {
-    if (this.ranked && this.rankedPair && !this.rankedPair.includes(identity)) {
-      this.io.send(connId, { t: 'error', message: "This ranked match is for two other players." });
-      return;
+    // A connection gets one seat. Joining again could otherwise leave ghost seats behind.
+    if (this.connSeat.has(connId)) return;
+    if (this.ranked) {
+      if (this.cancelled) {
+        this.io.send(connId, { t: 'closed', message: "This ranked match was cancelled because a player didn't connect." });
+        return;
+      }
+      if (!this.rankedPair || !this.rankedPair.includes(identity)) {
+        this.io.send(connId, { t: 'closed', message: 'This ranked match is for two other players.' });
+        return;
+      }
+      if (!this.noShowAt) this.noShowAt = this.io.now() + RANKED_NO_SHOW_MS;
     }
     const existing = this.tokenSeat.get(identity);
     let seat = existing ? this.seats.find((s) => s.id === existing) : undefined;
@@ -117,13 +140,13 @@ export class RoomCore {
       const humans = this.seats.filter((s) => !s.isBot);
       seat = {
         id: `s${this.nextSeat++}`,
-        name: cleanName(msg.name),
+        name: this.uniqueName(cleanName(msg.name)),
         team: this.ranked ? (humans.length === 0 ? 1 : 2) : this.balancedTeam(),
         ready: false,
         isBot: false,
         connected: true,
         ability: msg.ability === 'missile' ? 'missile' : 'teleport',
-        hat: typeof msg.hat === 'string' ? msg.hat.slice(0, 12) : undefined,
+        hat: typeof msg.hat === 'string' && HAT_VALUES.has(msg.hat) ? msg.hat : undefined,
         conns: new Set(),
         disconnectedAt: null,
         skip: false,
@@ -131,9 +154,10 @@ export class RoomCore {
       };
       this.seats.push(seat);
       this.tokenSeat.set(identity, seat.id);
-      if (!this.host) this.host = seat.id;
       this.system(`${seat.name} joined.`);
     }
+    // Also covers a room whose host left while everyone else was briefly disconnected.
+    if (!this.host) this.host = seat.id;
     seat.conns.add(connId);
     seat.connected = true;
     seat.disconnectedAt = null;
@@ -141,11 +165,22 @@ export class RoomCore {
     this.io.send(connId, { t: 'welcome', you: seat.id, code: this.code });
     this.sendLobby();
     if (this.state) this.sendMatchTo(connId);
+    // Someone returning after the end of a match still gets the result.
+    if (this.state?.over && this.finalMsg) this.io.send(connId, this.finalMsg);
     if (this.ranked && !this.state) {
       const humans = this.seats.filter((s) => !s.isBot && s.connected);
       if (humans.length === 2) this.startMatch();
     }
     this.schedule();
+  }
+
+  private uniqueName(name: string): string {
+    const used = new Set(this.seats.map((s) => s.name.toLowerCase()));
+    if (!used.has(name.toLowerCase())) return name;
+    for (let i = 2; ; i++) {
+      const candidate = `${name.slice(0, 13)} ${i}`;
+      if (!used.has(candidate.toLowerCase())) return candidate;
+    }
   }
 
   private balancedTeam(): 1 | 2 {
@@ -185,6 +220,9 @@ export class RoomCore {
           return;
         case 'chat':
           this.chat(seat, msg.text, connId);
+          return;
+        case 'leave':
+          this.leave(seat);
           return;
         case 'skipVote':
           this.skipVote(seat);
@@ -236,6 +274,17 @@ export class RoomCore {
       if (e instanceof RuleError || e instanceof ParseError) fail(e.message);
       else throw e;
     }
+  }
+
+  /** Leaving on purpose frees the seat right away, with no reconnect window. */
+  private leave(seat: Internal): void {
+    for (const conn of seat.conns) this.connSeat.delete(conn);
+    seat.conns.clear();
+    seat.connected = false;
+    seat.disconnectedAt = null;
+    this.system(`${seat.name} left.`);
+    this.dropSeat(seat);
+    this.schedule();
   }
 
   private applySettings(p: Partial<RoomSettings>): void {
@@ -292,10 +341,16 @@ export class RoomCore {
 
   private startMatch(): void {
     const seed = Math.floor(this.io.random() * 2 ** 31);
+    const setups: PlayerSetup[] = this.seats
+      .filter((s) => s.connected)
+      .map((s) => ({ id: s.id, name: s.name, team: s.team, ability: s.ability as AbilityId, isBot: s.isBot, botLevel: s.isBot ? s.id.split(':')[1] : undefined }));
     this.state = createMatch(
       { kind: this.settings.kind, mode: this.settings.mode, abilities: this.settings.abilities, soldiers: this.settings.soldiers, seed },
-      this.seats.filter((s) => s.connected).map((s) => ({ id: s.id, name: s.name, team: s.team, ability: s.ability as AbilityId, isBot: s.isBot, botLevel: s.isBot ? s.id.split(':')[1] : undefined })),
+      setups,
     );
+    // The exact list used here, so replay links can rebuild this same match.
+    this.setups = setups;
+    this.noShowAt = 0;
     for (const s of this.seats) s.skip = s.isBot;
     this.deadline = this.io.now() + START_DELAY_MS + TURN_MS;
     this.busyUntil = this.io.now() + START_DELAY_MS;
@@ -308,10 +363,10 @@ export class RoomCore {
   }
 
   private sendMatchTo(connId: string): void {
-    if (this.state) this.io.send(connId, { t: 'match', state: this.state, deadline: this.deadline, serverNow: this.io.now() });
+    if (this.state) this.io.send(connId, { t: 'match', state: this.state, setups: this.setups, deadline: this.deadline, serverNow: this.io.now() });
   }
   private broadcastMatch(): void {
-    if (this.state) this.broadcast({ t: 'match', state: this.state, deadline: this.deadline, serverNow: this.io.now() });
+    if (this.state) this.broadcast({ t: 'match', state: this.state, setups: this.setups, deadline: this.deadline, serverNow: this.io.now() });
   }
   private broadcastUpdate(): void {
     if (this.state) this.broadcast({ t: 'update', state: this.state, deadline: this.deadline, serverNow: this.io.now() });
@@ -351,9 +406,14 @@ export class RoomCore {
 
   private finish(delay: number): void {
     const state = this.state!;
-    this.lobbyAt = this.io.now() + delay + LOBBY_RETURN_MS;
+    // A ranked room is one match only: it stays on the result and can't start again.
+    this.lobbyAt = this.ranked ? 0 : this.io.now() + delay + LOBBY_RETURN_MS;
     this.botAt = 0;
-    const send = (ratingDelta?: number) => this.broadcast({ t: 'over', state, ratingDelta });
+    const setups = this.setups;
+    const send = (ratingDelta?: number) => {
+      this.finalMsg = { t: 'over', state, setups, ratingDelta };
+      this.broadcast(this.finalMsg);
+    };
     if (this.ranked && this.io.onRankedOver && state.winner !== null) {
       const winner = state.players.find((p) => p.team === state.winner);
       const loser = state.players.find((p) => p.team !== state.winner);
@@ -366,6 +426,8 @@ export class RoomCore {
     send();
     this.schedule();
   }
+
+  private finalMsg: ServerMsg | null = null;
 
   private planBot(): void {
     const state = this.state!;
@@ -384,8 +446,7 @@ export class RoomCore {
       generations: def.generations,
       aimError: def.aimError,
       seed: state.config.seed + state.turnNumber,
-      budgetMs: this.io.botBudgetMs,
-      now: () => Date.now(),
+      maxEvals: this.io.botMaxEvals,
     });
     this.doFire(cur.id, move.expr, move.angle, move.dir);
   }
@@ -416,6 +477,11 @@ export class RoomCore {
       }
     }
     if (this.state?.over && this.lobbyAt && now >= this.lobbyAt) this.backToLobby();
+    if (this.ranked && !this.state && this.noShowAt && now >= this.noShowAt) {
+      this.noShowAt = 0;
+      this.cancelled = true;
+      this.broadcast({ t: 'closed', message: "Your opponent didn't connect, so the match was cancelled. Your rating didn't change." });
+    }
     this.schedule();
   }
 
@@ -444,11 +510,13 @@ export class RoomCore {
       if (next) this.system(`${next.name} is now the host.`);
     }
     if (!this.seats.some((s) => !s.isBot)) this.seats = [];
+    if (!this.seats.some((s) => s.id === this.host)) this.host = this.seats.find((s) => !s.isBot && s.connected)?.id ?? '';
     this.sendLobby();
   }
 
   private backToLobby(): void {
     this.state = null;
+    this.finalMsg = null;
     this.lobbyAt = 0;
     for (const s of this.seats) s.ready = s.isBot;
     for (const s of [...this.seats]) {
@@ -471,16 +539,16 @@ export class RoomCore {
 
   private chat(seat: Internal, text: string, connId: string): void {
     const raw = String(text ?? '').trim();
-    if (raw.toLowerCase() === '-skip') return this.skipVote(seat);
     const now = this.io.now();
     if (now - seat.lastChat < 800) {
       this.io.send(connId, { t: 'error', message: 'You are sending messages too quickly.' });
       return;
     }
     seat.lastChat = now;
+    if (raw.toLowerCase() === '-skip') return this.skipVote(seat);
     const clean = cleanChat(raw);
     if (!clean) return;
-    const line: ChatLine = { from: seat.name, text: clean };
+    const line: ChatLine = { fromId: seat.id, from: seat.name, text: clean };
     this.broadcast({ t: 'chat', line });
   }
 
@@ -491,6 +559,7 @@ export class RoomCore {
       if (this.botAt) times.push(this.botAt);
     }
     if (this.lobbyAt) times.push(this.lobbyAt);
+    if (this.noShowAt && !this.state) times.push(this.noShowAt);
     for (const s of this.seats) {
       if (s.disconnectedAt !== null && !s.connected && !s.isBot) times.push(s.disconnectedAt + RECONNECT_GRACE_MS);
     }

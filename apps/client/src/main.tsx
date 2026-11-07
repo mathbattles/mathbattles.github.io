@@ -1,4 +1,4 @@
-import { render } from 'preact';
+import { Component, render, type ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import './styles.css';
 import { initAuth, setAnalyticsConsent } from './auth';
@@ -26,8 +26,11 @@ function Router({ path }: { path: string }) {
     case 'daily': return <Daily />;
     case 'replay': return <ReplayScreen data={parts[1] ?? ''} />;
     case 'online': return <OnlineMenu />;
-    case 'room': return <Room key={parts[1]} code={parts[1] ?? ''} />;
-    case 'ranked': return parts[1] ? <Room key={parts[1]} code={parts[1]} ranked /> : <Ranked />;
+    // Whether a room is ranked depends only on its code, however the link was written.
+    case 'room':
+    case 'ranked':
+      if (!parts[1]) return parts[0] === 'ranked' ? <Ranked /> : <OnlineMenu />;
+      return <Room key={parts[1]} code={parts[1]} ranked={parts[1].toUpperCase().startsWith('R-')} />;
     case 'learn': return <Learn />;
     case 'shop': return <Shop />;
     case 'profile': return <ProfileScreen />;
@@ -37,6 +40,29 @@ function Router({ path }: { path: string }) {
     case 'privacy': return <Privacy />;
     default:
       return <div class="page"><h2>That page doesn't exist</h2><a class="btn" href="#/">Go to the menu</a></div>;
+  }
+}
+
+/** One broken page shouldn't blank the whole game. */
+class ErrorBoundary extends Component<{ children: ComponentChildren }, { failed: boolean }> {
+  override state = { failed: false };
+  override componentDidCatch(error: unknown): void {
+    console.error('Page failed', error);
+    this.setState({ failed: true });
+  }
+  render() {
+    if (this.state.failed) {
+      return (
+        <div class="page">
+          <div class="sheet">
+            <h2>Something went wrong on this page</h2>
+            <p>Your progress is safe. Go back to the menu and try again.</p>
+            <a class="btn primary" href="#/">Back to menu</a>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
   }
 }
 
@@ -88,7 +114,9 @@ function App() {
   return (
     <>
       <div class={`route ${leaving ? 'leaving' : ''}`} key={path}>
-        <Router path={path} />
+        <ErrorBoundary>
+          <Router path={path} />
+        </ErrorBoundary>
       </div>
       <Consent />
     </>

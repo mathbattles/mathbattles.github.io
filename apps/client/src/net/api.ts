@@ -56,12 +56,17 @@ export function fetchDaily(day: number) {
 export async function submitDaily(day: number, shots: DailyShot[]): Promise<{ board?: DailyEntry[]; error?: string }> {
   const { profile } = await import('../store');
   const { authState } = await import('../auth');
-  const r = await call<{ board: DailyEntry[] }>(
-    `/api/daily/${day}`,
-    { method: 'POST', body: JSON.stringify({ name: profile.name, guest: profile.guestToken, shots }) },
-    authState.token,
-  );
-  return r ? { board: r.board } : { error: 'The leaderboard is offline, so this score is saved on this device only.' };
+  try {
+    const res = await fetch(`${SERVER_URL}/api/daily/${day}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(authState.token ? { authorization: `Bearer ${authState.token}` } : {}) },
+      body: JSON.stringify({ name: profile.name, guest: profile.guestToken, shots }),
+    });
+    const body = (await res.json()) as { board?: DailyEntry[]; error?: string };
+    return res.ok ? { board: body.board } : { error: body.error ?? "The score wasn't accepted." };
+  } catch {
+    return { error: 'The leaderboard is offline, so this score is saved on this device only.' };
+  }
 }
 export function pullProfile(token: string) {
   return call<{ profile: unknown; rating: number; username: string | null }>('/api/profile', undefined, token);
@@ -88,11 +93,21 @@ export async function claimUsername(token: string, username: string): Promise<{ 
     return { error: "The game server isn't reachable. Try again soon." };
   }
 }
-export function saveLoginEmail(token: string, email: string) {
-  return call<{ ok: boolean }>('/api/account/login-email', { method: 'POST', body: JSON.stringify({ email }) }, token);
+/** Tells the server the verified email on the login token, so username sign-in keeps working. */
+export function syncEmail(token: string) {
+  return call<{ ok: boolean }>('/api/account/sync-email', { method: 'POST', body: '{}' }, token);
 }
-export function resolveLogin(username: string, password: string) {
-  return call<{ email: string }>('/api/auth/resolve', { method: 'POST', body: JSON.stringify({ username, password }) });
+export async function resolveLogin(username: string, password: string): Promise<{ email?: string; error?: string }> {
+  try {
+    const res = await fetch(`${SERVER_URL}/api/auth/resolve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    return (await res.json()) as { email?: string; error?: string };
+  } catch {
+    return { error: "The game server isn't reachable. Try again soon." };
+  }
 }
 export function deleteAccountData(token: string) {
   return call<{ ok: boolean }>('/api/account', { method: 'DELETE' }, token);

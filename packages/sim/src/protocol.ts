@@ -1,5 +1,5 @@
 import type { Dir, ShotMode } from './constants';
-import type { AbilityId, MatchKind, MatchState, ShotRecord } from './rules';
+import type { AbilityId, MatchKind, MatchState, PlayerSetup, ShotRecord } from './rules';
 
 export interface RoomSettings {
   kind: MatchKind;
@@ -21,13 +21,16 @@ export interface Seat {
 }
 
 export interface ChatLine {
+  /** Seat id, so muting hides one person even if names match. */
+  fromId?: string;
   from: string;
   text: string;
   system?: boolean;
 }
 
 export type ClientMsg =
-  | { t: 'join'; name: string; token: string; ability?: AbilityId; hat?: string }
+  | { t: 'join'; name: string; token: string; idToken?: string | null; ability?: AbilityId; hat?: string }
+  | { t: 'leave' }
   | { t: 'settings'; settings: Partial<RoomSettings> }
   | { t: 'team'; team: 1 | 2 }
   | { t: 'ready'; ready: boolean }
@@ -44,10 +47,12 @@ export type ClientMsg =
 export type ServerMsg =
   | { t: 'welcome'; you: string; code: string }
   | { t: 'lobby'; host: string; seats: Seat[]; settings: RoomSettings; ranked: boolean; inMatch: boolean }
-  | { t: 'match'; state: MatchState; deadline: number; serverNow: number }
+  | { t: 'match'; state: MatchState; setups: PlayerSetup[]; deadline: number; serverNow: number }
   | { t: 'shot'; shot: ShotRecord; state: MatchState; deadline: number; serverNow: number }
   | { t: 'update'; state: MatchState; deadline: number; serverNow: number }
-  | { t: 'over'; state: MatchState; ratingDelta?: number }
+  | { t: 'over'; state: MatchState; setups: PlayerSetup[]; ratingDelta?: number }
+  /** The room can't be used. Clients should stop reconnecting and show this. */
+  | { t: 'closed'; message: string }
   | { t: 'chat'; line: ChatLine }
   | { t: 'error'; message: string }
   | { t: 'pong' };

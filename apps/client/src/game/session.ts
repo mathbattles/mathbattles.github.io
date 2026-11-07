@@ -369,6 +369,9 @@ export class NetSession extends GameSession {
   private retry = 0;
   private closed = false;
   private pingTimer = 0;
+  private errorTimer = 0;
+  /** The exact player list the server used, for building replay links. */
+  setups: PlayerSetup[] = [];
   muted = new Set<string>();
 
   constructor(private url: string, private joinMsg: Extract<ClientMsg, { t: 'join' }>) {
@@ -387,9 +390,17 @@ export class NetSession extends GameSession {
       this.pingTimer = window.setInterval(() => this.send({ t: 'ping' }), 20_000);
     };
     ws.onmessage = (e) => this.handle(JSON.parse(e.data as string) as ServerMsg);
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       clearInterval(this.pingTimer);
       if (this.closed) return;
+      // The server refused this room for good, so trying again can't help.
+      if (e.code >= 4000) {
+        this.closed = true;
+        this.status = 'closed';
+        this.error ||= "This room isn't available.";
+        this.emit();
+        return;
+      }
       this.retry++;
       if (this.retry > 6) {
         this.status = 'closed';
@@ -407,12 +418,25 @@ export class NetSession extends GameSession {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
   }
 
+  private showError(message: string): void {
+    this.error = message;
+    clearTimeout(this.errorTimer);
+    this.errorTimer = window.setTimeout(() => {
+      this.error = '';
+      this.emit();
+    }, 5000);
+  }
+
+  /** Runs in order. One failure must not stop every later update. */
+  private enqueue(task: () => void | Promise<void>): void {
+    this.queue = this.queue.then(task).catch((e) => console.error('Match update failed', e));
+  }
+
   private toLocal(serverTime: number): number {
     return serverTime + this.clockSkew;
   }
 
   private handle(msg: ServerMsg): void {
-    if (msg.t !== 'error' && msg.t !== 'pong') this.error = '';
     switch (msg.t) {
       case 'welcome':
         this.you = msg.you;
@@ -435,6 +459,7 @@ export class NetSession extends GameSession {
         this.clockSkew = Date.now() - msg.serverNow;
         this.status = 'playing';
         this.state = msg.state;
+        this.setups = msg.setups;
         this.deadline = this.toLocal(msg.deadline);
         this.startsAt = this.opening;
         this.overNotified = false;
@@ -443,20 +468,22 @@ export class NetSession extends GameSession {
         break;
       case 'update':
         this.clockSkew = Date.now() - msg.serverNow;
-        this.deadline = this.toLocal(msg.deadline);
-        this.state = msg.state;
-        this.queue = this.queue.then(() => {
-          if (this.state) this.stage?.sync(this.state);
+        this.enqueue(() => {
+          this.deadline = this.toLocal(msg.deadline);
+          this.state = msg.state;
+          this.stage?.sync(this.state);
+          this.emit();
         });
         break;
       case 'shot': {
         this.clockSkew = Date.now() - msg.serverNow;
-        const before = this.state;
         const shot = msg.shot;
         const next = msg.state;
         const deadline = this.toLocal(msg.deadline);
-        this.queue = this.queue.then(async () => {
+        this.enqueue(async () => {
           if (this.closed) return;
+          // Read here, not on arrival, so queued shots see the terrain left by earlier ones.
+          const before = this.state;
           this.busy = true;
           this.deadline = deadline;
           this.state = next;
@@ -485,7 +512,8 @@ export class NetSession extends GameSession {
       }
       case 'over':
         this.ratingDelta = msg.ratingDelta;
-        this.queue = this.queue.then(() => {
+        this.setups = msg.setups;
+        this.enqueue(() => {
           this.state = msg.state;
           this.stage?.sync(msg.state);
           this.notifyOver();
@@ -495,6 +523,11 @@ export class NetSession extends GameSession {
         this.chat = [...this.chat, msg.line].slice(-60);
         break;
       case 'error':
+        this.showError(msg.message);
+        break;
+      case 'closed':
+        this.closed = true;
+        this.status = 'closed';
         this.error = msg.message;
         break;
       case 'pong':
@@ -541,8 +574,12 @@ export class NetSession extends GameSession {
     if (this.state) stage.sync(this.state);
   }
   override dispose(): void {
+    // Say so on purpose, so the seat frees up at once. A page reload doesn't send this, which
+    // leaves the usual window to reconnect.
+    if (!this.closed) this.send({ t: 'leave' });
     this.closed = true;
     clearInterval(this.pingTimer);
+    clearTimeout(this.errorTimer);
     this.ws?.close();
   }
 }

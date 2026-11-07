@@ -186,6 +186,7 @@ export class Stage {
     if (this.running) return;
     this.running = true;
     this.lastNow = performance.now();
+    document.addEventListener('visibilitychange', this.onVisibility);
     const frame = (now: number) => {
       if (!this.running) return;
       this.draw(now);
@@ -197,11 +198,32 @@ export class Stage {
   stop(): void {
     this.running = false;
     cancelAnimationFrame(this.raf);
+    document.removeEventListener('visibilitychange', this.onVisibility);
+    // Anything waiting on a shot must not wait forever once this view is gone.
+    this.finishShotNow();
+  }
+
+  /** Hidden tabs don't draw, so shots there finish at once rather than piling up. */
+  private onVisibility = (): void => {
+    if (document.hidden) this.finishShotNow();
+  };
+
+  private finishShotNow(): void {
+    const shot = this.shot;
+    if (!shot) return;
+    this.shot = null;
+    this.zoom.target = 1;
+    if (this.state) this.sync(this.state);
+    shot.resolve();
   }
 
   /** Plays a shot on the display. Resolves after the post-shot delay. */
   playShot(record: ShotRecord, path: { xs: ArrayLike<number>; ys: ArrayLike<number>; steps: number }): Promise<void> {
     return new Promise((resolve) => {
+      if (document.hidden || !this.running) {
+        resolve();
+        return;
+      }
       const theme = THEMES[this.themeId];
       const owner = this.state?.players.find((p) => p.id === record.playerId);
       const look = this.looks[record.playerId] ?? {};

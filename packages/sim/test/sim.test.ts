@@ -301,7 +301,10 @@ describe('match rules', () => {
     const me = currentPlayer(m);
     me.charge = 4;
     const s = currentSoldier(m)!;
-    expect(() => useTeleport(m, me.id, s.x + 500, s.y)).toThrow(/too far/);
+    const far = s.x < 385 ? s.x + 300 : s.x - 300;
+    expect(() => useTeleport(m, me.id, far, s.y)).toThrow(/too far/);
+    expect(() => useTeleport(m, me.id, NaN, NaN)).toThrow(/inside the field/);
+    expect(() => useTeleport(m, me.id, -40, s.y)).toThrow(/inside the field/);
     const tx = s.x < 385 ? Math.max(20, s.x - 30) : Math.min(750, s.x + 30);
     useTeleport(m, me.id, tx, s.y);
     expect(s.x).toBe(tx);
@@ -329,6 +332,30 @@ describe('bots', () => {
       const move = chooseMove(m, { generations: 3, seed: 1 });
       expect(() => fire(m, currentPlayer(m).id, move)).not.toThrow();
     }
+  });
+});
+
+describe('big matches', () => {
+  it('always places a full free-for-all', () => {
+    const setups = Array.from({ length: 10 }, (_, i) => ({ id: `p${i}`, name: `P${i}`, team: 1 as const }));
+    for (let seed = 0; seed < 40; seed++) {
+      const m = createMatch(cfg({ kind: 'ffa', soldiers: 4, seed }), setups);
+      expect(m.soldiers.length).toBe(40);
+    }
+  });
+});
+
+describe('bot work limit', () => {
+  it('stops at its limit even if the clock never moves', () => {
+    const m = createMatch(cfg({ seed: 3 }), duel);
+    let simulated = 0;
+    const realNow = () => {
+      simulated++;
+      return 0;
+    };
+    const t0 = Date.now();
+    chooseMove(m, { generations: 400, seed: 1, maxEvals: 120, budgetMs: 1, now: realNow });
+    expect(Date.now() - t0).toBeLessThan(3000);
   });
 });
 

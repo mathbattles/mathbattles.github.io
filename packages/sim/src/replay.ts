@@ -79,9 +79,27 @@ export function decodeReplay(text: string): Replay | null {
     const bin = atob(text.replaceAll('-', '+').replaceAll('_', '/'));
     const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
     const r = JSON.parse(new TextDecoder().decode(bytes)) as Replay;
-    if (r.v !== 1 || !r.config || !Array.isArray(r.setups) || !Array.isArray(r.actions)) return null;
-    return r;
+    return replayIsSane(r) ? r : null;
   } catch {
     return null;
   }
+}
+
+const MAX_REPLAY_ACTIONS = 5000;
+
+/** Replay links can be edited by hand, so check the shape before building a match from one. */
+function replayIsSane(r: Replay): boolean {
+  if (!r || r.v !== 1 || !r.config || !Array.isArray(r.setups) || !Array.isArray(r.actions)) return false;
+  const { kind, mode, soldiers, seed } = r.config;
+  if (kind !== 'teams' && kind !== 'ffa') return false;
+  if (mode !== 'fn' && mode !== 'ode1' && mode !== 'ode2') return false;
+  if (!Number.isInteger(soldiers) || soldiers < 1 || soldiers > 4 || !Number.isFinite(seed)) return false;
+  if (r.setups.length < 2 || r.setups.length > 10 || r.actions.length > MAX_REPLAY_ACTIONS) return false;
+  const ids = new Set<string>();
+  for (const s of r.setups) {
+    if (!s || typeof s.id !== 'string' || typeof s.name !== 'string' || (s.team !== 1 && s.team !== 2)) return false;
+    ids.add(s.id);
+  }
+  if (ids.size !== r.setups.length) return false;
+  return r.actions.every((a) => !!a && typeof a === 'object' && typeof a.a === 'string');
 }

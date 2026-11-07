@@ -1,4 +1,4 @@
-import { BLAST_R, DEFAULT_SOLDIERS, MAX_SOLDIERS, type Dir, type ShotMode } from './constants';
+import { BLAST_R, DEFAULT_SOLDIERS, MAX_PLAYERS, MAX_SOLDIERS, PLANE_H, PLANE_W, SOLDIER_R, type Dir, type ShotMode } from './constants';
 import { generateCircles, placeSoldiers, spotIsClear, type SpawnSlot } from './map';
 import { Rng } from './rng';
 import { Terrain, type Circle } from './terrain';
@@ -102,7 +102,13 @@ export function createMatch(config: MatchConfig, setups: PlayerSetup[]): MatchSt
       slots.push({ side: config.kind === 'teams' ? ((p.team - 1) as 0 | 1) : null });
     }
   }
-  const placed = placeSoldiers(rng, generateCircles(rng), slots);
+  if (setups.length > MAX_PLAYERS) throw new RuleError(`A match can have at most ${MAX_PLAYERS} players.`);
+  let placed;
+  try {
+    placed = placeSoldiers(rng, generateCircles(rng), slots);
+  } catch {
+    throw new RuleError('Too many soldiers for one map. Use fewer players or soldiers.');
+  }
 
   let nextId = 0;
   const soldiers: Soldier[] = [];
@@ -301,6 +307,8 @@ export function useTeleport(
   const player = currentPlayer(state);
   requireAbility(state, player, 'teleport');
   const s = currentSoldier(state)!;
+  const inField = x >= SOLDIER_R && x <= PLANE_W - SOLDIER_R && y >= SOLDIER_R && y <= PLANE_H - SOLDIER_R;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !inField) throw new RuleError('Choose a spot inside the field');
   if (Math.hypot(s.x - x, s.y - y) > TELEPORT_RADIUS) throw new RuleError('That spot is too far away');
   if (!spotIsClear(x, y, (px, py) => terrain.solidAt(px, py))) throw new RuleError("You can't stand there");
   if (state.soldiers.some((o) => o.alive && o.id !== s.id && Math.hypot(o.x - x, o.y - y) < 20)) {

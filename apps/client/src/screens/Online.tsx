@@ -1,4 +1,4 @@
-import { BOT_LEVELS, MAX_PLAYERS, encodeReplay, isOnWinningSide, type BotLevel, type MatchKind, type MatchState, type ShotMode } from '@mathbattles/sim';
+import { BOT_LEVELS, MAX_PLAYERS, encodeReplay, isOnWinningSide, makeReplay, type BotLevel, type MatchKind, type MatchState, type ShotMode } from '@mathbattles/sim';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { authState, useAuth } from '../auth';
 import { NetSession } from '../game/session';
@@ -85,7 +85,8 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
   const session = useMemo(() => new NetSession(`${WS_URL}/room/${encodeURIComponent(code)}`, {
     t: 'join',
     name: profile.name,
-    token: (ranked && authState.token) || profile.guestToken,
+    token: profile.guestToken,
+    idToken: authState.token,
     ability: profile.ability,
     hat: cosmeticValue('hat'),
   }), [code]);
@@ -127,13 +128,13 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
     <div class="mini">
       <h3>Chat</h3>
       <div class="chatlog" ref={chatRef} aria-live="polite">
-        {session.chat.filter((l) => !session.muted.has(l.from)).map((l) => (
+        {session.chat.filter((l) => !l.fromId || !session.muted.has(l.fromId)).map((l) => (
           <div class={l.system ? 'sys' : ''}>
             {l.system ? l.text : <><strong>{l.from}:</strong> {l.text}</>}
-            {!l.system && l.from !== profile.name && (
+            {!l.system && l.fromId !== session.you && (
               <>
                 {' '}
-                <button class="plain small" onClick={() => { session.muted.add(l.from); force((n) => n + 1); }}>Mute</button>
+                <button class="plain small" onClick={() => { if (l.fromId) session.muted.add(l.fromId); force((n) => n + 1); }}>Mute</button>
                 <button class="plain small" onClick={() => { void reportChat(session.code, l.from, l.text); setReported(true); }}>Report</button>
               </>
             )}
@@ -150,22 +151,28 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
   );
 
   if (session.status === 'closed') {
-    return <div class="page"><TopBar /><h2>Disconnected</h2><p>{session.error}</p><a class="btn primary" href="#/online">Back to rooms</a></div>;
+    return (
+      <div class="page">
+        <TopBar />
+        <div class="sheet">
+          <h2>{ranked ? 'Ranked match unavailable' : "Can't join this room"}</h2>
+          <p>{session.error}</p>
+          <a class="btn primary" href={ranked ? '#/ranked' : '#/online'}>{ranked ? 'Back to ranked' : 'Back to rooms'}</a>
+        </div>
+      </div>
+    );
   }
 
   if (session.status === 'playing' && session.state) {
     // A result from the previous match in this room must not show during the next one.
     const over = session.state.over ? finished : null;
-    const replay = over ? `${location.origin}${location.pathname}#/replay/${encodeReplay({
-      v: 1,
-      config: over.config,
-      setups: session.seats.map((s) => ({ id: s.id, name: s.name, team: s.team, ability: s.ability, isBot: s.isBot })),
-      actions: replayActions(over),
-    })}` : undefined;
+    const replay = over ? `${location.origin}${location.pathname}#/replay/${encodeReplay(makeReplay(over, session.setups))}` : undefined;
     return (
       <GameView
         session={session}
-        header={<a class="btn small" href="#/online">Leave</a>}
+        keepSession
+        notice={session.error}
+        header={<a class="btn small" href={ranked ? '#/ranked' : '#/online'}>Leave</a>}
         showFunctions={session.settings?.showFunctions ?? false}
         extraSide={chatPanel}
         result={over ? (
@@ -173,7 +180,7 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
             {session.ratingDelta !== undefined && <p>Rating {session.ratingDelta >= 0 ? '+' : ''}{session.ratingDelta}</p>}
             <p class="muted">{ranked ? 'Queue again from the Ranked screen.' : 'The room returns to the lobby in a moment.'}</p>
           </ResultCard>
-        ) : session.error ? <p class="error" role="alert">{session.error}</p> : null}
+        ) : null}
       />
     );
   }
@@ -259,23 +266,6 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
   );
 }
 
-function replayActions(state: MatchState) {
-  return state.log.map((e) => {
-    switch (e.type) {
-      case 'shot':
-        return { a: 'f' as const, p: e.shot.playerId, e: e.shot.expr, ...(e.shot.mode === 'ode2' ? { g: e.shot.angle } : {}), ...(e.shot.dir === -1 ? { d: -1 as const } : {}) };
-      case 'teleport':
-        return { a: 't' as const, p: e.playerId, x: e.x, y: e.y };
-      case 'missile':
-        return { a: 'm' as const, p: e.playerId };
-      case 'timeout':
-        return { a: 's' as const };
-      case 'leave':
-        return { a: 'l' as const, p: e.playerId };
-    }
-  });
-}
-
 export function Ranked() {
   useProfile();
   const auth = useAuth();
@@ -300,19 +290,29 @@ export function Ranked() {
     sock.onopen = () => sock.send(JSON.stringify({ token: authState.token, name: profile.name }));
     sock.onmessage = (e) => {
       const m = JSON.parse(e.data as string) as { t: string; code?: string; message?: string };
-      if (m.t === 'matched' && m.code) go(`/ranked/${m.code}`);
+      if (m.t === 'matched' && m.code) {
+        matched = true;
+        go(`/ranked/${m.code}`);
+      }
       if (m.t === 'error') {
         setError(m.message ?? 'Matchmaking failed. Try again.');
         setSearching(false);
       }
     };
-    sock.onerror = () => {
+    let matched = false;
+    const lost = () => {
+      if (matched || ws.current !== sock) return;
+      ws.current = null;
       setError("The ranked queue isn't reachable right now. Try again soon.");
       setSearching(false);
     };
+    sock.onerror = lost;
+    sock.onclose = lost;
   };
   const cancel = () => {
-    ws.current?.close();
+    const sock = ws.current;
+    ws.current = null;
+    sock?.close();
     setSearching(false);
   };
 
