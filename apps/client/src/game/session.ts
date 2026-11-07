@@ -48,6 +48,8 @@ export interface FireArgs {
 export abstract class GameSession {
   abstract state: MatchState;
   deadline: number | null = null;
+  /** When the opening countdown ends, for matches that have one. */
+  startsAt: number | null = null;
   busy = false;
   stage: Stage | null = null;
   preview = false;
@@ -89,6 +91,8 @@ export abstract class GameSession {
   }
 }
 
+const LOCAL_COUNTDOWN_MS = 3000;
+
 const BOT_BUDGET: Record<string, number> = { easy: 500, normal: 1200, hard: 2500, genius: 5000 };
 
 let botWorker: Worker | null = null;
@@ -129,7 +133,7 @@ export class LocalSession extends GameSession {
   }
 
   canAct(): boolean {
-    return !this.busy && !this.state.over && !currentPlayer(this.state).isBot;
+    return !this.busy && !this.state.over && !currentPlayer(this.state).isBot && Date.now() >= (this.startsAt ?? 0);
   }
   viewerId(): string {
     const cur = currentPlayer(this.state);
@@ -139,7 +143,11 @@ export class LocalSession extends GameSession {
 
   protected override begin(): void {
     this.timer = window.setInterval(() => this.tick(), 250);
-    this.beginTurn();
+    this.startsAt = Date.now() + LOCAL_COUNTDOWN_MS;
+    this.emit();
+    setTimeout(() => {
+      this.beginTurn();
+    }, LOCAL_COUNTDOWN_MS);
   }
 
   private beginTurn(): void {
@@ -415,15 +423,20 @@ export class NetSession extends GameSession {
         this.seats = msg.seats;
         this.settings = msg.settings;
         this.ranked = msg.ranked;
-        if (this.status !== 'playing' || this.state?.over) this.status = 'lobby';
-        this.state = this.status === 'lobby' ? (null as unknown as MatchState) : this.state;
-        this.overNotified = this.status === 'lobby' ? false : this.overNotified;
+        // Seat changes can arrive during a match. Only the server ending it returns everyone here.
+        if (!msg.inMatch && !(msg.ranked && this.state?.over)) {
+          this.status = 'lobby';
+          this.state = null as unknown as MatchState;
+          this.overNotified = false;
+          this.ratingDelta = undefined;
+        }
         break;
       case 'match':
         this.clockSkew = Date.now() - msg.serverNow;
         this.status = 'playing';
         this.state = msg.state;
         this.deadline = this.toLocal(msg.deadline);
+        this.startsAt = this.opening;
         this.overNotified = false;
         this.chat = this.chat.slice(-40);
         this.stage?.sync(msg.state);
@@ -498,6 +511,9 @@ export class NetSession extends GameSession {
   /** True during the countdown before a turn's clock starts. */
   get waitingToStart(): boolean {
     return this.deadline !== null && Date.now() < this.deadline - TURN_MS;
+  }
+  private get opening(): number | null {
+    return this.state && this.state.log.length === 0 && this.deadline !== null ? this.deadline - TURN_MS : null;
   }
   canAct(): boolean {
     return !this.busy && !!this.state && !this.state.over && !this.waitingToStart && currentPlayer(this.state).id === this.you;

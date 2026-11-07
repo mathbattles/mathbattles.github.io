@@ -135,7 +135,7 @@ export function Menu() {
         ))}
       </div>
       <p class="muted" style={{ marginTop: 16 }}>
-        <a href="#/settings">Settings</a>{'  '}<a href="#/leaderboard">Leaderboard</a>{'  '}<a href="#/privacy">Privacy</a>{'  '}Inspired by Graphwar and Math Wars. Not affiliated with either.
+        <a href="#/settings">Settings</a>{' '}<a href="#/leaderboard">Leaderboard</a>{' '}<a href="#/privacy">Privacy</a>{' '}Inspired by Graphwar and Math Wars. Not affiliated with either.
       </p>
     </div>
   );

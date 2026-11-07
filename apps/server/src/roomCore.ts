@@ -51,7 +51,7 @@ interface Internal extends Seat {
 
 const RANKED_SETTINGS: RoomSettings = { kind: 'teams', mode: 'fn', abilities: false, soldiers: 1, showFunctions: false };
 const MAX_SEATS = MAX_PLAYERS;
-const LOBBY_RETURN_MS = 8000;
+const LOBBY_RETURN_MS = 12_000;
 
 /**
  * A room's full logic, free of Cloudflare APIs so it can be tested directly.
@@ -87,7 +87,7 @@ export class RoomCore {
   }
 
   private sendLobby(to?: string): void {
-    const msg: ServerMsg = { t: 'lobby', host: this.host, seats: this.seats.map((s) => this.publicSeat(s)), settings: this.settings, ranked: this.ranked };
+    const msg: ServerMsg = { t: 'lobby', host: this.host, seats: this.seats.map((s) => this.publicSeat(s)), settings: this.settings, ranked: this.ranked, inMatch: !!this.state };
     if (to) this.io.send(to, msg);
     else this.broadcast(msg);
     this.io.onLobbyChange?.({ players: this.seats.filter((s) => s.connected).length, kind: this.settings.kind, mode: this.settings.mode, inLobby: !this.state });

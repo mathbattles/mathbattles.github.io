@@ -1,6 +1,6 @@
-import { DAILY_MAX_SHOTS, ParseError, START_RATING, eloDelta, scoreDaily, utcDayNumber, type ClientMsg, type DailyShot, type ServerMsg } from '@mathbattles/sim';
+import { DAILY_MAX_SHOTS, ParseError, START_RATING, eloDelta, scoreDaily, usernameProblem, utcDayNumber, type ClientMsg, type DailyShot, type ServerMsg } from '@mathbattles/sim';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
-import { cleanName } from './moderation';
+import { cleanName, isBlockedName } from './moderation';
 import { RoomCore } from './roomCore';
 
 export interface Env {
@@ -8,6 +8,7 @@ export interface Env {
   MATCHMAKER: DurableObjectNamespace;
   DB: D1Database;
   FIREBASE_PROJECT_ID: string;
+  FIREBASE_API_KEY: string;
   ALLOWED_ORIGINS: string;
 }
 
@@ -31,7 +32,7 @@ function cors(env: Env, req: Request): Record<string, string> {
   const allowed = env.ALLOWED_ORIGINS.split(',').includes(origin);
   return {
     ...(allowed ? { 'access-control-allow-origin': origin, vary: 'origin' } : {}),
-    'access-control-allow-methods': 'GET,POST,PUT,OPTIONS',
+    'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
     'access-control-allow-headers': 'content-type,authorization',
   };
 }
@@ -161,7 +162,70 @@ export default {
           return json({ ok: true });
         }
         const row = await env.DB.prepare('SELECT rating, profile FROM players WHERE uid = ?').bind(uid).first<{ rating: number; profile: string | null }>();
-        return json({ rating: row?.rating ?? START_RATING, profile: row?.profile ? JSON.parse(row.profile) : null });
+        const user = await env.DB.prepare('SELECT display FROM usernames WHERE uid = ?').bind(uid).first<{ display: string }>();
+        return json({ rating: row?.rating ?? START_RATING, profile: row?.profile ? JSON.parse(row.profile) : null, username: user?.display ?? null });
+      }
+
+      case 'account': {
+        const action = parts[2];
+        if (action === 'available' && req.method === 'GET') {
+          const name = decodeURIComponent(parts[3] ?? '');
+          const problem = usernameProblem(name) ?? (isBlockedName(name) ? 'Choose a different username' : null);
+          if (problem) return json({ available: false, problem });
+          const row = await env.DB.prepare('SELECT 1 AS x FROM usernames WHERE username_lc = ?').bind(name.toLowerCase()).first();
+          return json({ available: !row, problem: row ? 'That username is taken' : null });
+        }
+        const uid = await verifyUser(env, req.headers.get('authorization')?.replace(/^Bearer /, ''));
+        if (!uid) return json({ error: 'Sign in first' }, 401);
+        if (action === 'claim' && req.method === 'POST') {
+          const body = await readJson<{ username?: string }>(req);
+          const name = String(body?.username ?? '');
+          const problem = usernameProblem(name) ?? (isBlockedName(name) ? 'Choose a different username' : null);
+          if (problem) return json({ error: problem }, 400);
+          const mine = await env.DB.prepare('SELECT display FROM usernames WHERE uid = ?').bind(uid).first<{ display: string }>();
+          if (mine) return json({ error: 'This account already has a username' }, 409);
+          try {
+            await env.DB.prepare('INSERT INTO usernames (username_lc, uid, display, created_at) VALUES (?, ?, ?, ?)')
+              .bind(name.toLowerCase(), uid, name, Date.now()).run();
+          } catch {
+            return json({ error: 'That username is taken' }, 409);
+          }
+          return json({ username: name });
+        }
+        if (action === 'login-email' && req.method === 'POST') {
+          const body = await readJson<{ email?: string }>(req);
+          const email = String(body?.email ?? '').trim().slice(0, 254);
+          if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json({ error: 'Enter a valid email' }, 400);
+          await env.DB.prepare('UPDATE usernames SET login_email = ? WHERE uid = ?').bind(email, uid).run();
+          return json({ ok: true });
+        }
+        if (req.method === 'DELETE' && !action) {
+          await env.DB.batch([
+            env.DB.prepare('DELETE FROM usernames WHERE uid = ?').bind(uid),
+            env.DB.prepare('DELETE FROM players WHERE uid = ?').bind(uid),
+            env.DB.prepare('DELETE FROM daily_scores WHERE who = ?').bind(uid),
+          ]);
+          return json({ ok: true });
+        }
+        return json({ error: 'Not found' }, 404);
+      }
+
+      case 'auth': {
+        // Players who added a real email log in with it, but type their username. The email
+        // is only handed back after Firebase confirms the password is correct.
+        if (parts[2] !== 'resolve' || req.method !== 'POST') return json({ error: 'Not found' }, 404);
+        const body = await readJson<{ username?: string; password?: string }>(req);
+        const name = String(body?.username ?? '').toLowerCase().slice(0, 32);
+        const password = String(body?.password ?? '').slice(0, 256);
+        const row = await env.DB.prepare('SELECT login_email FROM usernames WHERE username_lc = ?').bind(name).first<{ login_email: string | null }>();
+        const fail = () => json({ error: 'Wrong username or password' }, 401);
+        if (!row?.login_email || !password) return fail();
+        const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${env.FIREBASE_API_KEY}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ email: row.login_email, password, returnSecureToken: false }),
+        });
+        return res.ok ? json({ email: row.login_email }) : fail();
       }
 
       case 'report': {
@@ -176,7 +240,8 @@ export default {
   },
 };
 
-const MAX_MSG = 1024;
+// Large enough for a Firebase login token inside the join message.
+const MAX_MSG = 4096;
 
 /** Hosts one room. The logic lives in RoomCore; this connects it to sockets and alarms. */
 export class RoomObject implements DurableObject {

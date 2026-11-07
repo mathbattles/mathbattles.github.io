@@ -45,7 +45,6 @@ export const RANKS = [
   { name: 'Fields Medalist', min: 1900 },
 ] as const;
 
-export const RANKED_UNLOCK_LEVEL = 5;
 export const START_RATING = 1000;
 
 export function rankFor(rating: number): string {
@@ -146,4 +145,19 @@ export function questsFor(dayNumber: number): QuestDef[] {
 
 export function utcDayNumber(now: number): number {
   return Math.floor(now / 86_400_000);
+}
+
+/** Returns what's wrong with a username, or null if it's fine. */
+export function usernameProblem(name: string): string | null {
+  if (name.length < 3) return 'Usernames need at least 3 characters';
+  if (name.length > 16) return 'Usernames can have at most 16 characters';
+  if (!/^[A-Za-z0-9_]+$/.test(name)) return 'Use only letters, numbers, and underscores';
+  return null;
+}
+
+export const MIN_PASSWORD = 8;
+
+/** The private login address behind a username. It never receives mail. */
+export function loginEmailFor(username: string): string {
+  return `${username.toLowerCase()}@users.mathbattles.invalid`;
 }

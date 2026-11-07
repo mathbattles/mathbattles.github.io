@@ -1,5 +1,6 @@
 import { levelFromXp } from '@mathbattles/sim';
 import { useEffect, useState } from 'preact/hooks';
+import { useAuth } from '../auth';
 import { profile, subscribeProfile } from '../store';
 
 export function useProfile(): void {
@@ -9,12 +10,14 @@ export function useProfile(): void {
 
 export function TopBar({ title }: { title?: string }) {
   useProfile();
+  const auth = useAuth();
   const lv = levelFromXp(profile.xp);
   return (
     <div class="topbar">
       <a class="btn small" href="#/">Menu</a>
       {title && <h2 style={{ margin: 0 }}>{title}</h2>}
       <span class="spacer" />
+      {auth.ready && !auth.user && <a class="btn small" href="#/signin">Sign in</a>}
       <a href="#/profile"><strong>{profile.name}</strong></a>
       <span>Level {lv.level}</span>
       <span class="sparks">{profile.sparks} Sparks</span>

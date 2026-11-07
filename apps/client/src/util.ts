@@ -60,27 +60,77 @@ export function go(path: string): void {
 
 let audio: AudioContext | null = null;
 
-export function sound(kind: 'fire' | 'boom' | 'kill' | 'turn', muted: boolean): void {
+type SoundKind = 'fire' | 'boom' | 'kill' | 'turn' | 'tick' | 'go' | 'win' | 'lose' | 'click';
+
+function tone(ctx: AudioContext, type: OscillatorType, from: number, to: number, dur: number, vol: number, delay = 0): void {
+  const t = ctx.currentTime + delay;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain).connect(ctx.destination);
+  osc.type = type;
+  osc.frequency.setValueAtTime(from, t);
+  osc.frequency.exponentialRampToValueAtTime(to, t + dur);
+  gain.gain.setValueAtTime(vol, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.start(t);
+  osc.stop(t + dur);
+}
+
+function noise(ctx: AudioContext, dur: number, vol: number, cutoff: number): void {
+  const size = Math.floor(ctx.sampleRate * dur);
+  const buffer = ctx.createBuffer(1, size, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < size; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / size);
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = cutoff;
+  const gain = ctx.createGain();
+  gain.gain.value = vol;
+  src.connect(filter).connect(gain).connect(ctx.destination);
+  src.start();
+}
+
+export function sound(kind: SoundKind, muted: boolean): void {
   if (muted) return;
   try {
     audio ??= new AudioContext();
-    const t = audio.currentTime;
-    const osc = audio.createOscillator();
-    const gain = audio.createGain();
-    osc.connect(gain).connect(audio.destination);
-    const spec = {
-      fire: { type: 'triangle', from: 300, to: 900, dur: 0.18, vol: 0.12 },
-      boom: { type: 'sawtooth', from: 160, to: 40, dur: 0.3, vol: 0.14 },
-      kill: { type: 'square', from: 620, to: 1040, dur: 0.14, vol: 0.08 },
-      turn: { type: 'sine', from: 520, to: 660, dur: 0.12, vol: 0.08 },
-    }[kind];
-    osc.type = spec.type as OscillatorType;
-    osc.frequency.setValueAtTime(spec.from, t);
-    osc.frequency.exponentialRampToValueAtTime(spec.to, t + spec.dur);
-    gain.gain.setValueAtTime(spec.vol, t);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + spec.dur);
-    osc.start(t);
-    osc.stop(t + spec.dur);
+    const c = audio;
+    switch (kind) {
+      case 'fire':
+        tone(c, 'sawtooth', 220, 880, 0.16, 0.08);
+        noise(c, 0.12, 0.08, 2600);
+        break;
+      case 'boom':
+        tone(c, 'sine', 150, 36, 0.4, 0.28);
+        noise(c, 0.45, 0.28, 1100);
+        break;
+      case 'kill':
+        tone(c, 'square', 520, 1040, 0.12, 0.08);
+        tone(c, 'square', 780, 1560, 0.16, 0.07, 0.09);
+        noise(c, 0.2, 0.12, 3200);
+        break;
+      case 'turn':
+        tone(c, 'triangle', 520, 660, 0.1, 0.1);
+        tone(c, 'triangle', 660, 880, 0.14, 0.1, 0.1);
+        break;
+      case 'tick':
+        tone(c, 'square', 700, 700, 0.07, 0.06);
+        break;
+      case 'go':
+        tone(c, 'square', 880, 1320, 0.26, 0.09);
+        break;
+      case 'win':
+        [523, 659, 784, 1047].forEach((f, i) => tone(c, 'triangle', f, f, 0.22, 0.12, i * 0.12));
+        break;
+      case 'lose':
+        [392, 330, 262].forEach((f, i) => tone(c, 'triangle', f, f * 0.96, 0.28, 0.1, i * 0.16));
+        break;
+      case 'click':
+        tone(c, 'sine', 500, 720, 0.05, 0.05);
+        break;
+    }
   } catch {
     /* sound is optional */
   }

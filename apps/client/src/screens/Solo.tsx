@@ -74,7 +74,7 @@ export function LevelScreen({ id }: { id: string }) {
       header={<span class="row"><a class="btn small" href="#/campaign">Levels</a><strong>{level.title}</strong></span>}
       soloInfo={`${modeName(level.mode)}. Up to 5 shots. Short function: ${parFor(level)} characters or fewer.`}
       result={result && (
-        <div class="sheet" style={{ marginTop: 12 }}>
+        <div class="sheet result-card">
           {result.cleared ? (
             <>
               <h2>Level cleared <Stars n={result.stars} /></h2>
@@ -154,7 +154,7 @@ export function Daily() {
         </div>
       }
       result={done && (
-        <div class="sheet" style={{ marginTop: 12 }}>
+        <div class="sheet result-card">
           <h2>{done.cleared ? `Cleared in ${done.shots} ${done.shots === 1 ? 'shot' : 'shots'}` : 'Out of shots'}</h2>
           <p>{done.cleared ? `${done.chars} characters in total. ${done.note}` : 'Try again with a new plan. The puzzle stays the same all day.'}</p>
           <div class="row">

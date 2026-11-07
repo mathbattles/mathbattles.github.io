@@ -43,7 +43,7 @@ export type ClientMsg =
 
 export type ServerMsg =
   | { t: 'welcome'; you: string; code: string }
-  | { t: 'lobby'; host: string; seats: Seat[]; settings: RoomSettings; ranked: boolean }
+  | { t: 'lobby'; host: string; seats: Seat[]; settings: RoomSettings; ranked: boolean; inMatch: boolean }
   | { t: 'match'; state: MatchState; deadline: number; serverNow: number }
   | { t: 'shot'; shot: ShotRecord; state: MatchState; deadline: number; serverNow: number }
   | { t: 'update'; state: MatchState; deadline: number; serverNow: number }

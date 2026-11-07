@@ -35,9 +35,11 @@ export function ResultCard(props: { state: MatchState; viewer?: string; rewards?
   const copy = () => {
     if (props.replay) void navigator.clipboard?.writeText(props.replay);
   };
+  const title = winnerText(props.state, props.viewer);
+  const tone = title === 'You lose' ? 'lose' : title === 'You win' ? 'win' : '';
   return (
-    <div class="sheet" style={{ marginTop: 12 }}>
-      <h2>{winnerText(props.state, props.viewer)}</h2>
+    <div class={`sheet result-card ${tone}`}>
+      <h2>{title}</h2>
       {props.rewards && (
         <p>You earned {props.rewards.sparks} Sparks and {props.rewards.xp} XP.{props.rewards.levelUp ? ' Level up!' : ''}</p>
       )}

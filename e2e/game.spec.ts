@@ -166,6 +166,123 @@ test('a new player is sent to the tutorial', async ({ browser }) => {
   await expect(page.locator('.coach')).toContainText('Type 0');
 });
 
+const uniqueName = (tag: string) => `t${tag}${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`.slice(0, 16);
+
+async function createAccount(browser: Browser, username: string, password: string): Promise<Page> {
+  const page = await newPlayer(browser, 'Guest');
+  await page.goto('/#/signin');
+  await page.getByRole('button', { name: 'Create account' }).first().click();
+  await page.getByLabel('Username').fill(username);
+  await page.getByLabel('Password').fill(password);
+  await page.locator('form').getByRole('button', { name: 'Create account' }).click();
+  await expect(page.getByText(`Signed in as`)).toBeVisible({ timeout: 20_000 });
+  return page;
+}
+
+async function deleteAccount(page: Page): Promise<void> {
+  await page.goto('/#/profile');
+  await page.getByRole('button', { name: 'Delete account' }).click();
+  await page.getByRole('button', { name: 'Delete for good' }).click();
+  await expect(page.getByRole('link', { name: 'Sign in or create an account' })).toBeVisible({ timeout: 20_000 });
+}
+
+test('username accounts: create, sign out, wrong password, sign back in, delete', async ({ browser }) => {
+  const name = uniqueName('acct');
+  const password = 'correct-horse-9';
+  const page = await createAccount(browser, name, password);
+  await expect(page.locator('.topbar')).toContainText(name);
+
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('link', { name: 'Sign in or create an account' })).toBeVisible();
+
+  await page.goto('/#/signin');
+  await page.getByLabel('Username').fill(name);
+  await page.getByLabel('Password').fill('not-the-password');
+  await page.locator('form').getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByRole('alert')).toContainText('Wrong username or password');
+
+  await page.getByLabel('Password').fill(password);
+  await page.locator('form').getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByText('Signed in as')).toBeVisible({ timeout: 20_000 });
+
+  // Same name can't be taken twice, whatever the capitals.
+  const other = await newPlayer(browser, 'Other');
+  await other.goto('/#/signin');
+  await other.getByRole('button', { name: 'Create account' }).first().click();
+  await other.getByLabel('Username').fill(name.toUpperCase());
+  await other.getByLabel('Password').fill(password);
+  await other.locator('form').getByRole('button', { name: 'Create account' }).click();
+  await expect(other.getByRole('alert')).toContainText('taken');
+
+  await deleteAccount(page);
+});
+
+test('bad usernames and short passwords are refused', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Guest');
+  await page.goto('/#/signin');
+  await page.getByRole('button', { name: 'Create account' }).first().click();
+  await page.getByLabel('Username').fill('ab');
+  await page.getByLabel('Password').fill('correct-horse-9');
+  await page.locator('form').getByRole('button', { name: 'Create account' }).click();
+  await expect(page.getByRole('alert')).toContainText('at least 3');
+  await page.getByLabel('Username').fill('valid_name');
+  await page.getByLabel('Password').fill('short');
+  await page.locator('form').getByRole('button', { name: 'Create account' }).click();
+  await expect(page.getByRole('alert')).toContainText('at least 8');
+});
+
+test('two brand-new level 1 accounts can play ranked, and ratings change', async ({ browser }) => {
+  test.setTimeout(180_000);
+  const password = 'correct-horse-9';
+  const nameA = uniqueName('ra');
+  const nameB = uniqueName('rb');
+  const removeAccount = async (name: string) => {
+    const page = await newPlayer(browser, 'Guest');
+    await page.goto('/#/signin');
+    await page.getByLabel('Username').fill(name);
+    await page.getByLabel('Password').fill(password);
+    await page.locator('form').getByRole('button', { name: 'Sign in' }).click();
+    await expect(page.getByText('Signed in as')).toBeVisible({ timeout: 20_000 });
+    await deleteAccount(page);
+  };
+  const a = await createAccount(browser, nameA, password);
+  const b = await createAccount(browser, nameB, password);
+  try {
+    await a.goto('/#/ranked');
+    await b.goto('/#/ranked');
+    await a.getByRole('button', { name: 'Find a match' }).click();
+    await b.getByRole('button', { name: 'Find a match' }).click();
+    await expect(a).toHaveURL(/#\/ranked\/R-/, { timeout: 30_000 });
+    await expect(b).toHaveURL(/#\/ranked\/R-/, { timeout: 30_000 });
+    await expect(a.locator('.game canvas')).toBeVisible({ timeout: 20_000 });
+    await expect(b.locator('.game canvas')).toBeVisible({ timeout: 20_000 });
+
+    // One player quits for good, so the other wins once the reconnect window ends.
+    await expect(a.locator('.who')).toBeVisible();
+    await b.close();
+    await expect(a.getByRole('heading', { name: 'You win' })).toBeVisible({ timeout: 60_000 });
+    await expect(a.getByText(/Rating \+\d+/)).toBeVisible();
+  } finally {
+    await removeAccount(nameA).catch(() => {});
+    await removeAccount(nameB).catch(() => {});
+  }
+});
+
+test('pages change with a fade', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Fade');
+  await page.goto('/#/learn');
+  await expect(page.locator('.route')).toBeVisible();
+  const leaving = page.evaluate(() => new Promise<boolean>((resolve) => {
+    const route = document.querySelector('.route')!;
+    const seen = () => route.classList.contains('leaving');
+    new MutationObserver(() => { if (seen()) resolve(true); }).observe(route, { attributes: true });
+    setTimeout(() => resolve(false), 1000);
+    location.hash = '/shop';
+  }));
+  expect(await leaving).toBe(true);
+  await expect(page.getByRole('heading', { name: 'Shop' })).toBeVisible();
+});
+
 test('the layout has no sideways scroll on a phone', async ({ browser }) => {
   const ctx = await browser.newContext({ viewport: { width: 375, height: 700 } });
   const page = await ctx.newPage();

@@ -64,11 +64,36 @@ export async function submitDaily(day: number, shots: DailyShot[]): Promise<{ bo
   return r ? { board: r.board } : { error: 'The leaderboard is offline, so this score is saved on this device only.' };
 }
 export function pullProfile(token: string) {
-  return call<{ profile: unknown; rating: number }>('/api/profile', undefined, token);
+  return call<{ profile: unknown; rating: number; username: string | null }>('/api/profile', undefined, token);
 }
 export function pushProfile(token: string, profile: unknown) {
   return call('/api/profile', { method: 'PUT', body: JSON.stringify(profile) }, token);
 }
 export function reportChat(code: string, reported: string, text: string) {
   return call('/api/report', { method: 'POST', body: JSON.stringify({ code, reported, text }) });
+}
+
+export function usernameAvailable(name: string) {
+  return call<{ available: boolean; problem: string | null }>(`/api/account/available/${encodeURIComponent(name)}`);
+}
+export async function claimUsername(token: string, username: string): Promise<{ username?: string; error?: string }> {
+  try {
+    const res = await fetch(`${SERVER_URL}/api/account/claim`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ username }),
+    });
+    return (await res.json()) as { username?: string; error?: string };
+  } catch {
+    return { error: "The game server isn't reachable. Try again soon." };
+  }
+}
+export function saveLoginEmail(token: string, email: string) {
+  return call<{ ok: boolean }>('/api/account/login-email', { method: 'POST', body: JSON.stringify({ email }) }, token);
+}
+export function resolveLogin(username: string, password: string) {
+  return call<{ email: string }>('/api/auth/resolve', { method: 'POST', body: JSON.stringify({ username, password }) });
+}
+export function deleteAccountData(token: string) {
+  return call<{ ok: boolean }>('/api/account', { method: 'DELETE' }, token);
 }

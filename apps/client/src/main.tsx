@@ -1,5 +1,5 @@
 import { render } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import './styles.css';
 import { initAuth, setAnalyticsConsent } from './auth';
 import { profile } from './store';
@@ -9,6 +9,7 @@ import { LocalSetup, Practice } from './screens/Local';
 import { Campaign, Daily, LevelScreen, ReplayScreen } from './screens/Solo';
 import { Learn, Leaderboard, Privacy, ProfileScreen, Settings, Shop } from './screens/Meta';
 import { OnlineMenu, Ranked, Room } from './screens/Online';
+import { SignIn } from './screens/Account';
 
 function route(): string {
   return location.hash.replace(/^#/, '') || '/';
@@ -30,6 +31,7 @@ function Router({ path }: { path: string }) {
     case 'learn': return <Learn />;
     case 'shop': return <Shop />;
     case 'profile': return <ProfileScreen />;
+    case 'signin': return <SignIn />;
     case 'settings': return <Settings />;
     case 'leaderboard': return <Leaderboard />;
     case 'privacy': return <Privacy />;
@@ -52,21 +54,42 @@ function Consent() {
   );
 }
 
+const FADE_OUT_MS = 130;
+
 function App() {
   const [path, setPath] = useState(route());
+  const [leaving, setLeaving] = useState(false);
+  const timer = useRef(0);
   useEffect(() => {
     const on = () => {
-      setPath(route());
-      window.scrollTo(0, 0);
+      const next = route();
+      clearTimeout(timer.current);
+      if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        setPath(next);
+        window.scrollTo(0, 0);
+        return;
+      }
+      // Fade the old page out, swap, then the new page fades itself in.
+      setLeaving(true);
+      timer.current = window.setTimeout(() => {
+        setPath(route());
+        setLeaving(false);
+        window.scrollTo(0, 0);
+      }, FADE_OUT_MS);
     };
     window.addEventListener('hashchange', on);
     // The address may have changed before this listener existed.
     setPath(route());
-    return () => window.removeEventListener('hashchange', on);
+    return () => {
+      clearTimeout(timer.current);
+      window.removeEventListener('hashchange', on);
+    };
   }, []);
   return (
     <>
-      <Router key={path} path={path} />
+      <div class={`route ${leaving ? 'leaving' : ''}`} key={path}>
+        <Router path={path} />
+      </div>
       <Consent />
     </>
   );

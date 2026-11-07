@@ -1,10 +1,11 @@
-import { ACHIEVEMENTS, COSMETICS, RANKED_UNLOCK_LEVEL, levelFromXp, rankFor, type AbilityId, type Cosmetic, type CosmeticKind } from '@mathbattles/sim';
+import { ACHIEVEMENTS, COSMETICS, levelFromXp, rankFor, type AbilityId, type Cosmetic, type CosmeticKind } from '@mathbattles/sim';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { authState, signIn, signOutUser, setAnalyticsConsent, useAuth } from '../auth';
+import { authState, setAnalyticsConsent } from '../auth';
 import { fetchLeaderboard, serverReachable, type LeaderRow } from '../net/api';
 import { THEMES, type ThemeId } from '../render/stage';
 import { drawHat } from '../render/doodles';
 import { buy, equip, profile, saveProfile } from '../store';
+import { AccountPanel } from './Account';
 import { TopBar, useProfile } from './Shared';
 
 function HatPreview({ hat }: { hat: string }) {
@@ -66,7 +67,6 @@ export function Shop() {
 
 export function ProfileScreen() {
   useProfile();
-  const auth = useAuth();
   const lv = levelFromXp(profile.xp);
   const title = COSMETICS.find((c) => c.id === profile.equipped.title)?.value;
   const [name, setName] = useState(profile.name);
@@ -87,19 +87,7 @@ export function ProfileScreen() {
         </div>
         <div class="sheet">
           <h3>Account</h3>
-          {auth.user ? (
-            <>
-              <p>Signed in as {auth.user.displayName ?? 'Google user'}. Your progress syncs across devices.</p>
-              {auth.rating !== null && <p>Rank: {rankFor(auth.rating)}</p>}
-              <button onClick={() => void signOutUser()}>Sign out</button>
-            </>
-          ) : (
-            <>
-              <p>You're playing as a guest, so progress stays on this device. Sign in to keep it everywhere and play ranked.</p>
-              <button class="primary" onClick={() => void signIn()}>Sign in with Google</button>
-              {auth.error && <p class="error" role="alert">{auth.error}</p>}
-            </>
-          )}
+          <AccountPanel />
         </div>
       </div>
       <div class="sheet">
@@ -237,12 +225,12 @@ export function Privacy() {
       <TopBar title="Privacy" />
       <div class="sheet">
         <p>You can play without an account. Guest progress stays in this browser.</p>
-        <p>If you sign in with Google, we store your Google account ID, your display name in the game, and your game progress. We don't use your email address for anything.</p>
+        <p>If you make an account, we store your username, your game progress, and a login ID. Your password goes to our sign-in provider, Google Firebase, and we never save it. An email or Google account is optional and is only used for signing in and resetting your password.</p>
         <p>Online matches pass your game name, chat messages, and shots through our server. Reports you send about chat are stored for review.</p>
-        <p>Anonymous analytics load only if you allow them in <a href="#/settings">Settings</a>.</p>
+        <p>You can delete your account at any time from your profile. Anonymous analytics load only if you allow them in <a href="#/settings">Settings</a>.</p>
       </div>
     </div>
   );
 }
 
-export { RANKED_UNLOCK_LEVEL, serverReachable, authState };
+export { serverReachable, authState };

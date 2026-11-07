@@ -66,7 +66,9 @@ export function GameView(props: {
   const [error, setError] = useState('');
   const [chat, setChat] = useState('');
   const [teleporting, setTeleporting] = useState(false);
-  const [callout, setCallout] = useState('');
+  const [knockout, setKnockout] = useState(false);
+  const [turnSlam, setTurnSlam] = useState(0);
+  const [celebrated, setCelebrated] = useState(false);
   const [now, setNow] = useState(Date.now());
   const chatBox = useRef<HTMLDivElement>(null);
 
@@ -80,14 +82,9 @@ export function GameView(props: {
     stage.themeId = profile.theme;
     stage.looks = { [viewer]: look(), me: look() };
     stageRef.current = stage;
-    stage.onExplode = (kills) => {
-      sound('boom', profile.muted);
-      if (kills >= 2) {
-        setCallout(kills >= 3 ? `${kills} in one shot!` : 'Double hit!');
-        setTimeout(() => setCallout(''), 2200);
-      }
-    };
+    stage.onExplode = () => sound('boom', profile.muted);
     stage.onKill = () => sound('kill', profile.muted);
+    stage.onFinalKill = () => setKnockout(true);
     session.attach(stage);
     stage.start();
     const onResize = () => {
@@ -124,8 +121,36 @@ export function GameView(props: {
     stage.activeSoldierId = state.over ? null : currentSoldier(state)?.id ?? null;
     stage.aimAngle = mode === 'ode2' && canAct ? angle : null;
     stage.aimDir = dir;
-    if (canAct) sound('turn', profile.muted);
   }, [state, state.turnNumber, viewer, canAct, angle, dir, mode]);
+
+  // Countdown before the first turn.
+  const countdown = session.startsAt !== null ? Math.ceil((session.startsAt - now) / 1000) : null;
+  const counting = countdown !== null && countdown > 0 && countdown <= 5 && !state.over;
+  const showGo = countdown !== null && countdown > -1 && countdown <= 0 && state.log.length === 0 && !state.over;
+  useEffect(() => {
+    if (counting) sound('tick', profile.muted);
+    else if (showGo) sound('go', profile.muted);
+  }, [countdown]);
+
+  // A big "your turn" callout whenever control comes to this screen in a timed match.
+  useEffect(() => {
+    if (canAct && session.showTimer) {
+      sound('turn', profile.muted);
+      setTurnSlam(state.turnNumber);
+    }
+  }, [canAct, state.turnNumber]);
+
+  // Celebrate after the last shot has finished playing.
+  useEffect(() => {
+    if (!state.over || session.busy || celebrated) return;
+    setCelebrated(true);
+    if (state.winner !== null && isOnWinningSide(state, viewer)) {
+      sound('win', profile.muted);
+      stageRef.current?.celebrate();
+    } else {
+      sound('lose', profile.muted);
+    }
+  }, [state.over, session.busy]);
 
   useEffect(() => {
     if (canAct) {
@@ -221,7 +246,10 @@ export function GameView(props: {
             role="img"
             aria-label={`Graph battlefield. ${state.soldiers.filter((s) => s.alive).length} soldiers standing.`}
           />
-          {callout && <div class="banner"><span>{callout}</span></div>}
+          {counting && <div class="slam" key={countdown}><span>{countdown}</span></div>}
+          {showGo && <div class="slam"><span>Go!</span></div>}
+          {!counting && !showGo && turnSlam === state.turnNumber && canAct && <div class="slam turn" key={turnSlam}><span>Your turn!</span></div>}
+          {knockout && <div class="slam knockout"><span>Final knockout!</span></div>}
         </div>
         {props.result}
         {!state.over && !props.result && (
@@ -270,13 +298,15 @@ export function GameView(props: {
               )}
               {state.config.kind === 'ffa' && (
                 <span class="row" role="group" aria-label="Shot direction">
-                  <button class={`small ${dir === 1 ? 'on' : ''}`} disabled={!canAct} onClick={() => setDir(1)} aria-pressed={dir === 1}>Fire toward +x</button>
-                  <button class={`small ${dir === -1 ? 'on' : ''}`} disabled={!canAct} onClick={() => setDir(-1)} aria-pressed={dir === -1}>Fire toward −x</button>
+                  <button class="small dir-plus" disabled={!canAct} onClick={() => setDir(1)} aria-pressed={dir === 1}>Fire toward +x</button>
+                  <button class="small dir-minus" disabled={!canAct} onClick={() => setDir(-1)} aria-pressed={dir === -1}>Fire toward −x</button>
                 </span>
               )}
               {state.config.abilities && me?.ability && (
                 <span class="row">
-                  <span>Charge {me.charge}/{ABILITY_COST}</span>
+                  <span class="charge" role="img" aria-label={`Charge ${me.charge} of ${ABILITY_COST}`}>
+                    {Array.from({ length: ABILITY_COST }, (_, i) => <i class={i < me.charge ? 'full' : ''} />)}
+                  </span>
                   {me.ability === 'teleport' ? (
                     <button class={`small ${teleporting ? 'on' : ''}`} disabled={!canAct || me.charge < ABILITY_COST} onClick={() => setTeleporting((t) => !t)}>
                       {teleporting ? 'Click the field' : 'Teleport'}

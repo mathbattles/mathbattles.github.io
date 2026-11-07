@@ -35,3 +35,9 @@ export function cleanName(name: unknown): string {
   if (!t || t.split(/\s+/).some(isBlocked)) return `Player${Math.floor(Math.random() * 9000) + 1000}`;
   return t;
 }
+
+/** Catches blocked words inside a username, where no spaces separate them. */
+export function isBlockedName(name: string): boolean {
+  const n = normalize(name);
+  return BLOCKED.some((b) => n.includes(b));
+}

@@ -34,6 +34,7 @@ export interface Profile {
   bestCombo: number;
   ability: AbilityId;
   theme: ThemeId;
+  lookVersion: number;
   muted: boolean;
   chatOff: boolean;
   analytics: 'unset' | 'yes' | 'no';
@@ -71,7 +72,8 @@ function fresh(): Profile {
     kills: 0,
     bestCombo: 0,
     ability: 'teleport',
-    theme: 'paper',
+    theme: 'arena',
+    lookVersion: 2,
     muted: false,
     chatOff: false,
     analytics: 'unset',
@@ -82,7 +84,8 @@ function fresh(): Profile {
 function load(): Profile {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return { ...fresh(), ...(JSON.parse(raw) as Partial<Profile>) };
+    // Saves from before lookVersion existed count as version 1, so they get the new look once.
+    if (raw) return { ...fresh(), lookVersion: 1, ...(JSON.parse(raw) as Partial<Profile>) };
   } catch {
     /* private mode or corrupt data: start fresh */
   }
@@ -90,6 +93,10 @@ function load(): Profile {
 }
 
 export const profile: Profile = load();
+if (profile.lookVersion !== 2) {
+  profile.theme = 'arena';
+  profile.lookVersion = 2;
+}
 // Save right away: the guest token must stay the same across reloads, or a player loses their seat.
 try {
   localStorage.setItem(KEY, JSON.stringify(profile));

@@ -1,6 +1,6 @@
-import { BOT_LEVELS, MAX_PLAYERS, RANKED_UNLOCK_LEVEL, encodeReplay, isOnWinningSide, levelFromXp, type BotLevel, type MatchKind, type MatchState, type ShotMode } from '@mathbattles/sim';
+import { BOT_LEVELS, MAX_PLAYERS, encodeReplay, isOnWinningSide, type BotLevel, type MatchKind, type MatchState, type ShotMode } from '@mathbattles/sim';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { authState, signIn, useAuth } from '../auth';
+import { authState, useAuth } from '../auth';
 import { NetSession } from '../game/session';
 import { WS_URL, createRoom, listRooms, reportChat, serverReachable, type RoomInfo } from '../net/api';
 import { cosmeticValue, profile, recordMatch } from '../store';
@@ -71,7 +71,16 @@ export function OnlineMenu() {
   );
 }
 
-export function Room({ code, ranked }: { code: string; ranked?: boolean }) {
+/** Ranked rooms need the login token, which takes a moment to load after a page refresh. */
+export function Room(props: { code: string; ranked?: boolean }) {
+  const auth = useAuth();
+  if (props.ranked && !auth.ready) {
+    return <div class="page"><TopBar title="Ranked match" /><p>Checking your account.</p></div>;
+  }
+  return <RoomInner {...props} />;
+}
+
+function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
   useProfile();
   const session = useMemo(() => new NetSession(`${WS_URL}/room/${encodeURIComponent(code)}`, {
     t: 'join',
@@ -81,7 +90,7 @@ export function Room({ code, ranked }: { code: string; ranked?: boolean }) {
     hat: cosmeticValue('hat'),
   }), [code]);
   const [, force] = useState(0);
-  const [over, setOver] = useState<MatchState | null>(null);
+  const [finished, setOver] = useState<MatchState | null>(null);
   const [rewards, setRewards] = useState<ReturnType<typeof recordMatch> | null>(null);
   const [chatText, setChatText] = useState('');
   const [reported, setReported] = useState(false);
@@ -145,6 +154,8 @@ export function Room({ code, ranked }: { code: string; ranked?: boolean }) {
   }
 
   if (session.status === 'playing' && session.state) {
+    // A result from the previous match in this room must not show during the next one.
+    const over = session.state.over ? finished : null;
     const replay = over ? `${location.origin}${location.pathname}#/replay/${encodeReplay({
       v: 1,
       config: over.config,
@@ -268,7 +279,6 @@ function replayActions(state: MatchState) {
 export function Ranked() {
   useProfile();
   const auth = useAuth();
-  const level = levelFromXp(profile.xp).level;
   const [searching, setSearching] = useState(false);
   const [waited, setWaited] = useState(0);
   const [error, setError] = useState('');
@@ -311,14 +321,13 @@ export function Ranked() {
       <TopBar title="Ranked" />
       <div class="sheet">
         <p>Ranked is one-on-one in Function mode, with one soldier each, no abilities, and no preview. Your rating changes after every match and partly resets each season.</p>
-        {!auth.user ? (
+        {!auth.ready ? (
+          <p>Checking your account.</p>
+        ) : !auth.user ? (
           <>
-            <p>Sign in so your rating follows you.</p>
-            <button class="primary" onClick={() => void signIn()}>Sign in with Google</button>
-            {auth.error && <p class="error" role="alert">{auth.error}</p>}
+            <p>Make a free account so your rating follows you.</p>
+            <a class="btn primary" href="#/signin">Sign in or create an account</a>
           </>
-        ) : level < RANKED_UNLOCK_LEVEL ? (
-          <p>Ranked opens at level {RANKED_UNLOCK_LEVEL}. You're level {level}. <a href="#/local">Play bots</a> or <a href="#/campaign">the campaign</a> to get there.</p>
         ) : searching ? (
           <div class="row">
             <span>Looking for an opponent ({waited}s)</span>
