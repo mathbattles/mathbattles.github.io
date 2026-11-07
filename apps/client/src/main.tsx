@@ -10,9 +10,19 @@ import { Campaign, Daily, LevelScreen, ReplayScreen } from './screens/Solo';
 import { Learn, Leaderboard, Privacy, ProfileScreen, Settings, Shop } from './screens/Meta';
 import { OnlineMenu, Ranked, Room } from './screens/Online';
 import { SignIn } from './screens/Account';
+import { PlayerScreen } from './screens/History';
+import { SideNav } from './screens/SideNav';
 
 function route(): string {
   return location.hash.replace(/^#/, '') || '/';
+}
+
+function decodeSafe(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
 }
 
 function Router({ path }: { path: string }) {
@@ -35,6 +45,7 @@ function Router({ path }: { path: string }) {
     case 'shop': return <Shop />;
     case 'profile': return <ProfileScreen />;
     case 'signin': return <SignIn />;
+    case 'player': return <PlayerScreen name={decodeSafe(parts[1] ?? '')} />;
     case 'settings': return <Settings />;
     case 'leaderboard': return <Leaderboard />;
     case 'privacy': return <Privacy />;
@@ -113,10 +124,15 @@ function App() {
   }, []);
   return (
     <>
-      <div class={`route ${leaving ? 'leaving' : ''}`} key={path}>
-        <ErrorBoundary>
-          <Router path={path} />
-        </ErrorBoundary>
+      <div class="shell">
+        <SideNav path={path} />
+        <main class="content">
+          <div class={`route ${leaving ? 'leaving' : ''}`} key={path}>
+            <ErrorBoundary>
+              <Router path={path} />
+            </ErrorBoundary>
+          </div>
+        </main>
       </div>
       <Consent />
     </>

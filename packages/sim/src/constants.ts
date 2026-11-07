@@ -11,7 +11,7 @@ export const RECONNECT_GRACE_MS = 30_000;
 
 export const MAX_PLAYERS = 10;
 export const MAX_SOLDIERS = 4;
-export const DEFAULT_SOLDIERS = 2;
+export const DEFAULT_SOLDIERS = 1;
 
 export const SOLDIER_R = 7;
 export const SPAWN_CLEARANCE = 15;

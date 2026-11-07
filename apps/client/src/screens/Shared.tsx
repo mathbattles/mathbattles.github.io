@@ -14,7 +14,7 @@ export function TopBar({ title, home }: { title?: string; home?: boolean }) {
   const lv = levelFromXp(profile.xp);
   return (
     <div class="topbar">
-      {!home && <a class="btn small" href="#/">Menu</a>}
+      {!home && <a class="btn small menu-link" href="#/">Menu</a>}
       {title && <h2 style={{ margin: 0 }}>{title}</h2>}
       <span class="spacer" />
       {auth.ready && !auth.user && <a class="btn small" href="#/signin">Sign in</a>}

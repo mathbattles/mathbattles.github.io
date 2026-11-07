@@ -61,6 +61,6 @@ export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   kind: 'teams',
   mode: 'fn',
   abilities: false,
-  soldiers: 2,
+  soldiers: 1,
   showFunctions: false,
 };

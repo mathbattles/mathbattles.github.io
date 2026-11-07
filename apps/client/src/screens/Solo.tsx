@@ -185,8 +185,7 @@ export function ReplayScreen({ data }: { data: string }) {
     <GameView
       key={key}
       session={session}
-      showFunctions
-      header={<span class="row"><a class="btn small" href="#/">Menu</a><strong>Replay</strong><button class="small" onClick={() => setKey(key + 1)}>Watch again</button></span>}
+      header={<span class="row"><a class="btn small" href="#/profile">Back</a><strong>Replay</strong><button class="small" onClick={() => setKey(key + 1)}>Watch again</button></span>}
     />
   );
 }

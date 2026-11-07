@@ -19,6 +19,13 @@ import {
   skipTurn,
   useTeleport,
   validate,
+  COSMETICS,
+  DEFAULT_ROOM_SETTINGS,
+  DEFAULT_SOLDIERS,
+  decodeReplay,
+  matchRecordFor,
+  shotMoment,
+  shotsOf,
   type MatchConfig,
   type PlayerSetup,
 } from '../src';
@@ -332,6 +339,87 @@ describe('bots', () => {
       const move = chooseMove(m, { generations: 3, seed: 1 });
       expect(() => fire(m, currentPlayer(m).id, move)).not.toThrow();
     }
+  });
+});
+
+describe('rewinding', () => {
+  it('rebuilds the board at any shot without changing the match', () => {
+    const m = createMatch(cfg({ soldiers: 2, seed: 8 }), duel);
+    m.circles = [{ x: 385, y: 40, r: 20 }];
+    const start = m.soldiers.map((s) => ({ ...s }));
+    const me = currentPlayer(m);
+    const shooter = currentSoldier(m)!;
+    const enemy = m.players.find((p) => p.id !== me.id)!;
+    const target = m.soldiers[enemy.soldierIds[0]!]!;
+    target.x = me.team === 1 ? shooter.x + 150 : shooter.x - 150;
+    target.y = shooter.y;
+    fire(m, me.id, { expr: '0' });
+    expect(target.alive).toBe(false);
+    fire(m, currentPlayer(m).id, { expr: 'x/9' });
+    const snapshot = JSON.stringify(m);
+
+    expect(shotsOf(m).length).toBe(2);
+    const first = shotMoment(m, 0)!;
+    expect(first.shot.expr).toBe('0');
+    expect(first.before.holes.length).toBe(0);
+    expect(first.after.holes.length).toBe(1);
+    expect(first.before.soldiers[target.id]!.alive).toBe(true);
+    expect(first.after.soldiers[target.id]!.alive).toBe(false);
+    const second = shotMoment(m, 1)!;
+    expect(second.shot.expr).toBe('x/9');
+    expect(second.before.holes.length).toBe(1);
+    expect(second.after.holes.length).toBe(2);
+    expect(shotMoment(m, 5)).toBeNull();
+    expect(JSON.stringify(m)).toBe(snapshot);
+    void start;
+  });
+  it('undoes teleports and players leaving', () => {
+    const setups: PlayerSetup[] = [{ id: 'a', name: 'A', team: 1, ability: 'teleport' }, { id: 'b', name: 'B', team: 2, ability: 'teleport' }, { id: 'c', name: 'C', team: 2 }];
+    const m = createMatch(cfg({ abilities: true, soldiers: 1, seed: 21 }), setups);
+    m.circles.length = 0;
+    fire(m, currentPlayer(m).id, { expr: 'x/20' });
+    const me = currentPlayer(m);
+    me.ability = 'teleport';
+    me.charge = 2;
+    const s = currentSoldier(m)!;
+    const oldX = s.x;
+    const nx = s.x < 385 ? Math.max(20, s.x - 30) : Math.min(750, s.x + 30);
+    useTeleport(m, me.id, nx, s.y);
+    const stays = m.players.find((p) => p.id !== currentPlayer(m).id && p.soldierIds.every((id) => m.soldiers[id]!.alive))!;
+    removePlayer(m, stays.id);
+    const moment = shotMoment(m, 0)!;
+    expect(moment.after.soldiers[s.id]!.x).toBe(oldX);
+    expect(moment.after.soldiers[stays.soldierIds[0]!]!.alive).toBe(true);
+  });
+});
+
+describe('match records', () => {
+  it('describes a match from each side, and can be watched', () => {
+    const m = createMatch(cfg({ soldiers: 1, seed: 4 }), duel);
+    removePlayer(m, 'b');
+    const a = matchRecordFor(m, duel, 'a', { id: 'x', at: 5, kind: 'bots' });
+    const b = matchRecordFor(m, duel, 'b', { id: 'x', at: 5, kind: 'bots', ratingDelta: -3 });
+    expect(a.result).toBe('win');
+    expect(a.opponents).toEqual(['B']);
+    expect(b.result).toBe('loss');
+    expect(b.ratingDelta).toBe(-3);
+    expect(decodeReplay(a.replay!)).not.toBeNull();
+    const nobody = matchRecordFor(m, duel, null, { id: 'y', at: 5, kind: 'shared' });
+    expect(nobody.result).toBe('none');
+    expect([...nobody.opponents].sort()).toEqual(['A', 'B']);
+  });
+});
+
+describe('defaults and shop items', () => {
+  it('matches default to one soldier each', () => {
+    expect(DEFAULT_SOLDIERS).toBe(1);
+    expect(DEFAULT_ROOM_SETTINGS.soldiers).toBe(1);
+    expect(createMatch({ ...cfg(), soldiers: 0 }, duel).soldiers.length).toBe(2);
+  });
+  it('every item has a unique id, and obstacles include a free default', () => {
+    expect(new Set(COSMETICS.map((c) => c.id)).size).toBe(COSMETICS.length);
+    expect(COSMETICS.filter((c) => c.kind === 'obstacle').length).toBeGreaterThanOrEqual(8);
+    expect(COSMETICS.find((c) => c.id === 'obstacle-candy')!.cost).toBe(0);
   });
 });
 

@@ -69,10 +69,10 @@ export interface ShotRecord {
 
 export type MatchEvent =
   | { type: 'shot'; shot: ShotRecord }
-  | { type: 'teleport'; playerId: string; soldierId: number; x: number; y: number }
+  | { type: 'teleport'; playerId: string; soldierId: number; x: number; y: number; fromX?: number; fromY?: number }
   | { type: 'missile'; playerId: string }
   | { type: 'timeout'; playerId: string }
-  | { type: 'leave'; playerId: string };
+  | { type: 'leave'; playerId: string; removed?: number[] };
 
 export interface MatchState {
   config: MatchConfig;
@@ -318,9 +318,11 @@ export function useTeleport(
     throw new RuleError('Stay on your side of the field');
   }
   player.charge -= ABILITY_COST;
+  const fromX = s.x;
+  const fromY = s.y;
   s.x = Math.round(x);
   s.y = Math.round(y);
-  state.log.push({ type: 'teleport', playerId, soldierId: s.id, x: s.x, y: s.y });
+  state.log.push({ type: 'teleport', playerId, soldierId: s.id, x: s.x, y: s.y, fromX, fromY });
 }
 
 export function armMissile(state: MatchState, playerId: string): void {
@@ -352,8 +354,9 @@ export function removePlayer(state: MatchState, playerId: string): void {
   if (!p || state.over) return;
   const wasTurn = currentPlayer(state).id === playerId;
   p.connected = false;
-  for (const id of p.soldierIds) state.soldiers[id]!.alive = false;
-  state.log.push({ type: 'leave', playerId });
+  const removed = p.soldierIds.filter((id) => state.soldiers[id]!.alive);
+  for (const id of removed) state.soldiers[id]!.alive = false;
+  state.log.push({ type: 'leave', playerId, removed });
   if (wasTurn) advance(state);
   else checkOver(state);
 }

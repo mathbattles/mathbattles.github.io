@@ -52,11 +52,15 @@ function randomToken(): string {
   return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+const FREE_ITEMS = ['hat-none', 'trail-ink', 'title-none', 'blast-ring', 'obstacle-candy'];
 const LOOK_VERSION = 3;
 const DESIGNS: readonly ThemeId[] = ['paper', 'chalk', 'blueprint'];
 
 /** Old saves, local or from the cloud, can name a design that's gone. */
 function normalizeLook(p: Profile): void {
+  // Saves from before a shop section existed need its free item.
+  for (const id of FREE_ITEMS) if (!p.owned.includes(id)) p.owned.push(id);
+  p.equipped.obstacle ??= 'obstacle-candy';
   if (p.lookVersion !== LOOK_VERSION) {
     if (p.lookVersion === 2 || !DESIGNS.includes(p.theme)) p.theme = 'paper';
     p.lookVersion = LOOK_VERSION;
@@ -70,8 +74,8 @@ function fresh(): Profile {
     guestToken: randomToken(),
     xp: 0,
     sparks: 0,
-    owned: ['hat-none', 'trail-ink', 'title-none', 'blast-ring'],
-    equipped: { hat: 'hat-none', trail: 'trail-ink', title: 'title-none', blast: 'blast-ring' },
+    owned: [...FREE_ITEMS],
+    equipped: { hat: 'hat-none', trail: 'trail-ink', title: 'title-none', blast: 'blast-ring', obstacle: 'obstacle-candy' },
     stars: {},
     achievements: [],
     mastery: { fn: 0, ode1: 0, ode2: 0 },

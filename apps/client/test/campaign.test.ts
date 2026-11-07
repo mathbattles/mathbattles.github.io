@@ -19,11 +19,13 @@ import {
   soloNext,
   currentPlayer,
   currentSoldier,
+  COSMETICS,
   armMissile,
   removePlayer,
   useTeleport,
 } from '@mathbattles/sim';
 import { mergeProgress } from '../src/profileMerge';
+import { OBSTACLE_STYLES } from '../src/render/obstacles';
 import { CHAPTERS, LEVELS, buildLevel, starsFor } from '../src/content/campaign';
 import { exprToTex } from '../src/util';
 
@@ -170,6 +172,14 @@ describe('merging progress', () => {
     const out = mergeProgress(base({ xp: 5, updatedAt: 1 }), { xp: 'lots' as unknown as number, stars: undefined, updatedAt: 0 });
     expect(out.xp).toBe(5);
     expect(out.stars).toEqual({});
+  });
+});
+
+describe('obstacle designs', () => {
+  it('has a design for every obstacle item in the shop', () => {
+    for (const c of COSMETICS.filter((x) => x.kind === 'obstacle')) {
+      expect(OBSTACLE_STYLES[c.value], c.id).toBeTruthy();
+    }
   });
 });
 

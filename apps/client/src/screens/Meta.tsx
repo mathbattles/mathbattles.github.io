@@ -2,48 +2,121 @@ import { ACHIEVEMENTS, COSMETICS, levelFromXp, rankFor, type AbilityId, type Cos
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { authState, setAnalyticsConsent, useAuth } from '../auth';
 import { fetchLeaderboard, serverReachable, type LeaderRow } from '../net/api';
-import { THEMES, type ThemeId } from '../render/stage';
+import { runDemo } from '../render/demo';
 import { drawHat } from '../render/doodles';
-import { buy, equip, profile, saveProfile } from '../store';
+import { drawObstacle, obstacleStyle } from '../render/obstacles';
+import { Stage, THEMES, drawBlast, strokeTrail, type ThemeId } from '../render/stage';
+import { buy, cosmeticValue, equip, profile, saveProfile } from '../store';
 import { AccountPanel } from './Account';
+import { MyHistory } from './History';
 import { TopBar, useProfile } from './Shared';
 
-function HatPreview({ hat }: { hat: string }) {
+const INK = '#2b2f7a';
+
+/** The small picture on each shop card. */
+function ItemThumb({ item }: { item: Cosmetic }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
-    const c = ref.current!.getContext('2d')!;
-    c.clearRect(0, 0, 90, 70);
-    c.save();
-    c.scale(2.4, 2.4);
-    c.strokeStyle = '#1c3a8c';
-    c.fillStyle = '#fff';
-    c.lineWidth = 2;
-    c.beginPath();
-    c.arc(18, 19, 7, 0, Math.PI * 2);
-    c.fill();
-    c.stroke();
-    drawHat(c, hat, 18, 13, '#1c3a8c');
-    c.restore();
-  }, [hat]);
-  return <canvas ref={ref} width={90} height={70} aria-hidden="true" />;
+    const canvas = ref.current!;
+    const c = canvas.getContext('2d')!;
+    c.clearRect(0, 0, canvas.width, canvas.height);
+    if (item.kind === 'hat') {
+      c.save();
+      c.translate(70, 54);
+      c.scale(2.6, 2.6);
+      c.fillStyle = '#ffffff';
+      c.strokeStyle = INK;
+      c.lineWidth = 2.2;
+      c.beginPath();
+      c.arc(0, 0, 7, 0, Math.PI * 2);
+      c.fill();
+      c.stroke();
+      c.fillStyle = INK;
+      c.beginPath();
+      c.arc(2.6, -1.5, 1.3, 0, Math.PI * 2);
+      c.arc(-0.8, -1.5, 1.3, 0, Math.PI * 2);
+      c.fill();
+      drawHat(c, item.value, 0, -6, INK);
+      c.restore();
+    } else if (item.kind === 'trail') {
+      const xs: number[] = [];
+      const ys: number[] = [];
+      for (let i = 0; i <= 120; i++) {
+        xs.push(14 + i);
+        ys.push(40 + Math.sin(i / 16) * 20);
+      }
+      strokeTrail(c, xs, ys, xs.length, '#2b50e8', item.value, true);
+    } else if (item.kind === 'blast') {
+      drawBlast(c, 70, 40, 16, 0.3, '#ee3a57', item.value);
+    } else if (item.kind === 'obstacle') {
+      const style = obstacleStyle(item.value);
+      drawObstacle(c, style, 34, 44, 26, 0);
+      drawObstacle(c, style, 88, 32, 22, 1);
+      drawObstacle(c, style, 116, 58, 14, 2);
+    } else {
+      c.fillStyle = INK;
+      c.font = '600 15px "Shantell Sans", sans-serif';
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      c.fillText(item.value || 'No title', 70, 40, 130);
+    }
+  }, [item.id]);
+  return <canvas ref={ref} width={140} height={80} aria-hidden="true" />;
 }
 
-const KIND_NAMES: Record<CosmeticKind, string> = { hat: 'Hats', trail: 'Shot trails', title: 'Titles', blast: 'Explosions' };
+/** Tries an item on in a live scene, before buying it. */
+function ShopPreview({ item }: { item: Cosmetic }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const stageRef = useRef<Stage | null>(null);
+  const apply = (stage: Stage) => {
+    const value = (kind: CosmeticKind) => (item.kind === kind ? item.value : cosmeticValue(kind));
+    stage.looks = { a: { hat: value('hat'), trail: value('trail'), blast: value('blast') } };
+    stage.setRockStyle(value('obstacle'));
+  };
+  useEffect(() => {
+    const stage = new Stage(ref.current!);
+    stage.themeId = profile.theme;
+    stageRef.current = stage;
+    apply(stage);
+    stage.start();
+    const stopDemo = runDemo(stage, { rocks: 6, gapMs: 500 });
+    return () => {
+      stopDemo();
+      stage.stop();
+    };
+  }, []);
+  useEffect(() => {
+    if (stageRef.current) apply(stageRef.current);
+  }, [item.id]);
+  const title = item.kind === 'title' ? item.value : COSMETICS.find((c) => c.id === profile.equipped.title)?.value;
+  return (
+    <div class="sheet shop-preview" aria-label={`Preview of ${item.name}`}>
+      <h3>Previewing: {item.name}</h3>
+      <canvas ref={ref} width={770} height={450} aria-hidden="true" />
+      <p class="preview-name"><strong>{profile.name}</strong>{title ? `, ${title}` : ''}</p>
+    </div>
+  );
+}
+
+const KIND_NAMES: Record<CosmeticKind, string> = { hat: 'Hats', trail: 'Shot trails', obstacle: 'Obstacles', blast: 'Explosions', title: 'Titles' };
 
 export function Shop() {
   useProfile();
   const [error, setError] = useState('');
+  const [previewId, setPreviewId] = useState('obstacle-candy');
+  const previewing = COSMETICS.find((c) => c.id === previewId) ?? COSMETICS[0]!;
   const item = (c: Cosmetic) => {
     const owned = profile.owned.includes(c.id);
     const on = profile.equipped[c.kind] === c.id;
     return (
-      <div class="item">
-        {c.kind === 'hat' && <HatPreview hat={c.value} />}
+      <div class={`item ${previewId === c.id ? 'previewing' : ''}`}>
+        <ItemThumb item={c} />
         <strong>{c.name}</strong>
+        <button class={`small ${previewId === c.id ? 'on' : ''}`} aria-label={`Preview ${c.name}`} aria-pressed={previewId === c.id} onClick={() => setPreviewId(c.id)}>Preview</button>
         {owned ? (
-          <button class={`small ${on ? 'on' : ''}`} disabled={on} onClick={() => equip(c.id)}>{on ? 'Equipped' : 'Equip'}</button>
+          <button class="small" disabled={on} onClick={() => equip(c.id)}>{on ? 'Equipped' : 'Equip'}</button>
         ) : c.earn ? (
-          <span class="muted">Earn: {ACHIEVEMENTS.find((a) => a.id === c.earn)?.detail}</span>
+          <span class="muted small-note">Earn: {ACHIEVEMENTS.find((a) => a.id === c.earn)?.detail}</span>
         ) : (
           <button class="small" onClick={() => setError(buy(c.id) ?? '')}>Buy for {c.cost} Sparks</button>
         )}
@@ -53,14 +126,19 @@ export function Shop() {
   return (
     <div class="page">
       <TopBar title="Shop" />
-      <p>Everything here is cosmetic. All functions and modes are free to every player.</p>
+      <p>Everything here is cosmetic. All functions and modes are free to every player. Obstacle designs change what you see, and everyone else sees their own.</p>
       {error && <p class="error" role="alert">{error}</p>}
-      {(Object.keys(KIND_NAMES) as CosmeticKind[]).map((k) => (
-        <div class="sheet">
-          <h3>{KIND_NAMES[k]}</h3>
-          <div class="shop">{COSMETICS.filter((c) => c.kind === k).map(item)}</div>
+      <div class="shop-layout">
+        <ShopPreview item={previewing} />
+        <div class="shop-items">
+          {(Object.keys(KIND_NAMES) as CosmeticKind[]).map((k) => (
+            <div class="sheet">
+              <h3>{KIND_NAMES[k]}</h3>
+              <div class="shop">{COSMETICS.filter((c) => c.kind === k).map(item)}</div>
+            </div>
+          ))}
         </div>
-      ))}
+      </div>
     </div>
   );
 }
@@ -108,6 +186,10 @@ export function ProfileScreen() {
           <h3>Account</h3>
           <AccountPanel />
         </div>
+      </div>
+      <div class="sheet">
+        <h3>Match history</h3>
+        <MyHistory />
       </div>
       <div class="sheet">
         <h3>Achievements ({profile.achievements.length} of {ACHIEVEMENTS.length})</h3>
@@ -190,7 +272,7 @@ export function Leaderboard() {
         {rows === 'loading' ? <p>Loading the ladder.</p> : rows === null ? <p>The leaderboard is offline right now. Try again soon.</p> : rows.length === 0 ? <p>Nobody has played ranked yet. <a href="#/ranked">Be the first</a>.</p> : (
           <table>
             <thead><tr><th>Place</th><th>Player</th><th>Rank</th><th>Rating</th></tr></thead>
-            <tbody>{rows.map((r, i) => <tr><td>{i + 1}</td><td>{r.name}</td><td>{rankFor(r.rating)}</td><td>{r.rating}</td></tr>)}</tbody>
+            <tbody>{rows.map((r, i) => <tr><td>{i + 1}</td><td><a href={`#/player/${encodeURIComponent(r.name)}`}>{r.name}</a></td><td>{rankFor(r.rating)}</td><td>{r.rating}</td></tr>)}</tbody>
           </table>
         )}
       </div>

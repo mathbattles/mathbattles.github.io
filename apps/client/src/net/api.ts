@@ -1,4 +1,4 @@
-import type { DailyShot } from '@mathbattles/sim';
+import type { DailyShot, MatchRecord } from '@mathbattles/sim';
 
 /** Set after the server is first deployed. */
 const PROD_SERVER = 'https://mathbattles-server.mathbattles.workers.dev';
@@ -111,4 +111,20 @@ export async function resolveLogin(username: string, password: string): Promise<
 }
 export function deleteAccountData(token: string) {
   return call<{ ok: boolean }>('/api/account', { method: 'DELETE' }, token);
+}
+
+export interface PlayerPage {
+  name: string;
+  rating: number;
+  games: number;
+  matches: MatchRecord[];
+}
+export function fetchHistory(token: string) {
+  return call<MatchRecord[]>('/api/history', undefined, token);
+}
+export function uploadHistory(token: string, record: MatchRecord) {
+  return call<{ ok: boolean }>('/api/history', { method: 'POST', body: JSON.stringify(record) }, token);
+}
+export function fetchPlayer(name: string) {
+  return call<PlayerPage>(`/api/player/${encodeURIComponent(name)}`);
 }

@@ -2,6 +2,8 @@ import {
   ABILITY_COST,
   ParseError,
   RuleError,
+  shotMoment,
+  shotsOf,
   Terrain,
   currentPlayer,
   currentSoldier,
@@ -11,12 +13,13 @@ import {
   validate,
   type Dir,
   type MatchState,
+  type ShotRecord,
 } from '@mathbattles/sim';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { GameSession } from '../game/session';
 import { Stage } from '../render/stage';
-import { look, noteKillExpression, profile } from '../store';
+import { cosmeticValue, look, noteKillExpression, profile } from '../store';
 import { exprToTex, modeLabel, sound } from '../util';
 
 const PREVIEW_FRACTION = 0.18;
@@ -46,16 +49,72 @@ function Tex({ expr, prefix }: { expr: string; prefix: string }) {
   return <div class="preview" ref={ref} aria-hidden="true" />;
 }
 
+/** Every shot so far. Choosing one shows the board at that moment, like a chess move list. */
+function ShotHistory(props: {
+  shots: ShotRecord[];
+  state: MatchState;
+  viewing: number | null;
+  onView: (index: number | null) => void;
+  canSee: (shot: ShotRecord) => boolean;
+}) {
+  const { shots, viewing } = props;
+  const list = useRef<HTMLOListElement>(null);
+  useEffect(() => {
+    const el = list.current;
+    if (!el) return;
+    if (viewing === null) el.scrollTop = el.scrollHeight;
+    else el.querySelector('.current')?.scrollIntoView({ block: 'nearest' });
+  }, [shots.length, viewing]);
+  const nameOf = (id: string) => props.state.players.find((p) => p.id === id);
+  const last = shots.length - 1;
+  const at = viewing ?? last;
+  return (
+    <div class="mini history">
+      <h3>Shot history</h3>
+      {shots.length === 0 ? (
+        <p class="muted small-note" style={{ margin: 0 }}>Shots appear here as they're fired.</p>
+      ) : (
+        <>
+          <ol class="shots" ref={list} tabIndex={0} aria-label="Shots in this match">
+            {shots.map((shot, i) => {
+              const owner = nameOf(shot.playerId);
+              const hits = shot.hits.length + shot.blastKills.length;
+              return (
+                <li class={viewing === i ? 'current' : ''}>
+                  <button class="shot" aria-current={viewing === i ? 'true' : undefined} onClick={() => props.onView(i)}>
+                    <span class="num">{i + 1}.</span>
+                    <span class="body">
+                      <span class={`team-${owner?.team ?? 1} shooter`}>{owner?.name ?? 'Player'}</span>
+                      <code>{props.canSee(shot) ? shot.expr : 'Hidden until the match ends'}</code>
+                      {hits > 0 && <span class="hits">{hits === 1 ? '1 hit' : `${hits} hits`}</span>}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+          <div class="row history-nav">
+            <button class="small" aria-label="Previous shot" disabled={at <= 0 && viewing !== null} onClick={() => props.onView(Math.max(0, at - (viewing === null ? 0 : 1)))}>Back</button>
+            <button class="small" aria-label="Next shot" disabled={viewing === null} onClick={() => props.onView(viewing !== null && viewing < last ? viewing + 1 : null)}>Next</button>
+            <button class={`small ${viewing === null ? 'on' : ''}`} disabled={viewing === null} onClick={() => props.onView(null)}>Live</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function GameView(props: {
   session: GameSession;
   coach?: string | null;
   header?: ComponentChildren;
   result?: ComponentChildren;
   extraSide?: ComponentChildren;
-  showFunctions?: boolean;
   soloInfo?: string;
   /** A passing message that must not get in the way of playing. */
   notice?: string;
+  /** Online rooms can keep other players' functions private until the match ends. */
+  hideOthersShots?: boolean;
   /** The room screen owns online sessions, which outlive one match. */
   keepSession?: boolean;
 }) {
@@ -73,6 +132,7 @@ export function GameView(props: {
   const [knockout, setKnockout] = useState(false);
   const [turnSlam, setTurnSlam] = useState(0);
   const [celebrated, setCelebrated] = useState(false);
+  const [viewing, setViewing] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
   const chatBox = useRef<HTMLDivElement>(null);
   const lastTurn = useRef(session.state.turnNumber);
@@ -86,6 +146,9 @@ export function GameView(props: {
     const stage = new Stage(canvas.current!);
     stage.themeId = profile.theme;
     stage.looks = { [viewer]: look(), me: look() };
+    stage.setRockStyle(cosmeticValue('obstacle'));
+    // The board gets the room during play, so the side tabs step aside.
+    document.body.classList.add('in-game');
     stageRef.current = stage;
     stage.onExplode = () => sound('boom', profile.muted);
     stage.onKill = () => sound('kill', profile.muted);
@@ -98,6 +161,9 @@ export function GameView(props: {
     window.addEventListener('resize', onResize);
     const unsub = session.subscribe(() => force((n) => n + 1));
     session.onShot = (r) => {
+      // A new shot brings you back to live, so you don't miss it or your turn.
+      stage.clearPast();
+      setViewing(null);
       sound('fire', profile.muted);
       if (r.hits.length && r.playerId === viewer) noteKillExpression(r.expr);
     };
@@ -107,6 +173,7 @@ export function GameView(props: {
       unsub();
       clearInterval(t);
       window.removeEventListener('resize', onResize);
+      document.body.classList.remove('in-game');
       stage.stop();
       if (session.stage === stage) session.stage = null;
       if (!props.keepSession) session.dispose();
@@ -127,7 +194,66 @@ export function GameView(props: {
     stage.activeSoldierId = state.over ? null : currentSoldier(state)?.id ?? null;
     stage.aimAngle = mode === 'ode2' && canAct ? angle : null;
     stage.aimDir = dir;
+    stage.aiming = canAct;
   }, [state, state.turnNumber, viewer, canAct, angle, dir, mode]);
+
+  const shots = shotsOf(state);
+
+  // A restarted map has a new, shorter history.
+  useEffect(() => {
+    if (viewing !== null && viewing >= shots.length) setViewing(null);
+  }, [shots.length, viewing]);
+
+  // Rewinding: show the board just after the chosen shot, with its curve.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    if (viewing === null) {
+      stage.clearPast();
+      return;
+    }
+    const moment = shotMoment(state, viewing);
+    if (!moment) return;
+    const { shot } = moment;
+    const path = simulateShot({
+      mode: shot.mode,
+      expr: shot.expr,
+      from: shot.from,
+      angle: shot.angle,
+      dir: shot.dir,
+      mirrored: shot.mirrored,
+      terrain: new Terrain(state.circles, moment.before.holes),
+      targets: [],
+    });
+    stage.showPast({
+      soldiers: moment.after.soldiers,
+      holes: moment.after.holes,
+      shooterId: shot.soldierId,
+      shooterPlayer: shot.playerId,
+      path: { xs: path.xs, ys: path.ys, steps: Math.min(path.steps, shot.steps) },
+    });
+  }, [viewing, state]);
+
+  // Left and right arrows step through shots, unless you're typing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || shots.length === 0) return;
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setViewing((v) => (v === null ? shots.length - 1 : Math.max(0, v - 1)));
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setViewing((v) => (v === null || v >= shots.length - 1 ? null : v + 1));
+      } else if (e.key === 'Escape') {
+        setViewing(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [shots.length]);
+
+  const canSeeShot = (shot: ShotRecord) => !props.hideOthersShots || state.over || shot.playerId === viewer;
 
   // Countdown before the first turn.
   const countdown = session.startsAt !== null ? Math.ceil((session.startsAt - now) / 1000) : null;
@@ -230,7 +356,7 @@ export function GameView(props: {
   const cur = currentPlayer(state);
   const secs = session.deadline && !session.busy ? Math.min(60, Math.max(0, Math.ceil((session.deadline - now) / 1000))) : null;
   const me = state.players.find((p) => p.id === viewer);
-  const lastShot = [...state.log].reverse().find((e) => e.type === 'shot');
+  const lastShot = shots[shots.length - 1];
 
   return (
     <div class="game">
@@ -259,7 +385,13 @@ export function GameView(props: {
           {counting && <div class="slam" key={countdown}><span>{countdown}</span></div>}
           {showGo && <div class="slam"><span>Go!</span></div>}
           {!counting && !showGo && turnSlam === state.turnNumber && canAct && <div class="slam turn" key={turnSlam}><span>Your turn!</span></div>}
-          {knockout && <div class="slam knockout"><span>Final knockout!</span></div>}
+          {knockout && viewing === null && <div class="slam knockout"><span>Final knockout!</span></div>}
+          {viewing !== null && (
+            <div class="past-banner" role="status">
+              <span>Looking back at shot {viewing + 1} of {shots.length}</span>
+              <button class="small" onClick={() => setViewing(null)}>Back to live</button>
+            </div>
+          )}
         </div>
         {props.notice && <p class="error" role="alert" style={{ marginTop: 8 }}>{props.notice}</p>}
         {props.result}
@@ -346,12 +478,13 @@ export function GameView(props: {
             );
           })}
         </div>
-        {props.showFunctions && lastShot?.type === 'shot' && (
-          <div class="mini">
+        {lastShot && (
+          <div class="mini last-shot">
             <h3>Last shot</h3>
-            <code>{lastShot.shot.expr}</code>
+            <code>{canSeeShot(lastShot) ? lastShot.expr : 'Hidden until the match ends'}</code>
           </div>
         )}
+        <ShotHistory shots={shots} state={state} viewing={viewing} onView={setViewing} canSee={canSeeShot} />
         {props.extraSide}
       </aside>
     </div>

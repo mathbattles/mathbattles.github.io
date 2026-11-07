@@ -3,13 +3,18 @@ import {
   ParseError,
   RuleError,
   START_RATING,
+  MAX_STORED_REPLAY,
   eloDelta,
+  matchRecordFor,
   scoreDaily,
   seasonReset,
   usernameProblem,
   utcDayNumber,
   type ClientMsg,
   type DailyShot,
+  type MatchRecord,
+  type MatchState,
+  type PlayerSetup,
   type ServerMsg,
 } from '@mathbattles/sim';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
@@ -106,6 +111,47 @@ async function publicName(env: Env, uid: string | null, wanted: unknown): Promis
   return taken ? `Guest ${name}`.slice(0, 16) : name;
 }
 
+const HISTORY_KEEP = 100;
+
+/** Saves one match to a player's history and drops their oldest beyond the limit. */
+function historyStatements(env: Env, uid: string, record: MatchRecord, source: 'server' | 'device') {
+  return [
+    env.DB.prepare('INSERT INTO match_history (uid, id, at, source, record) VALUES (?, ?, ?, ?, ?) ON CONFLICT (uid, id) DO NOTHING')
+      .bind(uid, record.id, record.at, source, JSON.stringify(record)),
+    env.DB.prepare(
+      'DELETE FROM match_history WHERE uid = ? AND id NOT IN (SELECT id FROM match_history WHERE uid = ? ORDER BY at DESC LIMIT ?)',
+    ).bind(uid, uid, HISTORY_KEEP),
+  ];
+}
+
+/** Matches reported by a device are checked for shape. They can't claim to be ranked or change a rating. */
+function cleanDeviceRecord(b: Partial<MatchRecord> | null): MatchRecord | null {
+  if (!b || typeof b.id !== 'string' || !/^[\w-]{1,64}$/.test(b.id)) return null;
+  if (b.kind !== 'bots' && b.kind !== 'online' && b.kind !== 'shared') return null;
+  if (b.mode !== 'fn' && b.mode !== 'ode1' && b.mode !== 'ode2') return null;
+  if (b.result !== 'win' && b.result !== 'loss' && b.result !== 'draw' && b.result !== 'none') return null;
+  if (!Array.isArray(b.opponents) || b.opponents.length > 12) return null;
+  if (b.replay !== undefined && (typeof b.replay !== 'string' || b.replay.length > MAX_STORED_REPLAY || !/^[\w-]*$/.test(b.replay))) return null;
+  const count = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) ? Math.max(0, Math.min(100_000, Math.floor(n))) : 0);
+  return {
+    id: b.id,
+    // A device's clock can be wrong, but not in the future.
+    at: Math.min(Date.now(), count(b.at) || Date.now()),
+    kind: b.kind,
+    mode: b.mode,
+    result: b.result,
+    opponents: b.opponents.map((o) => cleanName(o)),
+    kills: count(b.kills),
+    shots: count(b.shots),
+    ...(b.replay ? { replay: b.replay } : {}),
+  };
+}
+
+async function historyRows(env: Env, uid: string, limit: number): Promise<MatchRecord[]> {
+  const { results } = await env.DB.prepare('SELECT record FROM match_history WHERE uid = ? ORDER BY at DESC LIMIT ?').bind(uid, limit).all<{ record: string }>();
+  return results.map((r) => JSON.parse(r.record) as MatchRecord);
+}
+
 async function handleApi(req: Request, env: Env, parts: string[], json: (data: unknown, status?: number) => Response): Promise<Response> {
   const ip = callerIp(req);
   const tooMany = () => json({ error: 'Too many requests. Wait a few minutes and try again.' }, 429);
@@ -194,6 +240,32 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
       return json({ rating: row?.rating ?? START_RATING, profile: row?.profile ? JSON.parse(row.profile) : null, username: user?.display ?? null });
     }
 
+    case 'history': {
+      const claims = await verifyClaims(env, bearer(req));
+      if (!claims) return json({ error: 'Sign in first' }, 401);
+      if (req.method === 'POST') {
+        if (await overLimit(env.DB, `history:${claims.uid}`, 120, HOUR)) return tooMany();
+        const record = cleanDeviceRecord(await readJson<Partial<MatchRecord>>(req));
+        if (!record) return json({ error: 'Bad match' }, 400);
+        await env.DB.batch(historyStatements(env, claims.uid, record, 'device'));
+        return json({ ok: true });
+      }
+      return json(await historyRows(env, claims.uid, HISTORY_KEEP));
+    }
+
+    case 'player': {
+      let name: string;
+      try {
+        name = decodeURIComponent(parts[2] ?? '').toLowerCase();
+      } catch {
+        return json({ error: 'No such player' }, 404);
+      }
+      const user = await env.DB.prepare('SELECT uid, display FROM usernames WHERE username_lc = ?').bind(name).first<{ uid: string; display: string }>();
+      if (!user) return json({ error: 'No such player' }, 404);
+      const row = await env.DB.prepare('SELECT rating, games FROM players WHERE uid = ?').bind(user.uid).first<{ rating: number; games: number }>();
+      return json({ name: user.display, rating: row?.rating ?? START_RATING, games: row?.games ?? 0, matches: await historyRows(env, user.uid, 30) });
+    }
+
     case 'account': {
       const action = parts[2];
       if (action === 'available' && req.method === 'GET') {
@@ -244,6 +316,7 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
           env.DB.prepare('DELETE FROM usernames WHERE uid = ?').bind(uid),
           env.DB.prepare('DELETE FROM players WHERE uid = ?').bind(uid),
           env.DB.prepare('DELETE FROM daily_scores WHERE who = ?').bind(uid),
+          env.DB.prepare('DELETE FROM match_history WHERE uid = ?').bind(uid),
         ]);
         return json({ ok: true });
       }
@@ -391,6 +464,7 @@ export class RoomObject implements DurableObject {
       },
       onLobbyChange: (info) => this.saveLobby(code, info),
       onRankedOver: (winner, loser) => this.settleRanked(winner, loser),
+      onMatchOver: (state, setups, delta) => this.saveHistory(code, state, setups, delta),
     }, { ranked, rankedPair: pair });
     return this.core;
   }
@@ -420,6 +494,19 @@ export class RoomObject implements DurableObject {
     }, wait);
   }
 
+  /** Records the match for every signed-in player in it. Guests' devices keep their own copy. */
+  private saveHistory(code: string, state: MatchState, setups: PlayerSetup[], ratingDelta: number | undefined): void {
+    const statements: D1PreparedStatement[] = [];
+    const at = Date.now();
+    for (const [seat, uid] of this.seatUid) {
+      if (!state.players.some((p) => p.id === seat)) continue;
+      const base = matchRecordFor(state, setups, seat, { id: `${code}-${state.config.seed}`, at, kind: code.startsWith('R-') ? 'ranked' : 'online' });
+      const record = ratingDelta === undefined ? base : { ...base, ratingDelta: base.result === 'win' ? ratingDelta : -ratingDelta };
+      statements.push(...historyStatements(this.env, uid, record, 'server'));
+    }
+    if (statements.length) void this.env.DB.batch(statements).catch((e) => console.error('Saving match history failed', e));
+  }
+
   private async settleRanked(winnerSeat: string, loserSeat: string): Promise<number | undefined> {
     const w = this.seatUid.get(winnerSeat);
     const l = this.seatUid.get(loserSeat);
@@ -442,15 +529,15 @@ export class RoomObject implements DurableObject {
   }
 
   /** Works out who is joining, and the name others should see. Returns null if they can't join. */
-  private async identify(code: string, msg: Extract<ClientMsg, { t: 'join' }>): Promise<{ identity: string; name: string } | { error: string }> {
+  private async identify(code: string, msg: Extract<ClientMsg, { t: 'join' }>): Promise<{ identity: string; name: string; uid: string | null } | { error: string }> {
     const claims = await verifyClaims(this.env, msg.idToken);
     if (code.startsWith('R-')) {
       if (!claims) return { error: 'Sign in to play ranked.' };
-      return { identity: claims.uid, name: await publicName(this.env, claims.uid, msg.name) };
+      return { identity: claims.uid, uid: claims.uid, name: await publicName(this.env, claims.uid, msg.name) };
     }
     const guest = String(msg.token ?? '').slice(0, 64);
     if (guest.length < MIN_GUEST_TOKEN) return { error: 'Reload the page and try again.' };
-    return { identity: `g:${guest}`, name: await publicName(this.env, claims?.uid ?? null, msg.name) };
+    return { identity: `g:${guest}`, uid: claims?.uid ?? null, name: await publicName(this.env, claims?.uid ?? null, msg.name) };
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -516,9 +603,9 @@ export class RoomObject implements DurableObject {
             return;
           }
           core.join(connId, who.identity, { ...msg, name: who.name });
-          if (code.startsWith('R-')) {
+          if (who.uid) {
             const seat = core.seats.find((s) => s.conns.has(connId));
-            if (seat) this.seatUid.set(seat.id, who.identity);
+            if (seat) this.seatUid.set(seat.id, who.uid);
           }
           return;
         }

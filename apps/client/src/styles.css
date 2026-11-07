@@ -62,6 +62,8 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; }
+/* Text and spacing grow gently with the screen, from small phones to very large displays. */
+html { font-size: clamp(15px, 13.6px + .3vw, 21px); -webkit-text-size-adjust: 100%; }
 
 body {
   background-color: var(--page);
@@ -70,8 +72,9 @@ body {
     linear-gradient(90deg, var(--page-line) 1px, transparent 1px);
   background-size: 24px 24px;
   color: var(--ink);
-  font-size: 17px;
+  font-size: 1.06rem;
   line-height: 1.45;
+  overflow-x: hidden;
   transition: background-color .25s;
 }
 
@@ -93,7 +96,39 @@ code { font-family: 'Cambria Math', 'STIX Two Text', Georgia, serif; font-style:
   to { opacity: 1; transform: none; }
 }
 
-.page { max-width: 1040px; margin: 0 auto; padding: 20px 16px 64px; }
+.shell { display: flex; align-items: flex-start; min-height: 100dvh; }
+.content { flex: 1; min-width: 0; }
+.page {
+  max-width: 1120px; margin: 0 auto;
+  padding: 20px max(16px, env(safe-area-inset-right)) 64px max(16px, env(safe-area-inset-left));
+}
+
+/* The left tab bar. Phones and small tablets use the menu page's tiles instead. */
+.sidenav { display: none; }
+.phone-only { display: inline; }
+@media (min-width: 1000px) {
+  .sidenav {
+    display: flex; flex-direction: column; gap: 5px;
+    position: sticky; top: 0; flex: 0 0 auto;
+    width: clamp(205px, 16vw, 270px); height: 100dvh; overflow-y: auto;
+    padding: 16px 12px;
+    background: var(--card);
+    border-right: 2.5px solid var(--ink);
+  }
+  .sidenav .brand { font-size: 1.25rem; font-weight: 800; text-decoration: none; padding: 2px 10px 10px; }
+  .sidenav .tab {
+    --tab: var(--ink);
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; font-weight: 600; text-decoration: none;
+    border: 2.5px solid transparent; border-radius: var(--wobble-2);
+    transition: transform .13s cubic-bezier(.3, 1.6, .5, 1), background-color .12s, border-color .12s, box-shadow .12s;
+  }
+  .sidenav .tab i { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; background: var(--tab); border: 2px solid var(--ink); }
+  .sidenav .tab:hover { border-color: var(--ink); transform: translateX(3px) rotate(-.5deg); box-shadow: 2px 3px 0 var(--tab); }
+  .sidenav .tab:active { transform: translateX(1px) scale(.98); box-shadow: none; }
+  .sidenav .tab.active { background: var(--yellow); color: var(--on-bright); border-color: var(--ink); font-weight: 800; }
+  body.in-game .sidenav { display: none; }
+}
 .page.narrow { max-width: 520px; }
 
 .topbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
@@ -176,16 +211,16 @@ input:disabled { opacity: .6; }
 .ok { color: var(--good); font-weight: 600; }
 
 /* Menu */
-.hero { position: relative; margin-bottom: 18px; }
+.hero { position: relative; margin-bottom: 18px; container-type: inline-size; }
 .hero canvas { display: block; width: 100%; height: auto; border: 3px solid var(--ink); border-radius: var(--wobble); background: var(--card); }
-.hero h1 { position: absolute; left: 4%; top: 7%; margin: 0; pointer-events: none; color: var(--ink); animation: logo-in .6s cubic-bezier(.2, 1.5, .4, 1) both; }
+.hero h1 { position: absolute; left: 4%; top: 7%; margin: 0; pointer-events: none; color: var(--ink); font-size: clamp(1.6rem, 9cqi, 5.2rem); animation: logo-in .6s cubic-bezier(.2, 1.5, .4, 1) both; }
 .hero h1 span { background: linear-gradient(transparent 58%, var(--yellow) 58%, var(--yellow) 92%, transparent 92%); padding: 0 .1em; }
 :root[data-theme='chalk'] .hero h1 span, :root[data-theme='blueprint'] .hero h1 span { background: none; }
 @keyframes logo-in {
   from { opacity: 0; transform: scale(.75) rotate(-3deg); }
   to { opacity: 1; transform: none; }
 }
-.hero .tag { position: absolute; left: 4.4%; bottom: 7%; margin: 0; font-size: clamp(.95rem, 2.4vw, 1.25rem); font-weight: 600; background: var(--card); padding: 0 6px; border-radius: 4px; }
+.hero .tag { position: absolute; left: 4.4%; bottom: 7%; margin: 0; font-size: clamp(.72rem, 2.4cqi, 1.25rem); font-weight: 600; background: var(--card); padding: 0 6px; border-radius: 4px; }
 .menu-main { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 22px; }
 .menu-main .btn { font-size: 1.15rem; }
 .menu-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
@@ -228,11 +263,12 @@ input:disabled { opacity: .6; }
 .design .label { display: block; padding: 7px 12px; }
 
 /* Game */
-.game { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 14px; max-width: 1180px; margin: 0 auto; padding: 10px 12px 28px; }
+.game { display: grid; grid-template-columns: minmax(0, 1fr) clamp(220px, 21vw, 340px); gap: 14px; max-width: 1760px; margin: 0 auto; padding: 10px 12px 28px; }
 .game .field { grid-column: 1; min-width: 0; }
 .game aside { grid-column: 2; grid-row: 1 / span 2; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .game canvas { display: block; width: 100%; height: auto; border: 3px solid var(--ink); border-radius: 10px; touch-action: manipulation; }
-.fieldwrap { position: relative; overflow: hidden; border-radius: 10px; }
+/* The board fits the window height too, so short screens still see the input below it. */
+.fieldwrap { position: relative; overflow: hidden; border-radius: 10px; max-width: max(300px, calc((100dvh - 215px) * 770 / 450)); margin-inline: auto; }
 .status { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; min-height: 38px; }
 .status .who { font-weight: 800; font-size: 1.15rem; }
 .timer { font-weight: 800; font-size: 1.3rem; font-variant-numeric: tabular-nums; }
@@ -279,6 +315,30 @@ button.dir-plus[aria-pressed='false']:hover:not(:disabled), button.dir-minus[ari
 
 .mini { padding: 10px 12px; border-radius: 12px; border: 2px solid var(--ink); background: var(--card); }
 .mini h3 { margin-bottom: .3em; font-size: 1rem; }
+.mini code, .last-shot code { display: block; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.history { display: flex; flex-direction: column; min-height: 0; }
+.shots { list-style: none; margin: 0 0 8px; padding: 0; max-height: clamp(150px, 34dvh, 420px); overflow-y: auto; overscroll-behavior: contain; }
+.shots li { margin-bottom: 4px; }
+button.shot, button.shot:hover:not(:disabled), button.shot:active:not(:disabled) {
+  display: flex; gap: 6px; width: 100%; text-align: left; padding: 4px 6px; font-weight: 400; font-size: .9rem;
+  border: 2px solid transparent; border-radius: 8px; box-shadow: none; transform: none; background: none; color: inherit;
+}
+button.shot:hover:not(:disabled) { border-color: var(--ink); }
+.current button.shot { background: var(--yellow); color: var(--on-bright); border-color: var(--ink); }
+.current button.shot .shooter { color: inherit; }
+button.shot .num { flex: 0 0 auto; font-weight: 600; }
+button.shot .body { min-width: 0; flex: 1; }
+button.shot .shooter { display: block; font-weight: 600; }
+button.shot code { display: block; background: none; padding: 0; overflow-wrap: anywhere; }
+button.shot .hits { font-weight: 800; font-size: .82rem; }
+.history-nav { gap: 6px; }
+.past-banner {
+  position: absolute; left: 50%; top: 10px; transform: translateX(-50%); z-index: 3;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; width: max-content; max-width: 94%;
+  background: var(--yellow); color: var(--on-bright); border: 2.5px solid var(--on-bright); border-radius: 10px;
+  padding: 3px 8px 3px 12px; font-weight: 600; font-size: .92rem;
+}
+.past-banner button { --fill: #fff; --label: var(--on-bright); border-color: var(--on-bright); }
 .scores div { display: flex; justify-content: space-between; gap: 6px; }
 .scores .out { text-decoration: line-through; opacity: .55; }
 .chatlog { height: 130px; overflow-y: auto; font-size: .92rem; overflow-wrap: anywhere; }
@@ -302,7 +362,31 @@ button.dir-plus[aria-pressed='false']:hover:not(:disabled), button.dir-minus[ari
 .shop { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
 .item { padding: 10px; border: 2px solid var(--ink); border-radius: 12px; background: var(--card); display: flex; flex-direction: column; gap: 6px; transition: transform .13s cubic-bezier(.3, 1.6, .5, 1); }
 .item:hover { transform: translateY(-3px) rotate(-.4deg); }
-.item canvas { display: block; margin: 0 auto; background: #fff; border-radius: 10px; }
+.item canvas { display: block; margin: 0 auto; width: 100%; max-width: 160px; height: auto; background: #fff; border-radius: 10px; }
+.item.previewing { box-shadow: 3px 4px 0 var(--yellow); }
+.shop-layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+.shop-preview canvas { display: block; width: 100%; height: auto; border: 2.5px solid var(--ink); border-radius: 10px; }
+.preview-name { margin: 8px 0 0; }
+.shop-preview { position: sticky; top: 0; z-index: 2; margin-bottom: 0; padding: 10px; }
+.shop-preview h3 { margin-bottom: .3em; font-size: 1rem; }
+@media (max-width: 999px) {
+  /* Keep the preview small enough on phones to see the items beneath it. */
+  .shop-preview canvas { max-height: 30dvh; object-fit: contain; }
+}
+@media (min-width: 1000px) {
+  .shop-layout { grid-template-columns: minmax(0, 1fr) minmax(300px, 38%); align-items: start; }
+  .shop-preview { grid-column: 2; grid-row: 1; top: 12px; }
+  .shop-items { grid-column: 1; grid-row: 1; min-width: 0; }
+}
+/* Match history */
+.matches { list-style: none; margin: 0; padding: 0; max-height: 460px; overflow-y: auto; }
+.match { display: flex; align-items: center; gap: 10px; padding: 7px 4px; border-bottom: 1.5px solid var(--page-line); flex-wrap: wrap; }
+.match .result { flex: 0 0 auto; min-width: 54px; font-weight: 800; }
+.match.win .result { color: var(--good); }
+.match.loss .result { color: var(--error); }
+.match .who-played { flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; }
+.match .who-played small { display: block; }
+.match .rating-change { font-weight: 800; }
 table { border-collapse: collapse; width: 100%; }
 td, th { text-align: left; padding: 4px 8px; border-bottom: 1.5px solid var(--page-line); }
 .bar { height: 12px; border: 2px solid var(--ink); border-radius: 8px; overflow: hidden; background: var(--field-bg); }
@@ -314,8 +398,25 @@ td, th { text-align: left; padding: 4px 8px; border-bottom: 1.5px solid var(--pa
   .game { grid-template-columns: minmax(0, 1fr); padding: 6px 8px 28px; }
   .game aside { grid-column: 1; grid-row: auto; }
   .chatlog { height: 90px; }
-  .hero h1 { font-size: 2.1rem; }
-  .hero .tag { font-size: .8rem; }
+  .shots { max-height: 170px; }
+}
+
+/* Short, wide screens such as phones held sideways: keep the side panel next to the board. */
+@media (max-height: 520px) and (min-width: 600px) {
+  .game { grid-template-columns: minmax(0, 1fr) clamp(180px, 30vw, 280px); }
+  .game aside { grid-column: 2; grid-row: 1 / span 2; }
+}
+
+/* Touch screens get bigger targets. */
+@media (pointer: coarse) {
+  button, .btn { min-height: 42px; }
+  button.small, .btn.small { min-height: 36px; }
+  .sidenav .tab { padding-block: 11px; }
+}
+
+/* Last, so these win over the display rules above: the tab bar replaces these on larger screens. */
+@media (min-width: 1000px) {
+  .menu-list, .phone-only, .btn.menu-link { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

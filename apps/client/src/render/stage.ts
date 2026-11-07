@@ -1,5 +1,6 @@
 import { BLAST_R, DRAW_STEPS_PER_SEC, NEXT_TURN_DELAY_MS, PLANE_H, PLANE_W, PX_PER_UNIT, SOLDIER_R, TELEPORT_RADIUS, type Circle, type MatchState, type ShotRecord } from '@mathbattles/sim';
 import { drawHat } from './doodles';
+import { drawObstacle, obstacleStyle, type ObstacleStyle } from './obstacles';
 
 export type ThemeId = 'paper' | 'chalk' | 'blueprint';
 
@@ -17,12 +18,6 @@ export interface Theme {
   mark: string;
   smoke: string;
 }
-
-/** Obstacles look the same in every design. */
-const ROCKS = [
-  { fill: '#f7d65c', rim: '#d9a92a', spot: '#e6bb3a' },
-  { fill: '#6fb7f2', rim: '#3e86cf', spot: '#529fe0' },
-];
 
 export const THEMES: Record<ThemeId, Theme> = {
   paper: {
@@ -110,6 +105,140 @@ interface Ring {
   style: string;
 }
 
+/** Draws a curve in a trail style. px maps x positions, for mirrored views. */
+export function strokeTrail(
+  c: CanvasRenderingContext2D,
+  xs: ArrayLike<number>,
+  ys: ArrayLike<number>,
+  upto: number,
+  color: string,
+  trail: string,
+  glow: boolean,
+  px: (x: number) => number = (x) => x,
+): void {
+  if (upto < 2) return;
+  const trace = () => {
+    const stride = Math.max(1, Math.floor(upto / 1800));
+    c.beginPath();
+    c.moveTo(px(xs[0]!), ys[0]!);
+    for (let i = stride; i < upto; i += stride) {
+      const y = ys[i]!;
+      if (Number.isFinite(y)) c.lineTo(px(xs[i]!), y);
+    }
+    const last = upto - 1;
+    if (Number.isFinite(ys[last]!)) c.lineTo(px(xs[last]!), ys[last]!);
+  };
+  c.save();
+  c.lineJoin = 'round';
+  c.lineCap = 'round';
+  if (trail === 'rainbow') {
+    const stride = Math.max(1, Math.floor(upto / 1800));
+    const seg = Math.max(1, Math.floor(upto / 120));
+    c.lineWidth = 3.2;
+    for (let i = 0; i < upto - 1; i += seg) {
+      c.strokeStyle = `hsl(${(i / 14) % 360} 90% 55%)`;
+      c.beginPath();
+      c.moveTo(px(xs[i]!), ys[i]!);
+      for (let j = i; j < Math.min(upto, i + seg + 1); j += stride) c.lineTo(px(xs[j]!), ys[j]!);
+      c.stroke();
+    }
+    c.restore();
+    return;
+  }
+  if (trail === 'neon') {
+    c.strokeStyle = color;
+    c.globalAlpha = 0.25;
+    c.lineWidth = 12;
+    trace();
+    c.stroke();
+    c.globalAlpha = 0.55;
+    c.lineWidth = 6;
+    trace();
+    c.stroke();
+    c.globalAlpha = 1;
+    c.strokeStyle = '#ffffff';
+    c.lineWidth = 1.8;
+    trace();
+    c.stroke();
+    c.restore();
+    return;
+  }
+  if (trail === 'double') {
+    c.strokeStyle = color;
+    c.lineWidth = 6;
+    trace();
+    c.stroke();
+    c.strokeStyle = '#ffffff';
+    c.lineWidth = 2;
+    trace();
+    c.stroke();
+    c.restore();
+    return;
+  }
+  if (glow && trail !== 'dash' && trail !== 'ghost' && trail !== 'dots') {
+    c.strokeStyle = color;
+    c.globalAlpha = 0.18;
+    c.lineWidth = trail === 'thick' ? 13 : 9;
+    trace();
+    c.stroke();
+    c.globalAlpha = 1;
+  }
+  c.strokeStyle = color;
+  c.lineWidth = trail === 'thick' ? 5 : trail === 'dots' ? 4.5 : 3;
+  if (trail === 'dash') c.setLineDash([9, 7]);
+  if (trail === 'dots') c.setLineDash([0.1, 9]);
+  if (trail === 'ghost') c.globalAlpha = 0.45;
+  trace();
+  c.stroke();
+  c.restore();
+}
+
+/** Draws an explosion style, t going from 0 to 1. */
+export function drawBlast(c: CanvasRenderingContext2D, x: number, y: number, r: number, t: number, color: string, style: string): void {
+  c.strokeStyle = color;
+  c.fillStyle = color;
+  c.lineWidth = 4 * (1 - t) + 1;
+  if (style === 'star') {
+    c.beginPath();
+    for (let a = 0; a < 12; a++) {
+      const ang = (a / 12) * Math.PI * 2 + t;
+      c.moveTo(x + Math.cos(ang) * r * 0.7, y + Math.sin(ang) * r * 0.7);
+      c.lineTo(x + Math.cos(ang) * (r + 34 * t + 6), y + Math.sin(ang) * (r + 34 * t + 6));
+    }
+    c.stroke();
+  } else if (style === 'sigma' || style === 'pi') {
+    c.font = `800 ${Math.round(r * 2.4 + 40 * t)}px "Shantell Sans", serif`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(style === 'pi' ? 'π' : 'Σ', x, y);
+  } else if (style === 'heart') {
+    const size = r * 0.9 + 26 * t;
+    c.beginPath();
+    c.moveTo(x, y + size);
+    c.bezierCurveTo(x - size * 1.7, y - size * 0.3, x - size * 0.7, y - size * 1.2, x, y - size * 0.35);
+    c.bezierCurveTo(x + size * 0.7, y - size * 1.2, x + size * 1.7, y - size * 0.3, x, y + size);
+    c.fill();
+  } else if (style === 'shock') {
+    for (const k of [1, 0.65, 0.3]) {
+      c.beginPath();
+      c.arc(x, y, r + 44 * t * k, 0, Math.PI * 2);
+      c.stroke();
+    }
+  } else {
+    c.beginPath();
+    c.arc(x, y, r + 36 * t, 0, Math.PI * 2);
+    c.stroke();
+  }
+}
+
+export interface PastView {
+  soldiers: { id: number; x: number; y: number; alive: boolean; playerId: string; angle: number }[];
+  holes: Circle[];
+  shooterId: number;
+  path: { xs: ArrayLike<number>; ys: ArrayLike<number>; steps: number };
+  shooterPlayer: string;
+}
+
 const MAX_PARTICLES = 700;
 const reducedMotion = () => !!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
@@ -142,6 +271,12 @@ export class Stage {
   aimAngle: number | null = null;
   aimDir: 1 | -1 = 1;
   teleportFrom: { x: number; y: number } | null = null;
+  /** True while someone at this screen is choosing a shot, so the aim direction shows. */
+  aiming = false;
+  private rockStyle: ObstacleStyle = obstacleStyle('candy');
+  /** Which way each soldier last fired, in free-for-all. */
+  private faceDirs = new Map<number, 1 | -1>();
+  private past: PastView | null = null;
   onExplode?: (kills: number) => void;
   onKill?: () => void;
   /** Called when the field needs a big callout, such as the final knockout. */
@@ -175,6 +310,24 @@ export class Stage {
       const prev = this.soldiers.find((p) => p.id === s.id && p.playerId === s.playerId);
       return { ...s, flown: !s.alive && (prev ? prev.flown || !prev.alive : true), bornAt: prev?.bornAt ?? now };
     });
+    this.terrainDirty = true;
+  }
+
+  /** Changes the obstacle design. It only affects what this viewer sees. */
+  setRockStyle(id: string | undefined): void {
+    this.rockStyle = obstacleStyle(id);
+    this.terrainDirty = true;
+  }
+
+  /** Shows the board as it was at an earlier shot, without touching the live match. */
+  showPast(view: PastView): void {
+    this.past = view;
+    this.terrainDirty = true;
+  }
+
+  clearPast(): void {
+    if (!this.past) return;
+    this.past = null;
     this.terrainDirty = true;
   }
 
@@ -245,6 +398,7 @@ export class Stage {
         kills: 0,
         resolve,
       };
+      this.faceDirs.set(record.soldierId, record.dir);
       // Muzzle flash.
       this.burst(record.from.x, record.from.y, 14, color, 'spark', 2.2);
     });
@@ -308,7 +462,7 @@ export class Stage {
   private rockColorAt(x: number, y: number): string {
     for (let i = this.circles.length - 1; i >= 0; i--) {
       const c = this.circles[i]!;
-      if (Math.hypot(c.x - x, c.y - y) <= c.r + 4) return ROCKS[i % ROCKS.length]!.fill;
+      if (Math.hypot(c.x - x, c.y - y) <= c.r + 4) return this.rockStyle.debris(i);
     }
     return THEMES[this.themeId].smoke;
   }
@@ -318,42 +472,11 @@ export class Stage {
     c.setTransform(this.terrainLayer.width / PLANE_W, 0, 0, this.terrainLayer.height / PLANE_H, 0, 0);
     c.clearRect(0, 0, PLANE_W, PLANE_H);
     c.globalCompositeOperation = 'source-over';
-    this.circles.forEach((o, i) => {
-      const look = ROCKS[i % ROCKS.length]!;
-      const x = this.px(o.x);
-      c.save();
-      c.beginPath();
-      c.arc(x, o.y, o.r, 0, Math.PI * 2);
-      c.fillStyle = look.fill;
-      c.fill();
-      c.clip();
-      // Crater spots, placed by a fixed pattern so they stay put between redraws.
-      c.fillStyle = look.spot;
-      const count = Math.floor(o.r / 7);
-      for (let k = 0; k < count; k++) {
-        const a = k * 2.399963 + i;
-        const d = o.r * Math.sqrt((k + 0.5) / count) * 0.85;
-        c.beginPath();
-        c.arc(x + Math.cos(a) * d, o.y + Math.sin(a) * d, 1.6 + (k % 3), 0, Math.PI * 2);
-        c.fill();
-      }
-      // Shaded lower edge and a bright upper edge give each one a rounded look.
-      c.strokeStyle = look.rim;
-      c.lineWidth = 7;
-      c.beginPath();
-      c.arc(x, o.y + 2.5, o.r, 0, Math.PI * 2);
-      c.stroke();
-      c.strokeStyle = '#ffffff66';
-      c.lineWidth = 2.5;
-      c.beginPath();
-      // Tiny rocks can be smaller than this inset, and a negative radius would throw.
-      c.arc(x, o.y, Math.max(0.5, o.r - 3.5), Math.PI * 1.1, Math.PI * 1.65);
-      c.stroke();
-      c.restore();
-    });
+    this.circles.forEach((o, i) => drawObstacle(c, this.rockStyle, this.px(o.x), o.y, o.r, i));
+    const holes = this.past?.holes ?? this.holes;
     c.globalCompositeOperation = 'destination-out';
     c.fillStyle = '#000';
-    for (const h of this.holes) {
+    for (const h of holes) {
       c.beginPath();
       c.arc(this.px(h.x), h.y, h.r, 0, Math.PI * 2);
       c.fill();
@@ -362,7 +485,7 @@ export class Stage {
     c.globalCompositeOperation = 'source-atop';
     c.strokeStyle = theme.biteEdge;
     c.lineWidth = 4;
-    for (const h of this.holes) {
+    for (const h of holes) {
       c.beginPath();
       c.arc(this.px(h.x), h.y, h.r + 1.5, 0, Math.PI * 2);
       c.stroke();
@@ -412,62 +535,6 @@ export class Stage {
     }
   }
 
-  private tracePath(c: CanvasRenderingContext2D, xs: ArrayLike<number>, ys: ArrayLike<number>, upto: number): void {
-    const stride = Math.max(1, Math.floor(upto / 1800));
-    c.beginPath();
-    c.moveTo(this.px(xs[0]!), ys[0]!);
-    for (let i = stride; i < upto; i += stride) {
-      const y = ys[i]!;
-      if (Number.isFinite(y)) c.lineTo(this.px(xs[i]!), y);
-    }
-    const last = upto - 1;
-    if (Number.isFinite(ys[last]!)) c.lineTo(this.px(xs[last]!), ys[last]!);
-  }
-
-  private drawPath(
-    c: CanvasRenderingContext2D,
-    xs: ArrayLike<number>,
-    ys: ArrayLike<number>,
-    upto: number,
-    color: string,
-    trail: string,
-    glow: boolean,
-  ): void {
-    if (upto < 2) return;
-    c.save();
-    c.lineJoin = 'round';
-    c.lineCap = 'round';
-    if (trail === 'rainbow') {
-      const stride = Math.max(1, Math.floor(upto / 1800));
-      const seg = Math.max(1, Math.floor(upto / 120));
-      c.lineWidth = 3.2;
-      for (let i = 0; i < upto - 1; i += seg) {
-        c.strokeStyle = `hsl(${(i / 14) % 360} 90% 55%)`;
-        c.beginPath();
-        c.moveTo(this.px(xs[i]!), ys[i]!);
-        for (let j = i; j < Math.min(upto, i + seg + 1); j += stride) c.lineTo(this.px(xs[j]!), ys[j]!);
-        c.stroke();
-      }
-      c.restore();
-      return;
-    }
-    if (glow && trail !== 'dash' && trail !== 'ghost') {
-      c.strokeStyle = color;
-      c.globalAlpha = 0.18;
-      c.lineWidth = trail === 'thick' ? 13 : 9;
-      this.tracePath(c, xs, ys, upto);
-      c.stroke();
-      c.globalAlpha = 1;
-    }
-    c.strokeStyle = color;
-    c.lineWidth = trail === 'thick' ? 5 : 3;
-    if (trail === 'dash') c.setLineDash([9, 7]);
-    if (trail === 'ghost') c.globalAlpha = 0.45;
-    this.tracePath(c, xs, ys, upto);
-    c.stroke();
-    c.restore();
-  }
-
   /** The soldier: a round head with two eyes, facing the enemy side. */
   private drawFigure(c: CanvasRenderingContext2D, x: number, y: number, color: string, facing: number, bg: string): void {
     c.fillStyle = bg;
@@ -504,7 +571,8 @@ export class Stage {
       c.restore();
       return;
     }
-    if (s.id === this.activeSoldierId) {
+    const active = this.past ? s.id === this.past.shooterId : s.id === this.activeSoldierId;
+    if (active) {
       const pulse = reducedMotion() ? 0 : (Math.sin(now / 240) + 1) * 1.6;
       c.fillStyle = theme.mark;
       c.globalAlpha = 0.75;
@@ -513,10 +581,16 @@ export class Stage {
       c.fill();
       c.globalAlpha = 1;
     }
-    const facing = this.mirror ? (owner?.team === 2 ? 1 : -1) : owner?.team === 2 ? -1 : 1;
+    let facing: number;
+    if (this.state?.config.kind === 'ffa') {
+      // Free-for-all shots can go either way, so soldiers look where they aim or last fired.
+      facing = active && this.aiming && !this.past ? this.aimDir : this.faceDirs.get(s.id) ?? 1;
+    } else {
+      facing = this.mirror ? (owner?.team === 2 ? 1 : -1) : owner?.team === 2 ? -1 : 1;
+    }
     this.drawFigure(c, x, y, color, facing, theme.bg);
-    drawHat(c, this.looks[s.playerId]?.hat ?? 'none', x, y - SOLDIER_R + 1, color);
-    if (owner && owner.soldierIds[0] === s.id && owner.name) {
+    drawHat(c, this.looks[s.playerId]?.hat ?? 'none', x, y - SOLDIER_R + 1, color, facing);
+    if (owner?.name && this.nameBelongsOn(owner, s.id)) {
       c.font = '600 11px "Shantell Sans", sans-serif';
       c.textAlign = 'center';
       c.textBaseline = 'bottom';
@@ -524,6 +598,19 @@ export class Stage {
       // Keep names inside the field near its edges and top.
       c.fillText(owner.name, Math.max(34, Math.min(PLANE_W - 34, x)), Math.max(14, y - SOLDIER_R - 9));
     }
+  }
+
+  /** A player's name sits over the soldier who acts next, so it moves with the highlight. */
+  private nameBelongsOn(owner: NonNullable<MatchState['players'][number]>, soldierId: number): boolean {
+    const list = this.past?.soldiers ?? this.soldiers;
+    if (this.past && owner.id === this.past.shooterPlayer) return soldierId === this.past.shooterId;
+    const ids = owner.soldierIds;
+    const start = this.past ? 0 : owner.nextSoldier;
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[(start + i) % ids.length]!;
+      if (list.find((q) => q.id === id)?.alive) return id === soldierId;
+    }
+    return false;
   }
 
   private knockOut(s: Stage['soldiers'][number], now: number, shot: ActiveShot): void {
@@ -668,27 +755,7 @@ export class Stage {
       const t = (now - b.at) / 620;
       const x = this.px(b.x);
       c.globalAlpha = 1 - t;
-      c.strokeStyle = b.color;
-      c.fillStyle = b.color;
-      c.lineWidth = 4 * (1 - t) + 1;
-      if (b.style === 'star') {
-        c.beginPath();
-        for (let a = 0; a < 12; a++) {
-          const ang = (a / 12) * Math.PI * 2 + t;
-          c.moveTo(x + Math.cos(ang) * b.r * 0.7, b.y + Math.sin(ang) * b.r * 0.7);
-          c.lineTo(x + Math.cos(ang) * (b.r + 34 * t + 6), b.y + Math.sin(ang) * (b.r + 34 * t + 6));
-        }
-        c.stroke();
-      } else if (b.style === 'sigma') {
-        c.font = `700 ${Math.round(b.r * 2.4 + 40 * t)}px "Shantell Sans", sans-serif`;
-        c.textAlign = 'center';
-        c.textBaseline = 'middle';
-        c.fillText('Σ', x, b.y);
-      } else {
-        c.beginPath();
-        c.arc(x, b.y, b.r + 36 * t, 0, Math.PI * 2);
-        c.stroke();
-      }
+      drawBlast(c, x, b.y, b.r, t, b.color, b.style);
       c.globalAlpha = 1;
     }
 
@@ -736,7 +803,7 @@ export class Stage {
     }
     shot.clock += realDt * scale;
     const reached = still ? shot.steps : Math.min(shot.steps, Math.floor((shot.clock / 1000) * DRAW_STEPS_PER_SEC));
-    this.drawPath(c, shot.xs, shot.ys, reached, shot.color, shot.trail, true);
+    strokeTrail(c, shot.xs, shot.ys, reached, shot.color, shot.trail, true, (x) => this.px(x));
 
     for (const hit of shot.record.hits) {
       const s = this.soldiers.find((q) => q.id === hit.id);
@@ -801,11 +868,25 @@ export class Stage {
     this.drawBackground(c, theme);
     c.drawImage(this.terrainLayer, 0, 0, PLANE_W, PLANE_H);
 
-    if (this.previewPath) {
+    if (this.previewPath && !this.past) {
       c.save();
       c.setLineDash([4, 6]);
-      this.drawPath(c, this.previewPath.xs, this.previewPath.ys, this.previewPath.steps, theme.axis, 'ink', false);
+      c.strokeStyle = theme.axis;
+      c.lineWidth = 2.5;
+      c.lineCap = 'round';
+      c.beginPath();
+      const p = this.previewPath;
+      const stride = Math.max(1, Math.floor(p.steps / 600));
+      c.moveTo(this.px(p.xs[0]!), p.ys[0]!);
+      for (let i = stride; i < p.steps; i += stride) if (Number.isFinite(p.ys[i]!)) c.lineTo(this.px(p.xs[i]!), p.ys[i]!);
+      c.stroke();
       c.restore();
+    }
+
+    if (this.past) {
+      const owner = this.state?.players.find((q) => q.id === this.past!.shooterPlayer);
+      const color = owner?.team === 2 ? theme.team2 : theme.team1;
+      strokeTrail(c, this.past.path.xs, this.past.path.ys, this.past.path.steps, color, this.looks[this.past.shooterPlayer]?.trail ?? 'ink', true, (x) => this.px(x));
     }
 
     if (this.teleportFrom) {
@@ -821,9 +902,13 @@ export class Stage {
 
     if (this.shot) this.advanceShot(c, this.shot, now);
 
-    for (const s of this.soldiers) this.drawSoldier(c, s, now, theme);
+    if (this.past) {
+      for (const s of this.past.soldiers) this.drawSoldier(c, { ...s, flown: false, bornAt: 0 }, now, theme);
+    } else {
+      for (const s of this.soldiers) this.drawSoldier(c, s, now, theme);
+    }
 
-    if (this.aimAngle !== null && this.activeSoldierId !== null) {
+    if (this.aimAngle !== null && this.activeSoldierId !== null && !this.past) {
       const s = this.soldiers.find((q) => q.id === this.activeSoldierId);
       if (s) {
         const mirroredShooter = this.state?.players.find((p) => p.id === s.playerId)?.team === 2 && this.state.config.kind === 'teams';

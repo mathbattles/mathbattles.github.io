@@ -8,6 +8,7 @@ import {
   generateCircles,
   isOnWinningSide,
   makeReplay,
+  matchRecordFor,
   placeSoldiers,
   Rng,
   type AbilityId,
@@ -19,7 +20,9 @@ import {
   type SoloDef,
 } from '@mathbattles/sim';
 import { useEffect, useMemo, useState } from 'preact/hooks';
+import { authState } from '../auth';
 import { LocalSession, SoloSession } from '../game/session';
+import { recordMatchHistory } from '../history';
 import { TopBar } from './Shared';
 import { profile, recordMatch } from '../store';
 import { go, modeName } from '../util';
@@ -57,7 +60,7 @@ export function LocalSetup() {
   const [kind, setKind] = useState<MatchKind>('teams');
   const [mode, setMode] = useState<ShotMode>('fn');
   const [abilities, setAbilities] = useState(false);
-  const [soldiers, setSoldiers] = useState(2);
+  const [soldiers, setSoldiers] = useState(1);
   const [seats, setSeats] = useState<SeatDraft[]>([
     { name: profile.name, team: 1, kind: 'human' },
     { name: BOT_NAMES[0]!, team: 2, kind: 'normal' },
@@ -145,6 +148,11 @@ function LocalGame(props: { config: Parameters<typeof makeSession>[0]; onAgain: 
   useEffect(() => {
     session.onOver = (state) => {
       setOver(state);
+      const human = humans === 1 ? state.players.find((p) => !p.isBot)?.id ?? null : null;
+      void recordMatchHistory(
+        matchRecordFor(state, session.setups, human, { id: `local-${state.config.seed}-${Date.now()}`, at: Date.now(), kind: humans === 1 ? 'bots' : 'shared' }),
+        authState.token,
+      );
       if (humans === 1) {
         const me = state.players.find((p) => !p.isBot)!;
         const beaten = state.players.filter((p) => p.isBot).map((p) => String(p.botLevel));
@@ -167,7 +175,6 @@ function LocalGame(props: { config: Parameters<typeof makeSession>[0]; onAgain: 
     <GameView
       session={session}
       header={<a class="btn small" href="#/">Quit</a>}
-      showFunctions
       result={over ? <ResultCard state={over} viewer={viewer} rewards={rewards} onAgain={props.onAgain} replay={replayLink} /> : null}
     />
   );

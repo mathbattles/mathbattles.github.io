@@ -64,7 +64,7 @@ export function seasonReset(rating: number): number {
   return Math.round((rating + START_RATING) / 2);
 }
 
-export type CosmeticKind = 'hat' | 'trail' | 'title' | 'blast';
+export type CosmeticKind = 'hat' | 'trail' | 'title' | 'blast' | 'obstacle';
 
 export interface Cosmetic {
   id: string;
@@ -83,20 +83,46 @@ export const COSMETICS: Cosmetic[] = [
   { id: 'hat-crown', kind: 'hat', name: 'Crown', cost: 600, value: 'crown' },
   { id: 'hat-wizard', kind: 'hat', name: 'Wizard hat', cost: 400, value: 'wizard' },
   { id: 'hat-halo', kind: 'hat', name: 'Unit circle halo', cost: 900, value: 'halo' },
+  { id: 'hat-leaf', kind: 'hat', name: 'Sprout', cost: 100, value: 'leaf' },
+  { id: 'hat-bow', kind: 'hat', name: 'Bow', cost: 120, value: 'bow' },
+  { id: 'hat-propeller', kind: 'hat', name: 'Propeller cap', cost: 250, value: 'propeller' },
+  { id: 'hat-headphones', kind: 'hat', name: 'Headphones', cost: 300, value: 'headphones' },
+  { id: 'hat-santa', kind: 'hat', name: 'Winter hat', cost: 300, value: 'santa' },
+  { id: 'hat-top', kind: 'hat', name: 'Top hat', cost: 350, value: 'top' },
+  { id: 'hat-pirate', kind: 'hat', name: 'Pirate hat', cost: 450, value: 'pirate' },
+  { id: 'hat-viking', kind: 'hat', name: 'Horned helmet', cost: 500, value: 'viking' },
   { id: 'trail-ink', kind: 'trail', name: 'Ink', cost: 0, value: 'ink' },
   { id: 'trail-dash', kind: 'trail', name: 'Dashed', cost: 100, value: 'dash' },
   { id: 'trail-thick', kind: 'trail', name: 'Marker', cost: 200, value: 'thick' },
   { id: 'trail-rainbow', kind: 'trail', name: 'Spectrum', cost: 700, value: 'rainbow' },
   { id: 'trail-ghost', kind: 'trail', name: 'Ghost', cost: 300, value: 'ghost' },
+  { id: 'trail-dots', kind: 'trail', name: 'Dotted', cost: 150, value: 'dots' },
+  { id: 'trail-double', kind: 'trail', name: 'Racing stripe', cost: 350, value: 'double' },
+  { id: 'trail-neon', kind: 'trail', name: 'Neon', cost: 500, value: 'neon' },
   { id: 'title-none', kind: 'title', name: 'No title', cost: 0, value: '' },
   { id: 'title-student', kind: 'title', name: 'The Student', cost: 50, value: 'The Student' },
   { id: 'title-tangent', kind: 'title', name: 'Off on a Tangent', cost: 250, value: 'Off on a Tangent' },
   { id: 'title-asymptote', kind: 'title', name: 'The Asymptote', cost: 400, value: 'The Asymptote' },
   { id: 'title-qed', kind: 'title', name: 'Q.E.D.', cost: 0, earn: 'campaign-complete', value: 'Q.E.D.' },
   { id: 'title-triple', kind: 'title', name: 'Triple Integral', cost: 0, earn: 'triple-kill', value: 'Triple Integral' },
+  { id: 'title-sincity', kind: 'title', name: 'Sin City', cost: 200, value: 'Sin City' },
+  { id: 'title-integrator', kind: 'title', name: 'The Integrator', cost: 300, value: 'The Integrator' },
+  { id: 'title-prime', kind: 'title', name: 'Prime Suspect', cost: 350, value: 'Prime Suspect' },
+  { id: 'title-limit', kind: 'title', name: 'Knows No Limit', cost: 450, value: 'Knows No Limit' },
   { id: 'blast-ring', kind: 'blast', name: 'Ring', cost: 0, value: 'ring' },
   { id: 'blast-star', kind: 'blast', name: 'Star burst', cost: 250, value: 'star' },
   { id: 'blast-sum', kind: 'blast', name: 'Sigma pop', cost: 500, value: 'sigma' },
+  { id: 'blast-heart', kind: 'blast', name: 'Heart pop', cost: 300, value: 'heart' },
+  { id: 'blast-shock', kind: 'blast', name: 'Shockwave', cost: 350, value: 'shock' },
+  { id: 'blast-pi', kind: 'blast', name: 'Pi pop', cost: 400, value: 'pi' },
+  { id: 'obstacle-candy', kind: 'obstacle', name: 'Candy', cost: 0, value: 'candy' },
+  { id: 'obstacle-moon', kind: 'obstacle', name: 'Moons', cost: 250, value: 'moon' },
+  { id: 'obstacle-bw', kind: 'obstacle', name: 'Black and white', cost: 300, value: 'bw' },
+  { id: 'obstacle-cookies', kind: 'obstacle', name: 'Cookies', cost: 350, value: 'cookies' },
+  { id: 'obstacle-fruit', kind: 'obstacle', name: 'Fruit slices', cost: 400, value: 'fruit' },
+  { id: 'obstacle-pool', kind: 'obstacle', name: 'Pool balls', cost: 450, value: 'pool' },
+  { id: 'obstacle-planets', kind: 'obstacle', name: 'Planets', cost: 600, value: 'planets' },
+  { id: 'obstacle-neon', kind: 'obstacle', name: 'Neon', cost: 650, value: 'neon' },
 ];
 
 export interface Achievement {

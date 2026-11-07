@@ -91,6 +91,7 @@ test('two players can play online, with reconnect', async ({ browser }) => {
   await a.getByRole('button', { name: 'Start match' }).click();
   await expect(a.getByRole('alert')).toContainText('ready');
 
+  await a.getByLabel('Soldiers each').selectOption('2');
   // Host's rule change reaches the other player.
   await a.getByRole('button', { name: 'Free-for-all' }).click();
   await expect(b.getByRole('button', { name: 'Free-for-all' })).toHaveClass(/on/);
@@ -148,8 +149,9 @@ test('a saved replay link really plays a match back to its end', async ({ browse
   const page = await newPlayer(browser, 'Watcher');
   await page.goto(`/#/replay/${data}`);
   await expect(page.locator('.scores')).toContainText('Ana');
-  await expect(page.locator('aside code')).toHaveText('x/9', { timeout: 15_000 });
-  await expect(page.locator('aside code')).toHaveText('sin(x)', { timeout: 25_000 });
+  await expect(page.locator('.last-shot code')).toHaveText('x/9', { timeout: 15_000 });
+  await expect(page.locator('.last-shot code')).toHaveText('sin(x)', { timeout: 25_000 });
+  await expect(page.locator('.history button.shot')).toHaveCount(2);
   await expect(page.getByRole('heading', { name: /broken/ })).toHaveCount(0);
 });
 
@@ -418,13 +420,179 @@ test('two brand-new level 1 accounts can play ranked, and ratings change', async
   }
 });
 
-test('the menu has no Menu button, but other pages do', async ({ browser }) => {
-  const page = await newPlayer(browser, 'Nav');
+test('phones: the menu has no Menu button, but other pages do, and tiles replace the tab bar', async ({ browser }) => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 800 } });
+  const page = await ctx.newPage();
   await page.goto('/#/');
   await expect(page.locator('.hero')).toBeVisible();
   await expect(page.getByRole('link', { name: 'Menu', exact: true })).toHaveCount(0);
+  await expect(page.locator('.sidenav')).toBeHidden();
+  await expect(page.locator('.menu-list .menu-item').first()).toBeVisible();
   await page.goto('/#/shop');
   await expect(page.getByRole('link', { name: 'Menu', exact: true })).toBeVisible();
+});
+
+test('larger screens: a left tab bar replaces the tiles, and steps aside during play', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Tabs');
+  await page.goto('/#/');
+  const nav = page.getByRole('navigation', { name: 'Main' });
+  await expect(nav).toBeVisible();
+  await expect(page.locator('.menu-list')).toBeHidden();
+  for (const name of ['Campaign', 'Daily Challenge', 'Practice', 'Ranked', 'Learn', 'Shop', 'Profile', 'Settings']) {
+    await expect(nav.getByRole('link', { name, exact: true })).toBeVisible();
+  }
+  const box = await nav.boundingBox();
+  expect(box!.x).toBe(0);
+  await nav.getByRole('link', { name: 'Learn', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Learn', exact: true })).toBeVisible();
+  await expect(nav.getByRole('link', { name: 'Learn', exact: true })).toHaveAttribute('aria-current', 'page');
+  await nav.getByRole('link', { name: 'Practice', exact: true }).click();
+  await expect(page.locator('.game canvas')).toBeVisible();
+  await expect(nav).toBeHidden();
+  await page.getByRole('link', { name: 'Menu', exact: true }).click();
+  await expect(nav).toBeVisible();
+});
+
+test('shot history lists shots, rewinds like chess, and returns to live', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Rewind');
+  await page.goto('/#/practice');
+  const history = page.locator('.history');
+  await expect(history).toContainText("Shots appear here");
+  for (const expr of ['x/40', '-x/40']) {
+    await expect(page.locator('#fn-input')).toBeEnabled({ timeout: 25_000 });
+    await fire(page, expr);
+    await expect(page.locator('.last-shot code')).toHaveText(expr);
+    await expect(page.locator('.who')).toHaveText('Your turn', { timeout: 25_000 });
+  }
+  const before = await page.locator('.game canvas').screenshot();
+  await history.locator('button.shot').first().click();
+  await expect(page.locator('.past-banner')).toContainText('shot 1 of');
+  await expect(history.locator('li.current code')).toHaveText('x/40');
+  await page.waitForTimeout(300);
+  const past = await page.locator('.game canvas').screenshot();
+  expect(past.equals(before)).toBe(false);
+  await history.getByRole('button', { name: 'Next shot' }).click();
+  await expect(page.locator('.past-banner')).toContainText('shot 2 of');
+  // Looking back doesn't stop you playing.
+  await expect(page.locator('#fn-input')).toBeEnabled();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.past-banner')).toHaveCount(0);
+  await history.locator('button.shot').first().click();
+  await page.getByRole('button', { name: 'Back to live' }).click();
+  await expect(page.locator('.past-banner')).toHaveCount(0);
+  // Firing while looking back returns to live.
+  await history.locator('button.shot').first().click();
+  await fire(page, 'x/30');
+  await expect(page.locator('.past-banner')).toHaveCount(0);
+});
+
+test('long functions stay inside the Last shot and history boxes', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Long');
+  await page.goto('/#/practice');
+  const long = '0.834*cos(1.852*x+2.085)+x/2.085+0.5*sin(x/3)+0.25*cos(x/5)+x/100+0.1*sin(x/9)';
+  await fire(page, long);
+  await expect(page.locator('.last-shot code')).toHaveText(long);
+  for (const sel of ['.last-shot', '.history']) {
+    const fits = await page.locator(sel).evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      return [...el.querySelectorAll('code')].every((c) => c.getBoundingClientRect().right <= box.right + 0.5) && el.scrollWidth <= el.clientWidth;
+    });
+    expect(fits, sel).toBe(true);
+  }
+});
+
+test('finished matches appear in match history and can be watched', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Historian');
+  await page.addInitScript(() => {
+    Math.random = () => 0.25;
+  });
+  await page.goto('/#/profile');
+  await expect(page.getByText('No matches yet')).toBeVisible();
+  await page.goto('/#/local');
+  await page.getByLabel('Who plays').nth(1).selectOption('hard');
+  await page.getByRole('button', { name: 'Start match' }).click();
+  const over = page.getByRole('heading', { name: /You win|You lose|Draw/ });
+  for (let i = 0; i < 400 && !(await over.isVisible()); i++) {
+    const box = page.locator('#fn-input');
+    if ((await box.count()) && (await box.isEnabled())) await fire(page, 'x/8').catch(() => {});
+    await page.waitForTimeout(250);
+  }
+  await expect(over).toBeVisible();
+  await page.getByRole('link', { name: 'Back to menu' }).click();
+  await page.goto('/#/profile');
+  const row = page.locator('.match').first();
+  await expect(row).toContainText('vs Euler');
+  await expect(row).toContainText('Vs bots');
+  await row.getByRole('link', { name: 'Watch' }).click();
+  await expect(page.getByText('Replay', { exact: true })).toBeVisible();
+  await expect(page.locator('.history button.shot').first()).toBeVisible({ timeout: 20_000 });
+});
+
+test('the shop previews items before buying, including obstacle designs', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Shopper');
+  const errors: string[] = [];
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(m.text());
+  });
+  await page.goto('/#/shop');
+  await expect(page.getByRole('heading', { name: 'Obstacles' })).toBeVisible();
+  const preview = page.locator('.shop-preview');
+  const field = preview.locator('canvas');
+  await expect(preview).toContainText('Previewing: Candy');
+  await page.waitForTimeout(1200);
+  const candy = await field.screenshot();
+  for (const name of ['Planets', 'Black and white', 'Moons', 'Cookies', 'Fruit slices', 'Pool balls']) {
+    await page.getByRole('button', { name: `Preview ${name}` }).click();
+    await expect(preview).toContainText(`Previewing: ${name}`);
+  }
+  await page.getByRole('button', { name: 'Preview Neon' }).first().click();
+  await page.waitForTimeout(600);
+  expect((await field.screenshot()).equals(candy)).toBe(false);
+  await page.getByRole('button', { name: 'Preview Top hat' }).click();
+  await expect(preview).toContainText('Previewing: Top hat');
+  await page.getByRole('button', { name: 'Preview The Integrator' }).click();
+  await expect(preview).toContainText('The Integrator');
+  // Previewing doesn't buy or equip anything.
+  await expect(page.locator('.sparks')).toHaveText('0 Sparks');
+  await page.getByRole('button', { name: /Buy for 600 Sparks/ }).first().click();
+  await expect(page.getByRole('alert')).toContainText('more Sparks');
+  expect(errors).toEqual([]);
+});
+
+test('an owned obstacle design is used on the real field', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.addInitScript(() => {
+    localStorage.setItem('mathbattles.profile.v1', JSON.stringify({ name: 'Rich', analytics: 'no', sparks: 5000 }));
+  });
+  page.on('pageerror', (e) => {
+    throw e;
+  });
+  await page.goto('/#/shop');
+  await page.locator('.item', { hasText: 'Planets' }).getByRole('button', { name: 'Buy for 600 Sparks' }).click();
+  await page.locator('.item', { hasText: 'Planets' }).getByRole('button', { name: 'Equip' }).click();
+  await expect(page.locator('.item', { hasText: 'Planets' }).getByRole('button', { name: 'Equipped' })).toBeVisible();
+  await page.goto('/#/practice');
+  await expect(page.locator('.game canvas')).toBeVisible();
+  await fire(page, '0');
+  await expect(page.locator('.who')).toHaveText('Your turn', { timeout: 25_000 });
+});
+
+test('matches start as 1v1 by default', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Default');
+  await page.goto('/#/local');
+  await expect(page.getByLabel('Soldiers each')).toHaveValue('1');
+  await page.getByRole('button', { name: 'Start match' }).click();
+  await expect(page.locator('.scores')).toContainText('1/1');
+  await page.goto('/#/online');
+  await page.getByRole('button', { name: 'Create private room' }).click();
+  await expect(page.getByLabel('Soldiers each')).toHaveValue('1');
+});
+
+test('public player pages show missing players clearly', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Viewer');
+  await page.goto('/#/player/nobody_here_at_all');
+  await expect(page.getByRole('heading', { name: 'No player found' })).toBeVisible();
 });
 
 test('the 3 UI designs can be swapped in Settings, and the choice sticks', async ({ browser }) => {
@@ -440,8 +608,8 @@ test('the 3 UI designs can be swapped in Settings, and the choice sticks', async
     await expect(page.locator('html')).toHaveAttribute('data-theme', id);
     await expect(picker.getByRole('button', { name: label })).toHaveAttribute('aria-pressed', 'true');
   }
-  await page.waitForTimeout(400);
-  expect(await bg()).not.toBe(paper);
+  // The color fades, and a busy machine can delay that, so wait for it instead of guessing.
+  await expect.poll(bg, { timeout: 10_000 }).not.toBe(paper);
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'blueprint');
   // Every design still draws a working field.
@@ -479,13 +647,34 @@ test('pages change with a fade', async ({ browser }) => {
   await expect(page.getByRole('heading', { name: 'Shop' })).toBeVisible();
 });
 
-test('the layout has no sideways scroll on a phone', async ({ browser }) => {
-  const ctx = await browser.newContext({ viewport: { width: 375, height: 700 } });
-  const page = await ctx.newPage();
-  for (const path of ['/#/', '/#/practice', '/#/campaign', '/#/learn', '/#/shop', '/#/settings', '/#/local', '/#/profile']) {
-    await page.goto(path);
-    await page.waitForTimeout(300);
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-    expect(overflow, path).toBeLessThanOrEqual(0);
-  }
-});
+for (const [name, width, height] of [
+  ['small phone', 320, 568],
+  ['phone', 390, 844],
+  ['phone held sideways', 844, 390],
+  ['tablet', 768, 1024],
+  ['small laptop', 1024, 700],
+  ['desktop', 1440, 900],
+  ['large display', 2560, 1440],
+] as const) {
+  test(`every page fits a ${name} (${width}x${height}) with no sideways scroll`, async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width, height } });
+    const page = await ctx.newPage();
+    await page.addInitScript(() => {
+      if (!localStorage.getItem('mathbattles.profile.v1')) localStorage.setItem('mathbattles.profile.v1', JSON.stringify({ name: 'Fit', analytics: 'no' }));
+    });
+    for (const path of ['/#/', '/#/practice', '/#/campaign', '/#/learn', '/#/shop', '/#/settings', '/#/local', '/#/profile', '/#/online', '/#/ranked', '/#/leaderboard', '/#/signin', '/#/level/0-1', '/#/daily']) {
+      await page.goto(path);
+      await page.waitForTimeout(250);
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(overflow, path).toBeLessThanOrEqual(0);
+    }
+    // The board and the function box must both be reachable, and the board must be usable.
+    await page.goto('/#/practice');
+    // The previous page has a board too, so wait until this one has replaced it.
+    await expect(page.getByRole('button', { name: 'New map' })).toBeVisible();
+    const field = await page.locator('.game canvas').boundingBox();
+    expect(field!.width).toBeGreaterThanOrEqual(Math.min(280, width - 40));
+    await expect(page.locator('#fn-input')).toBeVisible();
+    expect((await page.locator('#fn-input').boundingBox())!.width).toBeGreaterThan(100);
+  });
+}

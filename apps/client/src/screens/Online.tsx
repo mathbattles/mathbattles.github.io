@@ -1,7 +1,8 @@
-import { BOT_LEVELS, MAX_PLAYERS, encodeReplay, isOnWinningSide, makeReplay, type BotLevel, type MatchKind, type MatchState, type ShotMode } from '@mathbattles/sim';
+import { BOT_LEVELS, MAX_PLAYERS, encodeReplay, isOnWinningSide, makeReplay, matchRecordFor, type BotLevel, type MatchKind, type MatchState, type ShotMode } from '@mathbattles/sim';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { authState, useAuth } from '../auth';
 import { NetSession } from '../game/session';
+import { recordMatchHistory } from '../history';
 import { WS_URL, createRoom, listRooms, reportChat, serverReachable, type RoomInfo } from '../net/api';
 import { cosmeticValue, profile, recordMatch } from '../store';
 import { go, modeName } from '../util';
@@ -104,6 +105,13 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
     session.onOver = (state) => {
       setOver(state);
       const me = state.players.find((p) => p.id === session.you);
+      // Signed-in players' matches are saved by the server. Guests keep theirs on this device.
+      if (!authState.user) {
+        void recordMatchHistory(
+          matchRecordFor(state, session.setups, me?.id ?? null, { id: `${code.toUpperCase()}-${state.config.seed}`, at: Date.now(), kind: 'online' }),
+          null,
+        );
+      }
       if (me) {
         setRewards(recordMatch({ won: isOnWinningSide(state, me.id), kills: me.kills, bestCombo: me.bestCombo, online: true, mode: state.config.mode }));
       }
@@ -173,7 +181,7 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
         keepSession
         notice={session.error}
         header={<a class="btn small" href={ranked ? '#/ranked' : '#/online'}>Leave</a>}
-        showFunctions={session.settings?.showFunctions ?? false}
+        hideOthersShots={!(session.settings?.showFunctions ?? false)}
         extraSide={chatPanel}
         result={over ? (
           <ResultCard state={over} viewer={session.you} rewards={rewards} replay={replay}>

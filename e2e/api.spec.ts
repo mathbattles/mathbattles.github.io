@@ -43,8 +43,15 @@ test('private routes need a real login', async ({ request }) => {
   expect((await request.post(`${API}/api/account/claim`, { headers: forged, data: { username: 'stolen' } })).status()).toBe(401);
   expect((await request.post(`${API}/api/account/sync-email`, { headers: forged, data: {} })).status()).toBe(401);
   expect((await request.delete(`${API}/api/account`, { headers: forged })).status()).toBe(401);
+  expect((await request.get(`${API}/api/history`)).status()).toBe(401);
+  expect((await request.post(`${API}/api/history`, { headers: forged, data: { id: 'x' } })).status()).toBe(401);
   // The old route that trusted any email address is gone.
   expect((await request.post(`${API}/api/account/login-email`, { headers: forged, data: { email: 'a@b.co' } })).status()).toBe(401);
+});
+
+test('player pages answer for missing players, even with bad addresses', async ({ request }) => {
+  expect((await request.get(`${API}/api/player/nobody_here_at_all`)).status()).toBe(404);
+  expect((await request.get(`${API}/api/player/%E0%A4%A`)).status()).toBe(404);
 });
 
 test('username checks catch bad, blocked, and valid names', async ({ request }) => {

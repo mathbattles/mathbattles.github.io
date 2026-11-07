@@ -42,6 +42,8 @@ export interface RoomIO {
   botMaxEvals: number;
   onLobbyChange?(info: { players: number; kind: string; mode: string; inLobby: boolean }): void;
   onRankedOver?(winnerSeat: string, loserSeat: string): Promise<number | undefined>;
+  /** Runs once when a match ends, after any rating change is known. */
+  onMatchOver?(state: MatchState, setups: PlayerSetup[], ratingDelta: number | undefined): void;
 }
 
 interface Internal extends Seat {
@@ -413,6 +415,7 @@ export class RoomCore {
     const send = (ratingDelta?: number) => {
       this.finalMsg = { t: 'over', state, setups, ratingDelta };
       this.broadcast(this.finalMsg);
+      this.io.onMatchOver?.(state, setups, ratingDelta);
     };
     if (this.ranked && this.io.onRankedOver && state.winner !== null) {
       const winner = state.players.find((p) => p.team === state.winner);

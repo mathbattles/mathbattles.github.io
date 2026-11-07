@@ -1,6 +1,7 @@
 import { MIN_PASSWORD, loginEmailFor, usernameProblem } from '@mathbattles/sim';
 import { useEffect, useState } from 'preact/hooks';
 import { claimUsername, deleteAccountData, pullProfile, pushProfile, resolveLogin, syncEmail, usernameAvailable } from './net/api';
+import { uploadPending } from './history';
 import { mergeCloud, profile, releaseOwner, resetToGuest, saveProfile, setSyncHook, type Profile } from './store';
 
 /** This config identifies the Firebase project and is meant to be public. */
@@ -150,6 +151,8 @@ async function loadCloud(uid: string, token: string): Promise<boolean> {
   // Combined progress may differ from both copies, so save the result.
   void pushProfile(token, profile);
   void syncEmail(token);
+  // Matches played as a guest come along, the same way guest progress does.
+  void uploadPending(token);
   return true;
 }
 
