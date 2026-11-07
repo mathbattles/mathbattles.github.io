@@ -119,11 +119,18 @@ export function Settings() {
     <div class="page">
       <TopBar title="Settings" />
       <div class="sheet">
-        <h3>Arena theme</h3>
-        <p>Themes only change how the field looks.</p>
-        <div class="row">
+        <h3>UI design</h3>
+        <p>Changes the look of the whole game. It doesn't affect how anything plays.</p>
+        <div class="designs" role="group" aria-label="UI design">
           {(Object.keys(THEMES) as ThemeId[]).map((t) => (
-            <button class={profile.theme === t ? 'on' : ''} onClick={() => setTheme(t)}>{THEMES[t].name}</button>
+            <button
+              class={`design ${profile.theme === t ? 'on' : ''}`}
+              aria-pressed={profile.theme === t}
+              onClick={() => setTheme(t)}
+            >
+              <span class="swatch" style={{ '--sw-page': THEMES[t].swatch.page, '--sw-line': THEMES[t].swatch.line, '--sw-ink': THEMES[t].swatch.ink }} />
+              <span class="label">{THEMES[t].name}</span>
+            </button>
           ))}
         </div>
       </div>

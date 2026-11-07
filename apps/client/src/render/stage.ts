@@ -1,15 +1,16 @@
 import { BLAST_R, DRAW_STEPS_PER_SEC, NEXT_TURN_DELAY_MS, PLANE_H, PLANE_W, PX_PER_UNIT, SOLDIER_R, TELEPORT_RADIUS, type Circle, type MatchState, type ShotRecord } from '@mathbattles/sim';
 import { drawHat } from './doodles';
 
-export type ThemeId = 'arena' | 'paper' | 'chalk' | 'blueprint';
+export type ThemeId = 'paper' | 'chalk' | 'blueprint';
 
 export interface Theme {
   name: string;
+  /** Colors for the small preview in Settings. */
+  swatch: { page: string; line: string; ink: string };
   bg: string;
   grid: string;
   axis: string;
   label: string;
-  rocks: { fill: string; rim: string; spot: string }[];
   biteEdge: string;
   team1: string;
   team2: string;
@@ -17,29 +18,27 @@ export interface Theme {
   smoke: string;
 }
 
+/** Obstacles look the same in every design. */
+const ROCKS = [
+  { fill: '#f7d65c', rim: '#d9a92a', spot: '#e6bb3a' },
+  { fill: '#6fb7f2', rim: '#3e86cf', spot: '#529fe0' },
+];
+
 export const THEMES: Record<ThemeId, Theme> = {
-  arena: {
-    name: 'Arena', bg: '#f6f6ff', grid: '#dcdff6', axis: '#6a6fc9', label: '#7d82cf',
-    rocks: [
-      { fill: '#f7d65c', rim: '#d9a92a', spot: '#e6bb3a' },
-      { fill: '#6fb7f2', rim: '#3e86cf', spot: '#529fe0' },
-    ],
+  paper: {
+    name: 'Graph Paper', swatch: { page: '#eef0fb', line: '#cfd3f0', ink: '#2b2f7a' },
+    bg: '#fbfbff', grid: '#dcdff6', axis: '#2b2f7a', label: '#5d62a0',
     biteEdge: '#00000055', team1: '#2b50e8', team2: '#ee3a57', mark: '#ffd33d', smoke: '#30304a',
   },
-  paper: {
-    name: 'Graph Paper', bg: '#f2faf6', grid: '#bfe0d6', axis: '#1c3a8c', label: '#4a5f9e',
-    rocks: [{ fill: '#4b5463', rim: '#2c323c', spot: '#5d6778' }],
-    biteEdge: '#00000066', team1: '#1c3a8c', team2: '#d62f3a', mark: '#f7e64a', smoke: '#38404c',
-  },
   chalk: {
-    name: 'Chalkboard', bg: '#22423a', grid: '#35594f', axis: '#eef3e6', label: '#b9cdbf',
-    rocks: [{ fill: '#10241c', rim: '#51736a', spot: '#1d3a2f' }],
-    biteEdge: '#ffffff33', team1: '#9ad8ff', team2: '#ffb0a8', mark: '#f7e64a', smoke: '#d8e4dc',
+    name: 'Chalkboard', swatch: { page: '#22423a', line: '#2f5449', ink: '#f2f6ea' },
+    bg: '#22423a', grid: '#35594f', axis: '#eef3e6', label: '#b9cdbf',
+    biteEdge: '#00000066', team1: '#9ad8ff', team2: '#ffb0a8', mark: '#ffd33d', smoke: '#d8e4dc',
   },
   blueprint: {
-    name: 'Blueprint', bg: '#143a78', grid: '#28539a', axis: '#e8f1ff', label: '#b7cdf2',
-    rocks: [{ fill: '#0a2147', rim: '#6e94d1', spot: '#123066' }],
-    biteEdge: '#ffffff33', team1: '#fff27a', team2: '#ff9e8a', mark: '#ffffff', smoke: '#d6e4ff',
+    name: 'Blueprint', swatch: { page: '#143a78', line: '#22508f', ink: '#eef4ff' },
+    bg: '#143a78', grid: '#28539a', axis: '#e8f1ff', label: '#b7cdf2',
+    biteEdge: '#00000066', team1: '#fff27a', team2: '#ff9e8a', mark: '#ffffff', smoke: '#d6e4ff',
   },
 };
 
@@ -124,7 +123,7 @@ export class Stage {
   private lastNow = 0;
 
   state: MatchState | null = null;
-  themeId: ThemeId = 'arena';
+  themeId: ThemeId = 'paper';
   mirror = false;
   looks: Record<string, StageLook> = {};
   private soldiers: { id: number; x: number; y: number; alive: boolean; playerId: string; angle: number; flown: boolean; bornAt: number }[] = [];
@@ -285,12 +284,11 @@ export class Stage {
   }
 
   private rockColorAt(x: number, y: number): string {
-    const theme = THEMES[this.themeId];
     for (let i = this.circles.length - 1; i >= 0; i--) {
       const c = this.circles[i]!;
-      if (Math.hypot(c.x - x, c.y - y) <= c.r + 4) return theme.rocks[i % theme.rocks.length]!.fill;
+      if (Math.hypot(c.x - x, c.y - y) <= c.r + 4) return ROCKS[i % ROCKS.length]!.fill;
     }
-    return theme.smoke;
+    return THEMES[this.themeId].smoke;
   }
 
   private drawTerrain(theme: Theme): void {
@@ -299,7 +297,7 @@ export class Stage {
     c.clearRect(0, 0, PLANE_W, PLANE_H);
     c.globalCompositeOperation = 'source-over';
     this.circles.forEach((o, i) => {
-      const look = theme.rocks[i % theme.rocks.length]!;
+      const look = ROCKS[i % ROCKS.length]!;
       const x = this.px(o.x);
       c.save();
       c.beginPath();
@@ -379,7 +377,7 @@ export class Stage {
     c.lineTo(cx, PLANE_H);
     c.stroke();
     c.fillStyle = theme.label;
-    c.font = '500 11px Fredoka, sans-serif';
+    c.font = '11px "Shantell Sans", sans-serif';
     c.textAlign = 'center';
     c.textBaseline = 'top';
     for (let u = -20; u <= 20; u += 5) {
@@ -448,98 +446,61 @@ export class Stage {
     c.restore();
   }
 
-  private drawBody(c: CanvasRenderingContext2D, x: number, y: number, color: string, facing: number, theme: Theme): void {
-    // A chunky little figure: square head, block body, two legs.
-    c.lineWidth = 1.6;
-    c.strokeStyle = '#1d1d3a';
+  /** The soldier: a round head with two eyes, facing the enemy side. */
+  private drawFigure(c: CanvasRenderingContext2D, x: number, y: number, color: string, facing: number, bg: string): void {
+    c.fillStyle = bg;
+    c.strokeStyle = color;
+    c.lineWidth = 2.4;
+    c.beginPath();
+    c.arc(x, y, SOLDIER_R, 0, Math.PI * 2);
+    c.fill();
+    c.stroke();
     c.fillStyle = color;
     c.beginPath();
-    c.roundRect(x - 2.7, y + 6, 2.2, 3, 0.6);
-    c.roundRect(x + 0.5, y + 6, 2.2, 3, 0.6);
+    c.arc(x + facing * 2.6, y - 1.5, 1.3, 0, Math.PI * 2);
+    c.arc(x - facing * 0.8, y - 1.5, 1.3, 0, Math.PI * 2);
     c.fill();
-    c.beginPath();
-    c.roundRect(x - 3.8, y + 1, 7.6, 5.6, 1.4);
-    c.fill();
-    c.stroke();
-    c.fillStyle = '#ffe0b8';
-    c.beginPath();
-    c.roundRect(x - 4.4, y - 6.4, 8.8, 8, 2.2);
-    c.fill();
-    c.stroke();
-    c.fillStyle = '#1d1d3a';
-    c.beginPath();
-    c.arc(x + facing * 2.4, y - 2.8, 1.05, 0, Math.PI * 2);
-    c.arc(x - facing * 0.6, y - 2.8, 1.05, 0, Math.PI * 2);
-    c.fill();
-    void theme;
   }
 
   private drawSoldier(c: CanvasRenderingContext2D, s: Stage['soldiers'][number], now: number, theme: Theme): void {
     const owner = this.state?.players.find((p) => p.id === s.playerId);
     const color = owner?.team === 2 ? theme.team2 : theme.team1;
     const x = this.px(s.x);
+    const y = s.y;
     if (!s.alive) {
       // A faint marker where they fell.
       c.save();
-      c.globalAlpha = 0.28;
+      c.globalAlpha = 0.35;
       c.strokeStyle = color;
-      c.lineWidth = 2.4;
-      c.lineCap = 'round';
+      c.lineWidth = 2;
       c.beginPath();
-      c.moveTo(x - 5, s.y - 5);
-      c.lineTo(x + 5, s.y + 5);
-      c.moveTo(x + 5, s.y - 5);
-      c.lineTo(x - 5, s.y + 5);
+      c.moveTo(x - 5, y - 5);
+      c.lineTo(x + 5, y + 5);
+      c.moveTo(x + 5, y - 5);
+      c.lineTo(x - 5, y + 5);
       c.stroke();
       c.restore();
       return;
     }
-    const still = reducedMotion();
-    const active = s.id === this.activeSoldierId;
-    const y = s.y + (still ? 0 : Math.sin(now / 420 + s.id * 1.7) * (active ? 1.1 : 0.5));
-    const facing = this.mirror ? (owner?.team === 2 ? 1 : -1) : owner?.team === 2 ? -1 : 1;
-    if (active) {
-      const pulse = still ? 0 : (Math.sin(now / 240) + 1) * 2.2;
+    if (s.id === this.activeSoldierId) {
+      const pulse = reducedMotion() ? 0 : (Math.sin(now / 240) + 1) * 1.6;
       c.fillStyle = theme.mark;
-      c.globalAlpha = 0.45;
+      c.globalAlpha = 0.75;
       c.beginPath();
-      c.arc(x, s.y, SOLDIER_R + 7 + pulse, 0, Math.PI * 2);
+      c.arc(x, y, SOLDIER_R + 7 + pulse, 0, Math.PI * 2);
       c.fill();
       c.globalAlpha = 1;
-      c.strokeStyle = theme.mark;
-      c.lineWidth = 2.2;
-      c.beginPath();
-      c.arc(x, s.y, SOLDIER_R + 7 + pulse, 0, Math.PI * 2);
-      c.stroke();
     }
-    this.drawBody(c, x, y, color, facing, theme);
-    drawHat(c, this.looks[s.playerId]?.hat ?? 'none', x, y - 6.4, color);
-    if (active) {
-      const by = s.y - SOLDIER_R - 26 + (still ? 0 : Math.sin(now / 200) * 2.5);
-      c.fillStyle = theme.mark;
-      c.strokeStyle = '#1d1d3a';
-      c.lineWidth = 1.5;
-      c.beginPath();
-      c.moveTo(x - 6, by);
-      c.lineTo(x + 6, by);
-      c.lineTo(x, by + 8);
-      c.closePath();
-      c.fill();
-      c.stroke();
-    }
+    const facing = this.mirror ? (owner?.team === 2 ? 1 : -1) : owner?.team === 2 ? -1 : 1;
+    this.drawFigure(c, x, y, color, facing, theme.bg);
+    drawHat(c, this.looks[s.playerId]?.hat ?? 'none', x, y - SOLDIER_R + 1, color);
     if (owner && owner.soldierIds[0] === s.id && owner.name) {
-      c.font = '600 11px Fredoka, sans-serif';
-      const w = c.measureText(owner.name).width + 10;
-      const nx = Math.max(w / 2 + 2, Math.min(PLANE_W - w / 2 - 2, x));
-      const ny = Math.max(10, s.y - SOLDIER_R - 15);
-      c.fillStyle = '#1d1d3acc';
-      c.beginPath();
-      c.roundRect(nx - w / 2, ny - 7, w, 14, 7);
-      c.fill();
-      c.fillStyle = '#ffffff';
+      c.font = '600 11px "Shantell Sans", sans-serif';
       c.textAlign = 'center';
-      c.textBaseline = 'middle';
-      c.fillText(owner.name, nx, ny);
+      c.textBaseline = 'bottom';
+      c.fillStyle = color;
+      // Keep names inside the field near its edges and top.
+      c.fillText(owner.name, Math.max(34, Math.min(PLANE_W - 34, x)), Math.max(14, y - SOLDIER_R - 9));
     }
   }
 
@@ -675,8 +636,8 @@ export class Stage {
       c.save();
       c.translate(this.px(f.x), f.y);
       c.rotate(f.angle);
-      this.drawBody(c, 0, 0, f.color, 1, THEMES[this.themeId]);
-      drawHat(c, f.hat, 0, -6.4, f.color);
+      this.drawFigure(c, 0, 0, f.color, 1, THEMES[this.themeId].bg);
+      drawHat(c, f.hat, 0, -SOLDIER_R + 1, f.color);
       c.restore();
     }
 
@@ -697,7 +658,7 @@ export class Stage {
         }
         c.stroke();
       } else if (b.style === 'sigma') {
-        c.font = `700 ${Math.round(b.r * 2.4 + 40 * t)}px Fredoka, sans-serif`;
+        c.font = `700 ${Math.round(b.r * 2.4 + 40 * t)}px "Shantell Sans", sans-serif`;
         c.textAlign = 'center';
         c.textBaseline = 'middle';
         c.fillText('Σ', x, b.y);
@@ -718,7 +679,7 @@ export class Stage {
       const px = Math.max(size * 1.4, Math.min(PLANE_W - size * 1.4, f.x));
       const py = Math.max(size, f.y - t * 26);
       c.globalAlpha = t > 0.75 ? (1 - t) / 0.25 : 1;
-      c.font = `700 ${size}px Fredoka, sans-serif`;
+      c.font = `700 ${size}px "Shantell Sans", sans-serif`;
       c.textAlign = 'center';
       c.textBaseline = 'middle';
       c.lineJoin = 'round';

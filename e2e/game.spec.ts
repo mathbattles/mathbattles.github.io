@@ -21,6 +21,10 @@ const fire = async (page: Page, expr: string) => {
 
 test('a whole match against a bot can be finished, and pays rewards', async ({ browser }) => {
   const page = await newPlayer(browser, 'Solo');
+  // A fixed map keeps this repeatable: on some random maps a bot can miss for minutes.
+  await page.addInitScript(() => {
+    Math.random = () => 0.25;
+  });
   await page.goto('/#/local');
   await page.getByLabel('Who plays').nth(1).selectOption('hard');
   await page.getByLabel('Soldiers each').selectOption('1');
@@ -266,6 +270,52 @@ test('two brand-new level 1 accounts can play ranked, and ratings change', async
     await removeAccount(nameA).catch(() => {});
     await removeAccount(nameB).catch(() => {});
   }
+});
+
+test('the menu has no Menu button, but other pages do', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Nav');
+  await page.goto('/#/');
+  await expect(page.locator('.hero')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Menu', exact: true })).toHaveCount(0);
+  await page.goto('/#/shop');
+  await expect(page.getByRole('link', { name: 'Menu', exact: true })).toBeVisible();
+});
+
+test('the 3 UI designs can be swapped in Settings, and the choice sticks', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Designer');
+  await page.goto('/#/settings');
+  const picker = page.getByRole('group', { name: 'UI design' });
+  await expect(picker.getByRole('button')).toHaveCount(3);
+  const bg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'paper');
+  const paper = await bg();
+  for (const [label, id] of [['Chalkboard', 'chalk'], ['Blueprint', 'blueprint']] as const) {
+    await picker.getByRole('button', { name: label }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', id);
+    await expect(picker.getByRole('button', { name: label })).toHaveAttribute('aria-pressed', 'true');
+  }
+  await page.waitForTimeout(400);
+  expect(await bg()).not.toBe(paper);
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'blueprint');
+  // Every design still draws a working field.
+  await page.goto('/#/level/0-1');
+  await fire(page, '0');
+  await expect(page.getByRole('heading', { name: /Level cleared/ })).toBeVisible({ timeout: 20_000 });
+});
+
+test('old saves naming the removed design load safely', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.addInitScript(() => {
+    localStorage.setItem('mathbattles.profile.v1', JSON.stringify({ name: 'Old', analytics: 'no', theme: 'arena', lookVersion: 2 }));
+  });
+  page.on('pageerror', (e) => {
+    throw e;
+  });
+  await page.goto('/#/practice');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'paper');
+  await expect(page.locator('.game canvas')).toBeVisible();
 });
 
 test('pages change with a fade', async ({ browser }) => {

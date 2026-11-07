@@ -2,7 +2,7 @@ import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import './styles.css';
 import { initAuth, setAnalyticsConsent } from './auth';
-import { profile } from './store';
+import { profile, subscribeProfile } from './store';
 import { useProfile } from './screens/Shared';
 import { Menu } from './screens/Menu';
 import { LocalSetup, Practice } from './screens/Local';
@@ -94,6 +94,12 @@ function App() {
     </>
   );
 }
+
+function applyDesign(): void {
+  document.documentElement.dataset.theme = profile.theme;
+}
+applyDesign();
+subscribeProfile(applyDesign);
 
 render(<App />, document.getElementById('app')!);
 void initAuth();

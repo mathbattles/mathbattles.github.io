@@ -87,7 +87,7 @@ function HeroDemo() {
   return (
     <div class="hero">
       <canvas ref={ref} width={770} height={450} aria-hidden="true" />
-      <h1>MathBattles.io</h1>
+      <h1><span>MathBattles.io</span></h1>
       <p class="tag" ref={caption}>Type a function. Your shot follows its graph.</p>
     </div>
   );
@@ -107,7 +107,7 @@ export function Menu() {
   const newPlayer = Object.keys(profile.stars).length === 0 && profile.matches === 0;
   return (
     <div class="page">
-      <TopBar />
+      <TopBar home />
       <HeroDemo />
       <div class="menu-main">
         {newPlayer ? (

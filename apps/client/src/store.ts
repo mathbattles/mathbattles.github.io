@@ -49,6 +49,18 @@ function randomToken(): string {
   return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+const LOOK_VERSION = 3;
+const DESIGNS: readonly ThemeId[] = ['paper', 'chalk', 'blueprint'];
+
+/** Old saves, local or from the cloud, can name a design that's gone. */
+function normalizeLook(p: Profile): void {
+  if (p.lookVersion !== LOOK_VERSION) {
+    if (p.lookVersion === 2 || !DESIGNS.includes(p.theme)) p.theme = 'paper';
+    p.lookVersion = LOOK_VERSION;
+  }
+  if (!DESIGNS.includes(p.theme)) p.theme = 'paper';
+}
+
 function fresh(): Profile {
   return {
     name: `Player${Math.floor(Math.random() * 9000 + 1000)}`,
@@ -72,8 +84,8 @@ function fresh(): Profile {
     kills: 0,
     bestCombo: 0,
     ability: 'teleport',
-    theme: 'arena',
-    lookVersion: 2,
+    theme: 'paper',
+    lookVersion: LOOK_VERSION,
     muted: false,
     chatOff: false,
     analytics: 'unset',
@@ -84,7 +96,6 @@ function fresh(): Profile {
 function load(): Profile {
   try {
     const raw = localStorage.getItem(KEY);
-    // Saves from before lookVersion existed count as version 1, so they get the new look once.
     if (raw) return { ...fresh(), lookVersion: 1, ...(JSON.parse(raw) as Partial<Profile>) };
   } catch {
     /* private mode or corrupt data: start fresh */
@@ -93,10 +104,7 @@ function load(): Profile {
 }
 
 export const profile: Profile = load();
-if (profile.lookVersion !== 2) {
-  profile.theme = 'arena';
-  profile.lookVersion = 2;
-}
+normalizeLook(profile);
 // Save right away: the guest token must stay the same across reloads, or a player loses their seat.
 try {
   localStorage.setItem(KEY, JSON.stringify(profile));
@@ -131,6 +139,7 @@ export function mergeCloud(cloud: Partial<Profile>): void {
   const keepToken = profile.guestToken;
   if ((cloud.updatedAt ?? 0) > profile.updatedAt) Object.assign(profile, cloud);
   profile.guestToken = keepToken;
+  normalizeLook(profile);
   saveProfile();
 }
 
