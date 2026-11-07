@@ -486,19 +486,6 @@ export const UNITS: Unit[] = [
         ],
       },
       {
-        id: 'abilities',
-        title: 'Abilities',
-        blurb: 'Teleport and Missile, in matches that use them.',
-        blocks: [
-          { t: 'p', text: 'Some rooms turn abilities on. You pick one in Settings. Each enemy you hit adds 1 charge, and using an ability costs 2.' },
-          { t: 'table', rows: [
-            ['Teleport', 'Move your soldier a short distance, then still take your shot. Good for reaching a clear line, or escaping.'],
-            ['Missile', 'Your next shot\'s explosion is 3 times wider, and it also hits soldiers inside it. Good for near misses and for clearing rock.'],
-          ] },
-          { t: 'quiz', id: 'abilities-q', q: 'How do you charge an ability?', options: ['Wait 3 turns', 'Hit enemies', 'Buy it in the shop'], answer: 1, why: 'Each enemy hit adds 1 charge, and an ability costs 2. Everything in the shop is cosmetic.' },
-        ],
-      },
-      {
         id: 'winning',
         title: 'A routine for every turn',
         blurb: 'Plus the cheat sheet to keep.',
@@ -541,7 +528,7 @@ export const UNITS: Unit[] = [
         title: 'The final test',
         blurb: 'Six shots, with no preview.',
         blocks: [
-          { t: 'p', text: 'These cover the whole course. You have no preview, the same as a real match. The hints are there if you need them. When you pass these, you\'re ready.' },
+          { t: 'p', text: 'These cover the whole course. The preview is hidden here, so you prove you can read the board yourself. Real matches show it, but it only covers the start of a shot. The hints are there if you need them. When you pass these, you\'re ready.' },
           { t: 'challenge', id: 'final-1', title: 'A clean line', task: 'Read the positions, and work out the slope.', mode: 'fn', solution: '0.3*x', from: [-20, -5], hits: [10], hints: ['Up 9, across 30.', 'Type 0.3*x'] },
           { t: 'challenge', id: 'final-2', title: 'Over the top', task: 'Something is in the way. Arc over it.', mode: 'fn', solution: '-(x+3)^2/50', from: [-16, -6], hits: [10], rocks: [[-3, -4, 2.5]], blocksStraight: true, hints: ['An upside-down parabola, with its top near x = -3.', 'Type -(x+3)^2/50'] },
           { t: 'challenge', id: 'final-3', title: 'Don\'t hit your friend', task: 'Take both targets without touching your teammate.', mode: 'fn', solution: 'x/4+3*sin(x/2)', from: [-20, -5], hits: [-8, 9], friends: [[0, 5]], hints: ['A line plus a wave.', 'Try x/4 for the climb.', 'Type x/4+3*sin(x/2)'] },

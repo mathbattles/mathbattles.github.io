@@ -7,7 +7,6 @@ import {
   RuleError,
   Terrain,
   applyAction,
-  armMissile,
   createMatch,
   createSolo,
   currentPlayer,
@@ -19,7 +18,6 @@ import {
   soloHitFriend,
   soloNext,
   terrainOf,
-  useTeleport,
   type BotLevel,
   type BotMove,
   type ChatLine,
@@ -52,7 +50,6 @@ export abstract class GameSession {
   startsAt: number | null = null;
   busy = false;
   stage: Stage | null = null;
-  preview = false;
   showTimer = true;
   chat: ChatLine[] = [];
   private listeners = new Set<() => void>();
@@ -71,8 +68,6 @@ export abstract class GameSession {
   abstract canAct(): boolean;
   abstract viewerId(): string;
   abstract fire(args: FireArgs): void;
-  abstract teleport(x: number, y: number): void;
-  abstract missile(): void;
   skipVote(): void {}
   sendChat(_text: string): void {}
   attach(stage: Stage): void {
@@ -122,12 +117,11 @@ export class LocalSession extends GameSession {
   private disposed = false;
   readonly setups: PlayerSetup[];
 
-  constructor(config: MatchConfig, setups: PlayerSetup[], opts: { preview?: boolean; noTimer?: boolean } = {}) {
+  constructor(config: MatchConfig, setups: PlayerSetup[], opts: { noTimer?: boolean } = {}) {
     super();
     this.setups = setups;
     this.state = createMatch(config, setups);
     this.terrain = terrainOf(this.state);
-    this.preview = !!opts.preview;
     this.showTimer = !opts.noTimer;
     this.lastHuman = setups.find((s) => !s.isBot)?.id ?? setups[0]!.id;
   }
@@ -195,15 +189,6 @@ export class LocalSession extends GameSession {
     if (this.stage) this.stage.state = this.state;
   }
 
-  teleport(x: number, y: number): void {
-    useTeleport(this.state, currentPlayer(this.state).id, x, y, this.terrain);
-    this.stage?.sync(this.state);
-    this.emit();
-  }
-  missile(): void {
-    armMissile(this.state, currentPlayer(this.state).id);
-    this.emit();
-  }
   override skipVote(): void {
     // All local players agree by definition.
     this.state = createMatch({ ...this.state.config, seed: (Math.random() * 2 ** 31) >>> 0 }, this.setups);
@@ -231,11 +216,10 @@ export class SoloSession extends GameSession {
   outcome: SoloOutcome | null = null;
   onFinish?: (o: SoloOutcome) => void;
 
-  constructor(private def: SoloDef, private opts: { maxShots?: number; preview?: boolean; endless?: () => SoloDef } = {}) {
+  constructor(private def: SoloDef, private opts: { maxShots?: number; endless?: () => SoloDef } = {}) {
     super();
     this.state = createSolo(def);
     this.terrain = terrainOf(this.state);
-    this.preview = !!opts.preview;
     this.showTimer = false;
   }
   get maxShots(): number | undefined {
@@ -286,8 +270,6 @@ export class SoloSession extends GameSession {
     this.stage?.sync(this.state);
     this.emit();
   }
-  teleport(): void {}
-  missile(): void {}
 }
 
 /** Watches a stored match play back through the normal rules. */
@@ -310,8 +292,6 @@ export class ReplaySession extends GameSession {
     return this.state.players[0]!.id;
   }
   fire(): void {}
-  teleport(): void {}
-  missile(): void {}
   get progress(): string {
     return `Action ${Math.min(this.index, this.replay.actions.length)} of ${this.replay.actions.length}`;
   }
@@ -556,12 +536,6 @@ export class NetSession extends GameSession {
   }
   fire(args: FireArgs): void {
     this.send({ t: 'fire', expr: args.expr, angle: args.angle, dir: args.dir });
-  }
-  teleport(x: number, y: number): void {
-    this.send({ t: 'teleport', x, y });
-  }
-  missile(): void {
-    this.send({ t: 'missile' });
   }
   override skipVote(): void {
     this.send({ t: 'skipVote' });

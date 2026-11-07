@@ -1,20 +1,14 @@
 import { BLAST_R, DEFAULT_SOLDIERS, MAX_PLAYERS, MAX_SOLDIERS, PLANE_H, PLANE_W, SOLDIER_R, type Dir, type ShotMode } from './constants';
-import { generateCircles, placeSoldiers, spotIsClear, type SpawnSlot } from './map';
+import { generateCircles, placeSoldiers, type SpawnSlot } from './map';
 import { Rng } from './rng';
 import { Terrain, type Circle } from './terrain';
 import { simulateShot, type EndReason, type ShotResult } from './trajectory';
 
 export type MatchKind = 'teams' | 'ffa';
-export type AbilityId = 'teleport' | 'missile';
-
-export const ABILITY_COST = 2;
-export const TELEPORT_RADIUS = 120;
-export const MISSILE_BLAST_R = BLAST_R * 3;
 
 export interface MatchConfig {
   kind: MatchKind;
   mode: ShotMode;
-  abilities: boolean;
   soldiers: number;
   seed: number;
 }
@@ -24,7 +18,6 @@ export interface PlayerSetup {
   name: string;
   /** 1 or 2 in team matches. Ignored in free-for-all. */
   team: 1 | 2;
-  ability?: AbilityId;
   isBot?: boolean;
   botLevel?: string;
 }
@@ -32,8 +25,6 @@ export interface PlayerSetup {
 export interface Player extends PlayerSetup {
   soldierIds: number[];
   nextSoldier: number;
-  charge: number;
-  missileArmed: boolean;
   connected: boolean;
   kills: number;
   deaths: number;
@@ -63,14 +54,10 @@ export interface ShotRecord {
   reason: EndReason;
   end: { x: number; y: number };
   hits: { id: number; step: number }[];
-  blastR: number;
-  blastKills: number[];
 }
 
 export type MatchEvent =
   | { type: 'shot'; shot: ShotRecord }
-  | { type: 'teleport'; playerId: string; soldierId: number; x: number; y: number; fromX?: number; fromY?: number }
-  | { type: 'missile'; playerId: string }
   | { type: 'timeout'; playerId: string }
   | { type: 'leave'; playerId: string; removed?: number[] };
 
@@ -124,8 +111,6 @@ export function createMatch(config: MatchConfig, setups: PlayerSetup[]): MatchSt
       ...p,
       soldierIds: ids,
       nextSoldier: 0,
-      charge: 0,
-      missileArmed: false,
       connected: true,
       kills: 0,
       deaths: 0,
@@ -239,17 +224,6 @@ export function fire(
     targets: livingTargets(state, shooter.id),
   });
 
-  const blastR = player.missileArmed ? MISSILE_BLAST_R : BLAST_R;
-  const blastKills: number[] = [];
-  if (player.missileArmed) {
-    player.missileArmed = false;
-    const already = new Set(result.hits.map((h) => h.id));
-    for (const s of state.soldiers) {
-      if (!s.alive || s.id === shooter.id || already.has(s.id)) continue;
-      if (Math.hypot(s.x - result.end.x, s.y - result.end.y) <= blastR) blastKills.push(s.id);
-    }
-  }
-
   const record: ShotRecord = {
     playerId,
     soldierId: shooter.id,
@@ -263,14 +237,12 @@ export function fire(
     reason: result.reason,
     end: result.end,
     hits: result.hits,
-    blastR,
-    blastKills,
   };
 
   shooter.angle = result.angle;
   player.shots++;
-  applyKills(state, player, [...result.hits.map((h) => h.id), ...blastKills]);
-  const hole = { x: result.end.x, y: result.end.y, r: blastR };
+  applyKills(state, player, result.hits.map((h) => h.id));
+  const hole = { x: result.end.x, y: result.end.y, r: BLAST_R };
   state.holes.push(hole);
   terrain.carve(hole.x, hole.y, hole.r);
   state.log.push({ type: 'shot', shot: record });
@@ -293,52 +265,6 @@ function applyKills(state: MatchState, shooter: Player, ids: number[]): void {
     }
   }
   shooter.bestCombo = Math.max(shooter.bestCombo, enemyHits);
-  if (state.config.abilities) shooter.charge += enemyHits;
-}
-
-export function useTeleport(
-  state: MatchState,
-  playerId: string,
-  x: number,
-  y: number,
-  terrain: Terrain = terrainOf(state),
-): void {
-  assertTurn(state, playerId);
-  const player = currentPlayer(state);
-  requireAbility(state, player, 'teleport');
-  const s = currentSoldier(state)!;
-  const inField = x >= SOLDIER_R && x <= PLANE_W - SOLDIER_R && y >= SOLDIER_R && y <= PLANE_H - SOLDIER_R;
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !inField) throw new RuleError('Choose a spot inside the field');
-  if (Math.hypot(s.x - x, s.y - y) > TELEPORT_RADIUS) throw new RuleError('That spot is too far away');
-  if (!spotIsClear(x, y, (px, py) => terrain.solidAt(px, py))) throw new RuleError("You can't stand there");
-  if (state.soldiers.some((o) => o.alive && o.id !== s.id && Math.hypot(o.x - x, o.y - y) < 20)) {
-    throw new RuleError('Too close to another soldier');
-  }
-  if (state.config.kind === 'teams' && (x < 385) !== (s.x < 385)) {
-    throw new RuleError('Stay on your side of the field');
-  }
-  player.charge -= ABILITY_COST;
-  const fromX = s.x;
-  const fromY = s.y;
-  s.x = Math.round(x);
-  s.y = Math.round(y);
-  state.log.push({ type: 'teleport', playerId, soldierId: s.id, x: s.x, y: s.y, fromX, fromY });
-}
-
-export function armMissile(state: MatchState, playerId: string): void {
-  assertTurn(state, playerId);
-  const player = currentPlayer(state);
-  requireAbility(state, player, 'missile');
-  if (player.missileArmed) throw new RuleError('Missile is already armed');
-  player.charge -= ABILITY_COST;
-  player.missileArmed = true;
-  state.log.push({ type: 'missile', playerId });
-}
-
-function requireAbility(state: MatchState, player: Player, id: AbilityId): void {
-  if (!state.config.abilities) throw new RuleError('Abilities are off in this match');
-  if (player.ability !== id) throw new RuleError('That ability is not equipped');
-  if (player.charge < ABILITY_COST) throw new RuleError('Not charged yet');
 }
 
 /** The current player ran out of time. */

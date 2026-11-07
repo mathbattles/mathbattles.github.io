@@ -22,9 +22,7 @@ import {
   COSMETICS,
   terrainOf,
   validate,
-  armMissile,
   removePlayer,
-  useTeleport,
 } from '@mathbattles/sim';
 import { LESSONS, ME, challengeState, requiredIds, type Challenge } from '../src/content/learn';
 import { mergeProgress } from '../src/profileMerge';
@@ -83,13 +81,16 @@ describe('daily challenge', () => {
   });
 });
 
+/** Links number the players instead of storing their ids, so compare soldiers by position. */
+const board = (soldiers: { x: number; y: number; alive: boolean; angle: number }[]) => soldiers.map(({ x, y, alive, angle }) => ({ x, y, alive, angle }));
+
 describe('replays', () => {
   it('survive the link format and rebuild the same match', () => {
     const setups = [
       { id: 'a', name: 'Ana', team: 1 as const },
       { id: 'b', name: 'Bo', team: 2 as const },
     ];
-    const m = createMatch({ kind: 'teams', mode: 'fn', abilities: false, soldiers: 2, seed: 77 }, setups);
+    const m = createMatch({ kind: 'teams', mode: 'fn', soldiers: 2, seed: 77 }, setups);
     for (let i = 0; i < 6 && !m.over; i++) {
       if (i % 3 === 2) skipTurn(m);
       else fire(m, currentPlayer(m).id, { expr: i % 2 ? 'x/4' : 'sin(x)' });
@@ -99,7 +100,7 @@ describe('replays', () => {
     const back = decodeReplay(link)!;
     const again = replayStart(back);
     for (const a of back.actions) applyAction(again, a);
-    expect(again.soldiers).toEqual(m.soldiers);
+    expect(board(again.soldiers)).toEqual(board(m.soldiers));
     expect(again.holes).toEqual(m.holes);
     expect(again.turnNumber).toBe(m.turnNumber);
     expect(decodeReplay('not-valid!!')).toBeNull();
@@ -107,36 +108,79 @@ describe('replays', () => {
 });
 
 describe('replay contents', () => {
-  it('rebuilds teleports, missiles, timeouts, and players leaving', () => {
+  it('rebuilds shots, timeouts, and players leaving', () => {
     const setups = [
-      { id: 'a', name: 'Ana', team: 1 as const, ability: 'teleport' as const },
-      { id: 'b', name: 'Bo', team: 2 as const, ability: 'missile' as const },
-      { id: 'c', name: 'Cy', team: 1 as const, ability: 'missile' as const },
+      { id: 'a', name: 'Ana', team: 1 as const },
+      { id: 'b', name: 'Bo', team: 2 as const },
+      { id: 'c', name: 'Cy', team: 1 as const },
     ];
-    const m = createMatch({ kind: 'teams', mode: 'fn', abilities: true, soldiers: 1, seed: 11 }, setups);
-    m.circles.length = 0;
-    const play = createMatch({ kind: 'teams', mode: 'fn', abilities: true, soldiers: 1, seed: 11 }, setups);
-    // Abilities need charge, so grant it the same way in both copies.
-    const grant = (s: typeof m) => s.players.forEach((p) => { p.charge = 4; });
-    grant(play);
-    const cur = currentPlayer(play);
-    const soldier = currentSoldier(play)!;
-    if (cur.ability === 'missile') armMissile(play, cur.id);
-    else useTeleport(play, cur.id, Math.max(30, Math.min(740, soldier.x + (soldier.x < 385 ? -5 : 5))), soldier.y);
+    const play = createMatch({ kind: 'teams', mode: 'fn', soldiers: 1, seed: 11 }, setups);
     fire(play, currentPlayer(play).id, { expr: 'x/9' });
     skipTurn(play);
     removePlayer(play, play.players.find((p) => p.id !== currentPlayer(play).id)!.id);
     const replay = decodeReplay(encodeReplay(makeReplay(play, setups)))!;
-    expect(replay.actions.map((a) => a.a)).toEqual(expect.arrayContaining(['f', 's', 'l']));
+    expect(replay.actions.map((a) => a.a)).toEqual(['f', 's', 'l']);
     const again = replayStart(replay);
-    grant(again);
     for (const a of replay.actions) applyAction(again, a);
-    expect(again.soldiers).toEqual(play.soldiers);
+    expect(board(again.soldiers)).toEqual(board(play.soldiers));
     expect(again.holes).toEqual(play.holes);
+  });
+  it('short links rebuild every kind of match exactly, at a fraction of the old length', () => {
+    const exprs = ['x/3', 'sin(x)*4', '-x^2/60+x/4', 'sqrt(abs(x))', '7/(1+exp(-2*(x-4)))', '0.5', "y'/4-y/9", '3*cos(x/2)', 'ln(abs(x)+1)'];
+    let oldTotal = 0;
+    let newTotal = 0;
+    for (let seed = 1; seed <= 24; seed++) {
+      const kind = seed % 3 === 0 ? 'ffa' : 'teams';
+      const mode = (['fn', 'ode1', 'ode2'] as const)[seed % 3];
+      const setups = [
+        { id: `guest-${seed}-aaaaaaaaaaaaaaaaaaaaaaaaaaaa`, name: seed % 4 === 0 ? 'Zoë ✨' : 'Ana', team: 1 as const },
+        { id: `b7:hard`, name: 'Gauss', team: 2 as const, isBot: true, botLevel: 'hard' },
+        ...(seed % 2 ? [{ id: `uid-${seed}-cccccccccccccccccccccccc`, name: 'Cy', team: 2 as const }] : []),
+      ];
+      const match = createMatch({ kind, mode, soldiers: 1 + (seed % 2), seed: seed % 5 === 0 ? -seed * 1000 : seed * 99991 }, setups);
+      for (let k = 0; k < 14 && !match.over; k++) {
+        const pick = exprs[(seed + k) % exprs.length]!;
+        const expr = mode === 'fn' ? pick.replace("y'", 'x') : mode === 'ode1' ? pick.replace("y'", 'y') : pick;
+        if (k % 5 === 4) skipTurn(match);
+        else {
+          try {
+            fire(match, currentPlayer(match).id, { expr, angle: 0.137 * k - 0.4, dir: k % 2 ? -1 : 1 });
+          } catch {
+            skipTurn(match);
+          }
+        }
+      }
+      const replay = makeReplay(match, setups);
+      const link = encodeReplay(replay);
+      const oldLink = btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(replay))));
+      oldTotal += oldLink.length;
+      newTotal += link.length;
+      const back = decodeReplay(link)!;
+      expect(back).not.toBeNull();
+      expect(back.setups.map((s) => [s.name, s.team, !!s.isBot])).toEqual(setups.map((s) => [s.name, s.team, !!s.isBot]));
+      const again = replayStart(back);
+      for (const a of back.actions) applyAction(again, a);
+      expect(again.soldiers).toEqual(match.soldiers.map((s) => ({ ...s, playerId: back.setups[setups.findIndex((x) => x.id === s.playerId)]!.id })));
+      expect(again.holes).toEqual(match.holes);
+      expect(again.over).toBe(match.over);
+    }
+    // Links are at least 3 times shorter on average.
+    expect(newTotal * 3).toBeLessThan(oldTotal);
+  });
+  it('still opens links made before the short format', () => {
+    const setups = [{ id: 'a', name: 'Ana', team: 1 as const }, { id: 'b', name: 'Bo', team: 2 as const }];
+    const match = createMatch({ kind: 'teams', mode: 'fn', soldiers: 1, seed: 3 }, setups);
+    fire(match, currentPlayer(match).id, { expr: 'x/4' });
+    const replay = makeReplay(match, setups);
+    const oldLink = btoa(JSON.stringify(replay)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+    expect(decodeReplay(oldLink)).toEqual(replay);
+    // Old links that used abilities can't be rebuilt any more, so they're refused cleanly.
+    const withAbility = { ...replay, actions: [{ a: 'm', p: 'a' }, ...replay.actions] };
+    expect(decodeReplay(btoa(JSON.stringify(withAbility)))).toBeNull();
   });
   it('refuses links describing impossible matches', () => {
     const encode = (o: unknown) => btoa(JSON.stringify(o)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
-    const config = { kind: 'teams', mode: 'fn', abilities: false, soldiers: 1, seed: 1 };
+    const config = { kind: 'teams', mode: 'fn', soldiers: 1, seed: 1 };
     const setups = [{ id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 2 }];
     expect(decodeReplay(encode({ v: 1, config, setups, actions: [] }))).not.toBeNull();
     expect(decodeReplay(encode({ v: 1, config, setups: [], actions: [] }))).toBeNull();

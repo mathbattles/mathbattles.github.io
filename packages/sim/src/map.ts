@@ -98,13 +98,3 @@ function clear(
   return true;
 }
 
-/** True when a soldier could stand at this point. Used by teleport. */
-export function spotIsClear(x: number, y: number, isSolid: (x: number, y: number) => boolean): boolean {
-  for (let a = 0; a < 16; a++) {
-    const t = (a / 16) * Math.PI * 2;
-    const px = Math.trunc(x + Math.cos(t) * SOLDIER_R);
-    const py = Math.trunc(y + Math.sin(t) * SOLDIER_R);
-    if (isSolid(px, py)) return false;
-  }
-  return !isSolid(Math.trunc(x), Math.trunc(y));
-}

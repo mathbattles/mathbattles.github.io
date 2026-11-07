@@ -1,10 +1,9 @@
 import type { Dir, ShotMode } from './constants';
-import type { AbilityId, MatchKind, MatchState, PlayerSetup, ShotRecord } from './rules';
+import type { MatchKind, MatchState, PlayerSetup, ShotRecord } from './rules';
 
 export interface RoomSettings {
   kind: MatchKind;
   mode: ShotMode;
-  abilities: boolean;
   soldiers: number;
   showFunctions: boolean;
 }
@@ -16,7 +15,6 @@ export interface Seat {
   ready: boolean;
   isBot: boolean;
   connected: boolean;
-  ability?: AbilityId;
   hat?: string;
 }
 
@@ -29,7 +27,7 @@ export interface ChatLine {
 }
 
 export type ClientMsg =
-  | { t: 'join'; name: string; token: string; idToken?: string | null; ability?: AbilityId; hat?: string }
+  | { t: 'join'; name: string; token: string; idToken?: string | null; hat?: string }
   | { t: 'leave' }
   | { t: 'settings'; settings: Partial<RoomSettings> }
   | { t: 'team'; team: 1 | 2 }
@@ -38,8 +36,6 @@ export type ClientMsg =
   | { t: 'removeSeat'; id: string }
   | { t: 'start' }
   | { t: 'fire'; expr: string; angle?: number; dir?: Dir }
-  | { t: 'teleport'; x: number; y: number }
-  | { t: 'missile' }
   | { t: 'skipVote' }
   | { t: 'chat'; text: string }
   | { t: 'ping' };
@@ -60,7 +56,6 @@ export type ServerMsg =
 export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   kind: 'teams',
   mode: 'fn',
-  abilities: false,
   soldiers: 1,
   showFunctions: false,
 };

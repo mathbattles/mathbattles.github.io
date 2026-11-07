@@ -5,7 +5,6 @@ import {
   questsFor,
   rewardsFor,
   utcDayNumber,
-  type AbilityId,
   type CosmeticKind,
   type ShotMode,
 } from '@mathbattles/sim';
@@ -35,7 +34,6 @@ export interface Profile {
   wins: number;
   kills: number;
   bestCombo: number;
-  ability: AbilityId;
   theme: ThemeId;
   lookVersion: number;
   /** The account this progress belongs to, or null for a guest. */
@@ -99,7 +97,6 @@ function fresh(): Profile {
     wins: 0,
     kills: 0,
     bestCombo: 0,
-    ability: 'teleport',
     theme: 'paper',
     lookVersion: LOOK_VERSION,
     ownerUid: null,

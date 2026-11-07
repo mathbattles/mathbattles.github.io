@@ -1,4 +1,4 @@
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import { expect, test, type Browser, type Locator, type Page } from '@playwright/test';
 import { createMatch, currentPlayer, encodeReplay, fire as fireShot, makeReplay } from '../packages/sim/src/index';
 
 async function newPlayer(browser: Browser, name: string): Promise<Page> {
@@ -15,6 +15,12 @@ async function newPlayer(browser: Browser, name: string): Promise<Page> {
   return page;
 }
 
+/** Picks an option from one of the game's dropdowns. */
+async function choose(trigger: Locator, option: string): Promise<void> {
+  await trigger.click();
+  await trigger.page().getByRole('option', { name: option, exact: true }).click();
+}
+
 const fire = async (page: Page, expr: string) => {
   await page.locator('#fn-input').fill(expr);
   await page.getByRole('button', { name: 'Fire', exact: true }).click();
@@ -27,8 +33,8 @@ test('a whole match against a bot can be finished, and pays rewards', async ({ b
     Math.random = () => 0.25;
   });
   await page.goto('/#/local');
-  await page.getByLabel('Who plays').nth(1).selectOption('hard');
-  await page.getByLabel('Soldiers each').selectOption('1');
+  await choose(page.getByRole('button', { name: 'Who plays' }).nth(1), 'Hard bot');
+  await choose(page.getByRole('button', { name: 'Soldiers each' }), '1');
   await page.getByRole('button', { name: 'Start match' }).click();
   await expect(page.locator('canvas')).toBeVisible();
   const over = page.getByRole('heading', { name: /You win|You lose|Draw/ });
@@ -91,7 +97,7 @@ test('two players can play online, with reconnect', async ({ browser }) => {
   await a.getByRole('button', { name: 'Start match' }).click();
   await expect(a.getByRole('alert')).toContainText('ready');
 
-  await a.getByLabel('Soldiers each').selectOption('2');
+  await choose(a.getByRole('button', { name: 'Soldiers each' }), '2');
   // Host's rule change reaches the other player.
   await a.getByRole('button', { name: 'Free-for-all' }).click();
   await expect(b.getByRole('button', { name: 'Free-for-all' })).toHaveClass(/on/);
@@ -142,7 +148,7 @@ test('two players can play online, with reconnect', async ({ browser }) => {
 
 test('a saved replay link really plays a match back to its end', async ({ browser }) => {
   const setups = [{ id: 'a', name: 'Ana', team: 1 as const }, { id: 'b', name: 'Bo', team: 2 as const }];
-  const match = createMatch({ kind: 'teams', mode: 'fn', abilities: false, soldiers: 1, seed: 5 }, setups);
+  const match = createMatch({ kind: 'teams', mode: 'fn', soldiers: 1, seed: 5 }, setups);
   fireShot(match, currentPlayer(match).id, { expr: 'x/9' });
   fireShot(match, currentPlayer(match).id, { expr: 'sin(x)' });
   const data = encodeReplay(makeReplay(match, setups));
@@ -157,7 +163,7 @@ test('a saved replay link really plays a match back to its end', async ({ browse
 
 test('a replay link for an impossible match shows a message, not a crash', async ({ browser }) => {
   const page = await newPlayer(browser, 'Watcher');
-  const bad = Buffer.from(JSON.stringify({ v: 1, config: { kind: 'teams', mode: 'fn', abilities: false, soldiers: 1, seed: 1 }, setups: [], actions: [] })).toString('base64url');
+  const bad = Buffer.from(JSON.stringify({ v: 1, config: { kind: 'teams', mode: 'fn', soldiers: 1, seed: 1 }, setups: [], actions: [] })).toString('base64url');
   await page.goto(`/#/replay/${bad}`);
   await expect(page.getByRole('heading', { name: 'This replay link is broken' })).toBeVisible();
 });
@@ -188,7 +194,7 @@ test('after a match the room still works: leaving, rejoining, and a rematch', as
   await b.goto(`/#/room/${code}`);
   await expect(a.getByText('Bo', { exact: true })).toBeVisible();
   await b.getByRole('button', { name: 'Mark ready' }).click();
-  await a.getByLabel('Soldiers each').selectOption('1');
+  await choose(a.getByRole('button', { name: 'Soldiers each' }), '1');
   await a.getByRole('button', { name: 'Start match' }).click();
   await expect(a.locator('.game canvas')).toBeVisible();
   await expect(b.locator('.game canvas')).toBeVisible();
@@ -199,7 +205,7 @@ test('after a match the room still works: leaving, rejoining, and a rematch', as
 
   // The room returns to its lobby, and the connection still works.
   await expect(a.getByRole('heading', { name: new RegExp(`Room ${code}`) })).toBeVisible({ timeout: 25_000 });
-  await a.getByLabel('Bot level').selectOption('easy');
+  await choose(a.getByRole('button', { name: 'Bot level' }), 'Easy');
   await expect(a.getByText('(bot)')).toBeVisible();
   await a.getByRole('button', { name: 'Remove' }).click();
   await expect(a.getByText('(bot)')).toHaveCount(0);
@@ -238,7 +244,7 @@ test('a too-big local free-for-all starts normally', async ({ browser }) => {
   const page = await newPlayer(browser, 'Big');
   await page.goto('/#/local');
   await page.getByRole('button', { name: 'Free-for-all' }).click();
-  await page.getByLabel('Soldiers each').selectOption('4');
+  await choose(page.getByRole('button', { name: 'Soldiers each' }), '4');
   for (let i = 0; i < 8; i++) await page.getByRole('button', { name: 'Add player' }).click();
   await page.getByRole('button', { name: 'Start match' }).click();
   await expect(page.locator('.scores div')).toHaveCount(10);
@@ -632,7 +638,7 @@ test('finished matches appear in match history and can be watched', async ({ bro
   await page.goto('/#/profile');
   await expect(page.getByText('No matches yet')).toBeVisible();
   await page.goto('/#/local');
-  await page.getByLabel('Who plays').nth(1).selectOption('hard');
+  await choose(page.getByRole('button', { name: 'Who plays' }).nth(1), 'Hard bot');
   await page.getByRole('button', { name: 'Start match' }).click();
   const over = page.getByRole('heading', { name: /You win|You lose|Draw/ });
   for (let i = 0; i < 400 && !(await over.isVisible()); i++) {
@@ -783,6 +789,56 @@ test('music and sound settings work, and every track renders cleanly', async ({ 
   }
 });
 
+test('dropdowns open a game-styled list that works with the mouse and keyboard', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Picker');
+  await page.goto('/#/local');
+  const soldiers = page.getByRole('button', { name: 'Soldiers each' });
+  await expect(soldiers).toHaveText('1');
+  // Mouse: open, pick, and it closes showing the choice.
+  await choose(soldiers, '3');
+  await expect(soldiers).toHaveText('3');
+  await expect(page.getByRole('listbox')).toHaveCount(0);
+  // Keyboard: arrows move, Enter picks, Escape closes without changing anything.
+  await soldiers.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('listbox', { name: 'Soldiers each' })).toBeVisible();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(soldiers).toHaveText('4');
+  await soldiers.click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('listbox')).toHaveCount(0);
+  await expect(soldiers).toHaveText('4');
+  await expect(soldiers).toBeFocused();
+  // A click elsewhere closes it too.
+  await soldiers.click();
+  await page.getByRole('heading', { name: 'Players' }).click();
+  await expect(page.getByRole('listbox')).toHaveCount(0);
+  // The choice is really used: who plays changes to a bot.
+  await choose(page.getByRole('button', { name: 'Who plays' }).first(), 'Easy bot');
+  await expect(page.getByRole('button', { name: 'Who plays' }).first()).toHaveText('Easy bot');
+});
+
+test('the shot preview shows in a normal match, not just Free Play', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Viewer');
+  // Without motion, the field only changes when something really changes.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/#/local');
+  await page.getByRole('button', { name: 'Start match' }).click();
+  const box = page.locator('#fn-input');
+  await expect(box).toBeEnabled({ timeout: 60_000 });
+  await page.waitForTimeout(500);
+  const field = page.locator('.game canvas');
+  const before = await field.screenshot();
+  await box.fill('x/3');
+  await page.waitForTimeout(400);
+  expect((await field.screenshot()).equals(before)).toBe(false);
+  // Clearing the box clears the preview again.
+  await box.fill('');
+  await page.waitForTimeout(400);
+  expect((await field.screenshot()).equals(before)).toBe(true);
+});
+
 test('an owned obstacle design is used on the real field', async ({ browser }) => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -805,12 +861,12 @@ test('an owned obstacle design is used on the real field', async ({ browser }) =
 test('matches start as 1v1 by default', async ({ browser }) => {
   const page = await newPlayer(browser, 'Default');
   await page.goto('/#/local');
-  await expect(page.getByLabel('Soldiers each')).toHaveValue('1');
+  await expect(page.getByRole('button', { name: 'Soldiers each' })).toHaveText('1');
   await page.getByRole('button', { name: 'Start match' }).click();
   await expect(page.locator('.scores')).toContainText('1/1');
   await page.goto('/#/online');
   await page.getByRole('button', { name: 'Create private room' }).click();
-  await expect(page.getByLabel('Soldiers each')).toHaveValue('1');
+  await expect(page.getByRole('button', { name: 'Soldiers each' })).toHaveText('1');
 });
 
 test('public player pages show missing players clearly', async ({ browser }) => {

@@ -77,10 +77,10 @@ export function buildDemo(index: number, rocks: number): DemoShot {
     }
   }
   const state = {
-    config: { kind: 'teams', mode: 'fn', abilities: false, soldiers: 1, seed: 0 },
+    config: { kind: 'teams', mode: 'fn', soldiers: 1, seed: 0 },
     players: [
-      { id: 'a', name: '', team: 1, soldierIds: [0], nextSoldier: 0, charge: 0, missileArmed: false, connected: true, kills: 0, deaths: 0, shots: 0, bestCombo: 0 },
-      { id: 'b', name: '', team: 2, soldierIds: [1, 2], nextSoldier: 0, charge: 0, missileArmed: false, connected: true, kills: 0, deaths: 0, shots: 0, bestCombo: 0 },
+      { id: 'a', name: '', team: 1, soldierIds: [0], nextSoldier: 0, connected: true, kills: 0, deaths: 0, shots: 0, bestCombo: 0 },
+      { id: 'b', name: '', team: 2, soldierIds: [1, 2], nextSoldier: 0, connected: true, kills: 0, deaths: 0, shots: 0, bestCombo: 0 },
     ],
     soldiers: [
       { id: 0, playerId: 'a', x: from.x, y: from.y, alive: true, angle: 0 },
@@ -97,7 +97,7 @@ export function buildDemo(index: number, rocks: number): DemoShot {
   } as unknown as MatchState;
   const record = {
     playerId: 'a', soldierId: 0, expr: demo.expr, mode: 'fn', dir: 1, angle: 0, from, mirrored: false,
-    steps: path.steps, reason: path.reason, end: path.end, hits, blastR: 12, blastKills: [],
+    steps: path.steps, reason: path.reason, end: path.end, hits,
   } as unknown as ShotRecord;
   const shot = { label: demo.label, state, record, path: { xs: path.xs, ys: path.ys, steps: path.steps } };
   built.set(key, shot);

@@ -11,15 +11,12 @@ import {
   RuleError,
   START_DELAY_MS,
   TURN_MS,
-  armMissile,
   chooseMove,
   createMatch,
   currentPlayer,
   fire,
   removePlayer,
   skipTurn,
-  useTeleport,
-  type AbilityId,
   type BotLevel,
   type ChatLine,
   type ClientMsg,
@@ -53,7 +50,7 @@ interface Internal extends Seat {
   lastChat: number;
 }
 
-const RANKED_SETTINGS: RoomSettings = { kind: 'teams', mode: 'fn', abilities: false, soldiers: 1, showFunctions: false };
+const RANKED_SETTINGS: RoomSettings = { kind: 'teams', mode: 'fn', soldiers: 1, showFunctions: false };
 const MAX_SEATS = MAX_PLAYERS;
 const LOBBY_RETURN_MS = 12_000;
 const RANKED_NO_SHOW_MS = 30_000;
@@ -99,7 +96,7 @@ export class RoomCore {
   }
 
   private publicSeat(s: Internal): Seat {
-    return { id: s.id, name: s.name, team: s.team, ready: s.ready, isBot: s.isBot, connected: s.connected, ability: s.ability, hat: s.hat };
+    return { id: s.id, name: s.name, team: s.team, ready: s.ready, isBot: s.isBot, connected: s.connected, hat: s.hat };
   }
 
   private sendLobby(to?: string): void {
@@ -147,7 +144,6 @@ export class RoomCore {
         ready: false,
         isBot: false,
         connected: true,
-        ability: msg.ability === 'missile' ? 'missile' : 'teleport',
         hat: typeof msg.hat === 'string' && HAT_VALUES.has(msg.hat) ? msg.hat : undefined,
         conns: new Set(),
         disconnectedAt: null,
@@ -259,16 +255,6 @@ export class RoomCore {
         case 'fire':
           this.onFire(seat, msg);
           return;
-        case 'teleport':
-          if (!this.canAct(seat)) throw new RuleError("It isn't your turn");
-          useTeleport(this.state!, seat.id, Number(msg.x), Number(msg.y));
-          this.broadcastUpdate();
-          return;
-        case 'missile':
-          if (!this.canAct(seat)) throw new RuleError("It isn't your turn");
-          armMissile(this.state!, seat.id);
-          this.broadcastUpdate();
-          return;
         default:
           return;
       }
@@ -292,7 +278,6 @@ export class RoomCore {
   private applySettings(p: Partial<RoomSettings>): void {
     if (p.kind === 'teams' || p.kind === 'ffa') this.settings.kind = p.kind;
     if (p.mode === 'fn' || p.mode === 'ode1' || p.mode === 'ode2') this.settings.mode = p.mode as ShotMode;
-    if (typeof p.abilities === 'boolean') this.settings.abilities = p.abilities;
     if (typeof p.showFunctions === 'boolean') this.settings.showFunctions = p.showFunctions;
     if (typeof p.soldiers === 'number') this.settings.soldiers = Math.max(1, Math.min(4, Math.trunc(p.soldiers) || 1));
   }
@@ -309,7 +294,6 @@ export class RoomCore {
       ready: true,
       isBot: true,
       connected: true,
-      ability: this.io.random() < 0.5 ? 'teleport' : 'missile',
       conns: new Set(),
       disconnectedAt: null,
       skip: true,
@@ -345,9 +329,9 @@ export class RoomCore {
     const seed = Math.floor(this.io.random() * 2 ** 31);
     const setups: PlayerSetup[] = this.seats
       .filter((s) => s.connected)
-      .map((s) => ({ id: s.id, name: s.name, team: s.team, ability: s.ability as AbilityId, isBot: s.isBot, botLevel: s.isBot ? s.id.split(':')[1] : undefined }));
+      .map((s) => ({ id: s.id, name: s.name, team: s.team, isBot: s.isBot, botLevel: s.isBot ? s.id.split(':')[1] : undefined }));
     this.state = createMatch(
-      { kind: this.settings.kind, mode: this.settings.mode, abilities: this.settings.abilities, soldiers: this.settings.soldiers, seed },
+      { kind: this.settings.kind, mode: this.settings.mode, soldiers: this.settings.soldiers, seed },
       setups,
     );
     // The exact list used here, so replay links can rebuild this same match.

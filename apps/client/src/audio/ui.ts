@@ -3,7 +3,7 @@ import { sound } from '../util';
 import { setVolumes, unlockAudio } from './engine';
 import { music } from './music';
 
-const INTERACTIVE = 'button, a[href], .btn, summary, select, [role="tab"]';
+const INTERACTIVE = 'button, a[href], .btn, summary, select, [role="tab"], [role="option"]';
 const HOVERABLE = `${INTERACTIVE}, .item, .tile`;
 
 /**

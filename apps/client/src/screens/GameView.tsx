@@ -1,5 +1,4 @@
 import {
-  ABILITY_COST,
   ParseError,
   RuleError,
   shotMoment,
@@ -78,7 +77,7 @@ function ShotHistory(props: {
           <ol class="shots" ref={list} tabIndex={0} aria-label="Shots in this match">
             {shots.map((shot, i) => {
               const owner = nameOf(shot.playerId);
-              const hits = shot.hits.length + shot.blastKills.length;
+              const hits = shot.hits.length;
               return (
                 <li class={viewing === i ? 'current' : ''}>
                   <button class="shot" aria-current={viewing === i ? 'true' : undefined} onClick={() => props.onView(i)}>
@@ -128,7 +127,6 @@ export function GameView(props: {
   const [dir, setDir] = useState<Dir>(1);
   const [error, setError] = useState('');
   const [chat, setChat] = useState('');
-  const [teleporting, setTeleporting] = useState(false);
   const [knockout, setKnockout] = useState(false);
   const [turnSlam, setTurnSlam] = useState(0);
   const [celebrated, setCelebrated] = useState(false);
@@ -291,7 +289,6 @@ export function GameView(props: {
         lastTurn.current = state.turnNumber;
         setExpr('');
         setError('');
-        setTeleporting(false);
       }
       input.current?.focus({ preventScroll: true });
     }
@@ -301,14 +298,14 @@ export function GameView(props: {
     if (chatBox.current) chatBox.current.scrollTop = chatBox.current.scrollHeight;
   }, [session.chat.length]);
 
-  // Live error text and, where allowed, the first stretch of the curve.
+  // Live error text and, in every mode, the first stretch of the curve.
   const check = useMemo(() => (expr.trim() ? validate(expr, mode) : null), [expr, mode]);
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
     stage.previewPath = null;
     const s = currentSoldier(state);
-    if (!session.preview || !canAct || !expr.trim() || check || !s) return;
+    if (!canAct || !expr.trim() || check || !s) return;
     const path = simulateShot({
       mode, expr, angle, dir, from: { x: s.x, y: s.y }, mirrored: isMirrored(state, currentPlayer(state).id),
       terrain: new Terrain(state.circles, state.holes), targets: [],
@@ -330,28 +327,6 @@ export function GameView(props: {
       else throw e;
     }
   };
-
-  const clickField = (e: MouseEvent) => {
-    const stage = stageRef.current;
-    if (!stage || !teleporting) return;
-    const p = stage.fieldPoint(e.clientX, e.clientY);
-    try {
-      session.teleport(Math.round(p.x), Math.round(p.y));
-      setTeleporting(false);
-      stage.teleportFrom = null;
-      setError('');
-    } catch (err) {
-      if (err instanceof RuleError) setError(err.message);
-      else throw err;
-    }
-  };
-
-  useEffect(() => {
-    const stage = stageRef.current;
-    if (!stage) return;
-    const s = currentSoldier(state);
-    stage.teleportFrom = teleporting && s ? { x: s.x, y: s.y } : null;
-  }, [teleporting]);
 
   const cur = currentPlayer(state);
   const secs = session.deadline && !session.busy ? Math.min(60, Math.max(0, Math.ceil((session.deadline - now) / 1000))) : null;
@@ -377,8 +352,6 @@ export function GameView(props: {
             ref={canvas}
             width={770}
             height={450}
-            onClick={clickField}
-            style={teleporting ? { cursor: 'crosshair' } : undefined}
             role="img"
             aria-label={`Graph battlefield. ${state.soldiers.filter((s) => s.alive).length} soldiers standing.`}
           />
@@ -443,22 +416,6 @@ export function GameView(props: {
                 <span class="row" role="group" aria-label="Shot direction">
                   <button class="small dir-plus" disabled={!canAct} onClick={() => setDir(1)} aria-pressed={dir === 1}>Fire toward +x</button>
                   <button class="small dir-minus" disabled={!canAct} onClick={() => setDir(-1)} aria-pressed={dir === -1}>Fire toward −x</button>
-                </span>
-              )}
-              {state.config.abilities && me?.ability && (
-                <span class="row">
-                  <span class="charge" role="img" aria-label={`Charge ${me.charge} of ${ABILITY_COST}`}>
-                    {Array.from({ length: ABILITY_COST }, (_, i) => <i class={i < me.charge ? 'full' : ''} />)}
-                  </span>
-                  {me.ability === 'teleport' ? (
-                    <button class={`small ${teleporting ? 'on' : ''}`} disabled={!canAct || me.charge < ABILITY_COST} onClick={() => setTeleporting((t) => !t)}>
-                      {teleporting ? 'Click the field' : 'Teleport'}
-                    </button>
-                  ) : (
-                    <button class={`small ${me.missileArmed ? 'on' : ''}`} disabled={!canAct || me.charge < ABILITY_COST || me.missileArmed} onClick={() => { try { session.missile(); } catch (e) { if (e instanceof RuleError) setError(e.message); else throw e; } }}>
-                      {me.missileArmed ? 'Missile armed' : 'Arm missile'}
-                    </button>
-                  )}
                 </span>
               )}
             </div>

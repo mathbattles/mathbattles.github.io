@@ -1,4 +1,4 @@
-import { ACHIEVEMENTS, COSMETICS, levelFromXp, rankFor, type AbilityId, type Cosmetic, type CosmeticKind } from '@mathbattles/sim';
+import { ACHIEVEMENTS, COSMETICS, levelFromXp, rankFor, type Cosmetic, type CosmeticKind } from '@mathbattles/sim';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { authState, setAnalyticsConsent, useAuth } from '../auth';
 import { fetchLeaderboard, serverReachable, type LeaderRow } from '../net/api';
@@ -276,7 +276,6 @@ export function ProfileScreen() {
 export function Settings() {
   useProfile();
   const setTheme = (t: ThemeId) => { profile.theme = t; saveProfile(); };
-  const setAbility = (a: AbilityId) => { profile.ability = a; saveProfile(); };
   return (
     <div class="page">
       <TopBar title="Settings" />
@@ -295,14 +294,6 @@ export function Settings() {
             </button>
           ))}
         </div>
-      </div>
-      <div class="sheet">
-        <h3>Ability for matches that use them</h3>
-        <div class="row">
-          <button class={profile.ability === 'teleport' ? 'on' : ''} onClick={() => setAbility('teleport')}>Teleport</button>
-          <button class={profile.ability === 'missile' ? 'on' : ''} onClick={() => setAbility('missile')}>Missile</button>
-        </div>
-        <p class="muted" style={{ marginTop: 8 }}>Each enemy hit adds 1 charge. Using an ability costs 2. Teleport moves your soldier a short way, and you still shoot. Missile triples your next blast, which also hits soldiers inside it.</p>
       </div>
       <div class="sheet">
         <h3>Sound and music</h3>

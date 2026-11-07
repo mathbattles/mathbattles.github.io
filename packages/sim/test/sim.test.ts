@@ -5,7 +5,6 @@ import {
   PLANE_W,
   Rng,
   Terrain,
-  armMissile,
   chooseMove,
   compile,
   createMatch,
@@ -17,7 +16,6 @@ import {
   removePlayer,
   simulateShot,
   skipTurn,
-  useTeleport,
   validate,
   COSMETICS,
   DEFAULT_ROOM_SETTINGS,
@@ -188,7 +186,7 @@ function toPxApprox(gx: number) {
 }
 
 const cfg = (o: Partial<MatchConfig> = {}): MatchConfig => ({
-  kind: 'teams', mode: 'fn', abilities: false, soldiers: 2, seed: 42, ...o,
+  kind: 'teams', mode: 'fn', soldiers: 2, seed: 42, ...o,
 });
 const duel: PlayerSetup[] = [
   { id: 'a', name: 'A', team: 1 },
@@ -290,33 +288,6 @@ describe('match rules', () => {
     expect(m.over).toBe(true);
     expect(m.winner).toBe(survivor);
   });
-  it('abilities need charge, and missile widens the blast', () => {
-    const setups: PlayerSetup[] = [{ id: 'a', name: 'A', team: 1, ability: 'missile' }, { id: 'b', name: 'B', team: 2, ability: 'missile' }];
-    const m = createMatch(cfg({ abilities: true }), setups);
-    const me = currentPlayer(m);
-    expect(() => armMissile(m, me.id)).toThrow(/charged/);
-    me.charge = 2;
-    armMissile(m, me.id);
-    expect(me.charge).toBe(0);
-    fire(m, me.id, { expr: '0' });
-    expect(m.holes.at(-1)!.r).toBe(36);
-  });
-  it('teleport moves within range only', () => {
-    const setups: PlayerSetup[] = [{ id: 'a', name: 'A', team: 1, ability: 'teleport' }, { id: 'b', name: 'B', team: 2, ability: 'teleport' }];
-    const m = createMatch(cfg({ abilities: true }), setups);
-    m.circles.length = 0;
-    const me = currentPlayer(m);
-    me.charge = 4;
-    const s = currentSoldier(m)!;
-    const far = s.x < 385 ? s.x + 300 : s.x - 300;
-    expect(() => useTeleport(m, me.id, far, s.y)).toThrow(/too far/);
-    expect(() => useTeleport(m, me.id, NaN, NaN)).toThrow(/inside the field/);
-    expect(() => useTeleport(m, me.id, -40, s.y)).toThrow(/inside the field/);
-    const tx = s.x < 385 ? Math.max(20, s.x - 30) : Math.min(750, s.x + 30);
-    useTeleport(m, me.id, tx, s.y);
-    expect(s.x).toBe(tx);
-    expect(me.charge).toBe(2);
-  });
 });
 
 describe('bots', () => {
@@ -373,22 +344,14 @@ describe('rewinding', () => {
     expect(JSON.stringify(m)).toBe(snapshot);
     void start;
   });
-  it('undoes teleports and players leaving', () => {
-    const setups: PlayerSetup[] = [{ id: 'a', name: 'A', team: 1, ability: 'teleport' }, { id: 'b', name: 'B', team: 2, ability: 'teleport' }, { id: 'c', name: 'C', team: 2 }];
-    const m = createMatch(cfg({ abilities: true, soldiers: 1, seed: 21 }), setups);
+  it('undoes players leaving', () => {
+    const setups: PlayerSetup[] = [{ id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 2 }, { id: 'c', name: 'C', team: 2 }];
+    const m = createMatch(cfg({ soldiers: 1, seed: 21 }), setups);
     m.circles.length = 0;
     fire(m, currentPlayer(m).id, { expr: 'x/20' });
-    const me = currentPlayer(m);
-    me.ability = 'teleport';
-    me.charge = 2;
-    const s = currentSoldier(m)!;
-    const oldX = s.x;
-    const nx = s.x < 385 ? Math.max(20, s.x - 30) : Math.min(750, s.x + 30);
-    useTeleport(m, me.id, nx, s.y);
     const stays = m.players.find((p) => p.id !== currentPlayer(m).id && p.soldierIds.every((id) => m.soldiers[id]!.alive))!;
     removePlayer(m, stays.id);
     const moment = shotMoment(m, 0)!;
-    expect(moment.after.soldiers[s.id]!.x).toBe(oldX);
     expect(moment.after.soldiers[stays.soldierIds[0]!]!.alive).toBe(true);
   });
 });

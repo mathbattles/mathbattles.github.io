@@ -1,3 +1,4 @@
+import { Dropdown } from './Dropdown';
 import {
   BOT_LEVELS,
   BOT_NAMES,
@@ -11,7 +12,6 @@ import {
   matchRecordFor,
   placeSoldiers,
   Rng,
-  type AbilityId,
   type BotLevel,
   type MatchKind,
   type MatchState,
@@ -59,7 +59,6 @@ export function ResultCard(props: { state: MatchState; viewer?: string; rewards?
 export function LocalSetup() {
   const [kind, setKind] = useState<MatchKind>('teams');
   const [mode, setMode] = useState<ShotMode>('fn');
-  const [abilities, setAbilities] = useState(false);
   const [soldiers, setSoldiers] = useState(1);
   const [seats, setSeats] = useState<SeatDraft[]>([
     { name: profile.name, team: 1, kind: 'human' },
@@ -91,12 +90,9 @@ export function LocalSetup() {
               ))}
             </div>
             <div class="row" style={{ marginBottom: 10 }}>
-              <label>Soldiers each{' '}
-                <select value={soldiers} onChange={(e) => setSoldiers(+(e.target as HTMLSelectElement).value)}>
-                  {[1, 2, 3, 4].map((n) => <option value={n}>{n}</option>)}
-                </select>
-              </label>
-              <label class="check"><input type="checkbox" checked={abilities} onChange={(e) => setAbilities((e.target as HTMLInputElement).checked)} /> Abilities</label>
+              <span class="dd-field">Soldiers each{' '}
+                <Dropdown label="Soldiers each" value={soldiers} onChange={setSoldiers} options={[1, 2, 3, 4].map((n) => ({ value: n, label: String(n) }))} />
+              </span>
             </div>
           </div>
           <div>
@@ -104,10 +100,12 @@ export function LocalSetup() {
             {seats.map((s, i) => (
               <div class="row" style={{ marginBottom: 6 }}>
                 <input aria-label="Player name" style={{ width: 120 }} value={s.name} maxLength={16} onInput={(e) => update(i, { name: (e.target as HTMLInputElement).value })} />
-                <select aria-label="Who plays" value={s.kind} onChange={(e) => update(i, { kind: (e.target as HTMLSelectElement).value as SeatDraft['kind'] })}>
-                  <option value="human">Person</option>
-                  {(Object.keys(BOT_LEVELS) as BotLevel[]).map((l) => <option value={l}>{BOT_LEVELS[l].label} bot</option>)}
-                </select>
+                <Dropdown
+                  label="Who plays"
+                  value={s.kind}
+                  onChange={(k) => update(i, { kind: k as SeatDraft['kind'] })}
+                  options={[{ value: 'human', label: 'Person' }, ...(Object.keys(BOT_LEVELS) as BotLevel[]).map((l) => ({ value: l, label: BOT_LEVELS[l].label + ' bot' }))]}
+                />
                 {kind === 'teams' && (
                   <button class={`small team-${s.team}`} onClick={() => update(i, { team: s.team === 1 ? 2 : 1 })}>{s.team === 1 ? 'Blue' : 'Red'}</button>
                 )}
@@ -121,21 +119,20 @@ export function LocalSetup() {
         </div>
       </div>
       {!valid && <p class="error">Each team needs at least one player.</p>}
-      <button class="primary" disabled={!valid} onClick={() => setPlaying({ key: 1, config: { kind, mode, abilities, soldiers, seats } })}>Start match</button>
+      <button class="primary" disabled={!valid} onClick={() => setPlaying({ key: 1, config: { kind, mode, soldiers, seats } })}>Start match</button>
     </div>
   );
 }
 
-function makeSession(c: { kind: MatchKind; mode: ShotMode; abilities: boolean; soldiers: number; seats: SeatDraft[] }) {
+function makeSession(c: { kind: MatchKind; mode: ShotMode; soldiers: number; seats: SeatDraft[] }) {
   const setups: PlayerSetup[] = c.seats.map((s, i) => ({
     id: `p${i}`,
     name: s.name.trim() || `Player ${i + 1}`,
     team: s.team,
-    ability: (s.kind === 'human' ? profile.ability : i % 2 ? 'missile' : 'teleport') as AbilityId,
     isBot: s.kind !== 'human',
     botLevel: s.kind !== "human" ? s.kind : undefined,
   }));
-  return new LocalSession({ kind: c.kind, mode: c.mode, abilities: c.abilities, soldiers: c.soldiers, seed: (Math.random() * 2 ** 31) >>> 0 }, setups);
+  return new LocalSession({ kind: c.kind, mode: c.mode, soldiers: c.soldiers, seed: (Math.random() * 2 ** 31) >>> 0 }, setups);
 }
 
 function LocalGame(props: { config: Parameters<typeof makeSession>[0]; onAgain: () => void }) {
@@ -192,7 +189,7 @@ export function Practice() {
   const session = useMemo(() => {
     const seed = (Math.random() * 2 ** 31) >>> 0;
     let n = seed;
-    return new SoloSession(randomPractice(mode, seed), { preview: true, endless: () => randomPractice(mode, ++n) });
+    return new SoloSession(randomPractice(mode, seed), { endless: () => randomPractice(mode, ++n) });
   }, [mode, key]);
   return (
     <GameView

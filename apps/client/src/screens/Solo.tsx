@@ -43,7 +43,7 @@ export function Campaign() {
 export function LevelScreen({ id }: { id: string }) {
   const level = LEVELS.find((l) => l.id === id);
   const [attempt, setAttempt] = useState(1);
-  const session = useMemo(() => (level ? new SoloSession(buildLevel(level), { preview: level.chapter <= 3, maxShots: 5 }) : null), [id, attempt]);
+  const session = useMemo(() => (level ? new SoloSession(buildLevel(level), { maxShots: 5 }) : null), [id, attempt]);
   const [result, setResult] = useState<null | { cleared: boolean; friendHit: boolean; stars: number; gained: number }>(null);
 
   useEffect(() => {

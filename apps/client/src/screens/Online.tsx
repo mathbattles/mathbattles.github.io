@@ -1,3 +1,4 @@
+import { Dropdown } from './Dropdown';
 import { BOT_LEVELS, MAX_PLAYERS, encodeReplay, isOnWinningSide, makeReplay, matchRecordFor, type BotLevel, type MatchKind, type MatchState, type ShotMode } from '@mathbattles/sim';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { authState, useAuth } from '../auth';
@@ -88,7 +89,6 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
     name: profile.name,
     token: profile.guestToken,
     idToken: authState.token,
-    ability: profile.ability,
     hat: cosmeticValue('hat'),
   }), [code]);
   const [, force] = useState(0);
@@ -228,12 +228,9 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
                 </div>
                 {isHost && (
                   <div class="row" style={{ marginTop: 10 }}>
-                    <label>Add bot{' '}
-                      <select aria-label="Bot level" onChange={(e) => { const el = e.target as HTMLSelectElement; if (el.value) session.send({ t: 'addBot', level: el.value }); el.value = ''; }}>
-                        <option value="">Choose level</option>
-                        {(Object.keys(BOT_LEVELS) as BotLevel[]).map((l) => <option value={l}>{BOT_LEVELS[l].label}</option>)}
-                      </select>
-                    </label>
+                    <span class="dd-field">Add bot{' '}
+                      <Dropdown label="Bot level" value={null} placeholder="Choose level" onChange={(level) => session.send({ t: 'addBot', level })} options={(Object.keys(BOT_LEVELS) as BotLevel[]).map((l) => ({ value: l, label: BOT_LEVELS[l].label }))} />
+                    </span>
                     <button class="primary" onClick={() => session.send({ t: 'start' })}>Start match</button>
                   </div>
                 )}
@@ -257,12 +254,9 @@ function RoomInner({ code, ranked }: { code: string; ranked?: boolean }) {
                 ))}
               </div>
               <div class="row">
-                <label>Soldiers each{' '}
-                  <select disabled={!isHost} value={st.soldiers} onChange={(e) => set({ soldiers: +(e.target as HTMLSelectElement).value })}>
-                    {[1, 2, 3, 4].map((n) => <option value={n}>{n}</option>)}
-                  </select>
-                </label>
-                <label class="check"><input type="checkbox" disabled={!isHost} checked={st.abilities} onChange={(e) => set({ abilities: (e.target as HTMLInputElement).checked })} /> Abilities</label>
+                <span class="dd-field">Soldiers each{' '}
+                  <Dropdown label="Soldiers each" disabled={!isHost} value={st.soldiers} onChange={(n) => set({ soldiers: n })} options={[1, 2, 3, 4].map((n) => ({ value: n, label: String(n) }))} />
+                </span>
                 <label class="check"><input type="checkbox" disabled={!isHost} checked={st.showFunctions} onChange={(e) => set({ showFunctions: (e.target as HTMLInputElement).checked })} /> Show everyone's functions</label>
               </div>
             </div>
@@ -328,7 +322,7 @@ export function Ranked() {
     <div class="page">
       <TopBar title="Ranked" />
       <div class="sheet">
-        <p>Ranked is one-on-one in Function mode, with one soldier each, no abilities, and no preview. Your rating changes after every match and partly resets each season.</p>
+        <p>Ranked is one-on-one in Function mode, with one soldier each. The dashed preview of your shot's start shows here too, as in every mode. Your rating changes after every match and partly resets each season.</p>
         {!auth.ready ? (
           <p>Checking your account.</p>
         ) : !auth.user ? (

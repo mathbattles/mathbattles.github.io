@@ -32,20 +32,13 @@ export function shotMoment(state: MatchState, shotIndex: number): ShotMoment | n
   let index = shotsOf(state).length;
   for (let i = state.log.length - 1; i >= 0; i--) {
     const e = state.log[i]!;
-    if (e.type === 'teleport') {
-      const s = soldiers[e.soldierId];
-      if (s && e.fromX !== undefined && e.fromY !== undefined) {
-        s.x = e.fromX;
-        s.y = e.fromY;
-      }
-    } else if (e.type === 'leave') {
+    if (e.type === 'leave') {
       for (const id of e.removed ?? []) if (soldiers[id]) soldiers[id]!.alive = true;
     } else if (e.type === 'shot') {
       index--;
       const after: BoardMoment | null = index === shotIndex ? { soldiers: soldiers.map((s) => ({ ...s })), holes: [...holes] } : null;
       holes.pop();
       for (const h of e.shot.hits) if (soldiers[h.id]) soldiers[h.id]!.alive = true;
-      for (const id of e.shot.blastKills) if (soldiers[id]) soldiers[id]!.alive = true;
       if (after) return { shot: e.shot, before: { soldiers, holes }, after };
     }
   }

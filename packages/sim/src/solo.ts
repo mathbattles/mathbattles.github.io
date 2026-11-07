@@ -20,7 +20,7 @@ export interface SoloDef {
 
 function makePlayer(id: string, name: string, team: 1 | 2, ids: number[]): Player {
   return {
-    id, name, team, soldierIds: ids, nextSoldier: 0, charge: 0, missileArmed: false,
+    id, name, team, soldierIds: ids, nextSoldier: 0,
     connected: true, kills: 0, deaths: 0, shots: 0, bestCombo: 0,
   };
 }
@@ -37,7 +37,7 @@ export function createSolo(def: SoloDef): MatchState {
   const players = [makePlayer(ME, def.name ?? 'You', 1, meIds), makePlayer(TARGETS, 'Targets', 2, enemyIds)];
   if (allyIds.length) players.push(makePlayer(ALLIES, 'Friends', 1, allyIds));
   return {
-    config: { kind: 'teams', mode: def.mode, abilities: false, soldiers: 1, seed: 0 },
+    config: { kind: 'teams', mode: def.mode, soldiers: 1, seed: 0 },
     players,
     soldiers,
     circles: def.circles.map((c) => ({ ...c })),

@@ -1,4 +1,4 @@
-import { BLAST_R, DRAW_STEPS_PER_SEC, NEXT_TURN_DELAY_MS, PLANE_H, PLANE_W, PX_PER_UNIT, SOLDIER_R, TELEPORT_RADIUS, type Circle, type MatchState, type ShotRecord } from '@mathbattles/sim';
+import { BLAST_R, DRAW_STEPS_PER_SEC, NEXT_TURN_DELAY_MS, PLANE_H, PLANE_W, PX_PER_UNIT, SOLDIER_R, type Circle, type MatchState, type ShotRecord } from '@mathbattles/sim';
 import { drawHat } from './doodles';
 import { drawObstacle, obstacleStyle, type ObstacleStyle } from './obstacles';
 
@@ -305,7 +305,6 @@ export class Stage {
   previewPath: { xs: ArrayLike<number>; ys: ArrayLike<number>; steps: number } | null = null;
   aimAngle: number | null = null;
   aimDir: 1 | -1 = 1;
-  teleportFrom: { x: number; y: number } | null = null;
   /** True while someone at this screen is choosing a shot, so the aim direction shows. */
   aiming = false;
   private rockStyle: ObstacleStyle = obstacleStyle('candy');
@@ -720,25 +719,20 @@ export class Stage {
 
   private explode(shot: ActiveShot, now: number): void {
     shot.exploded = true;
-    const r = shot.record.blastR ?? BLAST_R;
+    const r = BLAST_R;
     const { x, y } = shot.record.end;
-    const big = r > BLAST_R;
     const theme = THEMES[this.themeId];
-    this.burst(x, y, big ? 34 : 22, theme.smoke, 'smoke', big ? 1.2 : 0.8);
-    this.burst(x, y, big ? 48 : 32, '#ffb02e', 'spark', big ? 4.4 : 3.4);
-    this.burst(x, y, big ? 22 : 14, '#ff6a2a', 'ember', big ? 2 : 1.5);
-    this.burst(x, y, big ? 30 : 20, this.rockColorAt(x, y), 'chunk', big ? 3 : 2.3);
+    this.burst(x, y, 22, theme.smoke, 'smoke', 0.8);
+    this.burst(x, y, 32, '#ffb02e', 'spark', 3.4);
+    this.burst(x, y, 14, '#ff6a2a', 'ember', 1.5);
+    this.burst(x, y, 20, this.rockColorAt(x, y), 'chunk', 2.3);
     this.holes.push({ x, y, r });
     this.terrainDirty = true;
-    if (!reducedMotion()) this.fireballs.push({ x, y, r: big ? r * 0.8 : Math.max(r * 1.3, 17), at: now });
+    if (!reducedMotion()) this.fireballs.push({ x, y, r: Math.max(r * 1.3, 17), at: now });
     // Where the shot ends, everyone gets the same explosion. Kill effects are only for kills.
     this.rings.push({ x, y, r, at: now, color: shot.color, style: 'ring' });
-    this.shake = Math.max(this.shake, big ? 14 : 8);
-    this.flash = Math.max(this.flash, big ? 0.38 : 0.18);
-    for (const id of shot.record.blastKills ?? []) {
-      const s = this.soldiers.find((q) => q.id === id);
-      if (s && s.alive) this.knockOut(s, now, shot);
-    }
+    this.shake = Math.max(this.shake, 8);
+    this.flash = Math.max(this.flash, 0.18);
     this.onExplode?.(shot.kills);
     this.zoom.target = 1;
     setTimeout(() => {
@@ -991,17 +985,6 @@ export class Stage {
       const owner = this.state?.players.find((q) => q.id === this.past!.shooterPlayer);
       const color = owner?.team === 2 ? theme.team2 : theme.team1;
       strokeTrail(c, this.past.path.xs, this.past.path.ys, this.past.path.steps, color, this.looks[this.past.shooterPlayer]?.trail ?? 'ink', true, (x) => this.px(x));
-    }
-
-    if (this.teleportFrom) {
-      c.save();
-      c.setLineDash([6, 6]);
-      c.strokeStyle = theme.axis;
-      c.lineWidth = 2;
-      c.beginPath();
-      c.arc(this.px(this.teleportFrom.x), this.teleportFrom.y, TELEPORT_RADIUS, 0, Math.PI * 2);
-      c.stroke();
-      c.restore();
     }
 
     if (this.shot) this.advanceShot(c, this.shot, now);

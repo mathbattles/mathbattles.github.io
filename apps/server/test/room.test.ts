@@ -230,25 +230,20 @@ describe('review fixes', () => {
     h.join('b', '2');
     expect(h.room.state).toBeNull();
   });
-  it('rejects teleports with missing or impossible coordinates', () => {
+  it('ignores messages for abilities, which no longer exist', () => {
     const h = harness();
     h.join('a', '1');
     h.join('b', '2');
-    h.room.settings.abilities = true;
     h.room.handle('b', { t: 'ready', ready: true });
     h.room.handle('a', { t: 'start' });
     h.advance(5001);
     const state = h.room.state!;
     const cur = currentPlayer(state);
-    cur.ability = 'teleport';
-    cur.charge = 2;
     const conn = connFor(cur.id, h);
-    const before = state.soldiers.map((s) => [s.x, s.y]);
-    h.room.handle(conn, { t: 'teleport' } as unknown as ClientMsg);
-    h.room.handle(conn, { t: 'teleport', x: -500, y: 20 });
-    expect(state.soldiers.map((s) => [s.x, s.y])).toEqual(before);
-    expect(cur.charge).toBe(2);
-    expect((h.last(conn, 'error') as { message: string }).message).toMatch(/inside the field/);
+    const before = JSON.stringify(state);
+    h.room.handle(conn, { t: 'teleport', x: 50, y: 50 } as unknown as ClientMsg);
+    h.room.handle(conn, { t: 'missile' } as unknown as ClientMsg);
+    expect(JSON.stringify(state)).toBe(before);
   });
   it('a room gets a new host when the old one is gone', () => {
     const h = harness();
