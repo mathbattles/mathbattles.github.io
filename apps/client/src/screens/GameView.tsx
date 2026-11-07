@@ -1,3 +1,4 @@
+import { MathKeys, useMathKeys } from './MathKeys';
 import {
   ParseError,
   RuleError,
@@ -121,6 +122,7 @@ export function GameView(props: {
   const canvas = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<Stage | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const keys = useMathKeys();
   const [, force] = useState(0);
   const [expr, setExpr] = useState('');
   const [angle, setAngle] = useState(0);
@@ -381,7 +383,7 @@ export function GameView(props: {
                 autocomplete="off"
                 autocapitalize="off"
                 spellcheck={false}
-                inputMode="text"
+                inputMode={keys.on && !keys.typing ? 'none' : 'text'}
                 placeholder={canAct ? 'x/3 + 2*sin(x)' : 'Wait for your turn'}
                 disabled={!canAct}
                 onInput={(e) => {
@@ -402,6 +404,10 @@ export function GameView(props: {
               />
               <button class="primary fire" data-sfx="none" onClick={doFire} disabled={!canAct || !!check}>Fire</button>
             </div>
+            {keys.on && (
+              <MathKeys input={input} mode={mode} value={expr} disabled={!canAct} typing={keys.typing} setTyping={keys.setTyping}
+                onChange={(v) => { setExpr(v); setError(''); }} />
+            )}
             {expr.trim() && !check && <Tex expr={expr} prefix={modeLabel(mode)} />}
             {(check || error) && <p class="error" role="alert">{check?.message ?? error}</p>}
             <div class="controls2">

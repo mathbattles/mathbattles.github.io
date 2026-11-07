@@ -45,6 +45,8 @@ export interface Profile {
   musicVolume: number;
   /** Which music track repeats, or -1 to play all of them in order. */
   musicTrack: number;
+  /** On-screen math keys: automatic on touch screens, always, or never. */
+  mathKeys: 'auto' | 'on' | 'off';
   chatOff: boolean;
   analytics: 'unset' | 'yes' | 'no';
   updatedAt: number;
@@ -105,6 +107,7 @@ function fresh(): Profile {
     music: true,
     musicVolume: 0.45,
     musicTrack: -1,
+    mathKeys: 'auto',
     chatOff: false,
     analytics: 'unset',
     updatedAt: 0,
@@ -154,7 +157,7 @@ export function saveProfile(): void {
 
 /** Settings that belong to this device, not to whoever is signed in. */
 function deviceSettings(p: Profile) {
-  return { guestToken: p.guestToken, theme: p.theme, lookVersion: p.lookVersion, muted: p.muted, sfxVolume: p.sfxVolume, music: p.music, musicVolume: p.musicVolume, musicTrack: p.musicTrack, chatOff: p.chatOff, analytics: p.analytics };
+  return { guestToken: p.guestToken, theme: p.theme, lookVersion: p.lookVersion, muted: p.muted, sfxVolume: p.sfxVolume, music: p.music, musicVolume: p.musicVolume, musicTrack: p.musicTrack, mathKeys: p.mathKeys, chatOff: p.chatOff, analytics: p.analytics };
 }
 
 /**

@@ -1,3 +1,4 @@
+import { MathKeys, useMathKeys } from './MathKeys';
 import {
   ParseError,
   RuleError,
@@ -127,6 +128,8 @@ function FunctionBox(props: {
   fireLabel?: string;
 }) {
   const bad = props.expr.trim() ? validate(props.expr, props.mode) : null;
+  const box = useRef<HTMLInputElement>(null);
+  const keys = useMathKeys();
   return (
     <>
       <div class="shotrow">
@@ -134,7 +137,9 @@ function FunctionBox(props: {
           <span class="sr-only"> function</span>
         </label>
         <input
+          ref={box}
           type="text"
+          inputMode={keys.on && !keys.typing ? 'none' : 'text'}
           value={props.expr}
           aria-label={`Function, ${modeLabel(props.mode)}`}
           maxLength={200}
@@ -149,6 +154,7 @@ function FunctionBox(props: {
         />
         <button class="primary fire" data-sfx="none" disabled={props.disabled || !props.expr.trim() || !!bad} onClick={props.onFire}>{props.fireLabel ?? 'Fire'}</button>
       </div>
+      {keys.on && <MathKeys input={box} mode={props.mode} value={props.expr} onChange={props.onExpr} disabled={props.disabled} typing={keys.typing} setTyping={keys.setTyping} />}
       {props.expr.trim() && !bad && <Tex expr={props.expr} prefix={modeLabel(props.mode)} />}
       {(bad || props.error) && <p class="error" role="alert">{bad?.message ?? props.error}</p>}
     </>

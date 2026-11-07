@@ -824,9 +824,11 @@ test('the shot preview shows in a normal match, not just Free Play', async ({ br
   // Without motion, the field only changes when something really changes.
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/#/local');
+  // Two people at one screen, so a bot can't end the match before anyone types.
+  await choose(page.getByRole('button', { name: 'Who plays' }).nth(1), 'Person');
   await page.getByRole('button', { name: 'Start match' }).click();
   const box = page.locator('#fn-input');
-  await expect(box).toBeEnabled({ timeout: 60_000 });
+  await expect(box).toBeEnabled({ timeout: 20_000 });
   await page.waitForTimeout(500);
   const field = page.locator('.game canvas');
   const before = await field.screenshot();
@@ -837,6 +839,40 @@ test('the shot preview shows in a normal match, not just Free Play', async ({ br
   await box.fill('');
   await page.waitForTimeout(400);
   expect((await field.screenshot()).equals(before)).toBe(true);
+});
+
+test('phones get math keys that type functions, and the setting can turn them off', async ({ browser }) => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  await ctx.addInitScript(() => {
+    if (!localStorage.getItem('mathbattles.profile.v1')) localStorage.setItem('mathbattles.profile.v1', JSON.stringify({ name: 'Thumbs', analytics: 'no' }));
+  });
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => { throw e; });
+  await page.goto('/#/practice');
+  const box = page.locator('#fn-input');
+  const keys = page.getByRole('group', { name: 'Math keys' });
+  await expect(keys).toBeVisible();
+  // The phone's own keyboard stays closed while the math keys are showing.
+  await expect(box).toHaveAttribute('inputmode', 'none');
+  for (const k of ['5', 'times', 'sin', 'x', 'divide', '3']) await keys.getByRole('button', { name: k, exact: true }).tap();
+  await expect(box).toHaveValue('5*sin(x/3)');
+  await keys.getByRole('button', { name: 'Delete', exact: true }).tap();
+  await keys.getByRole('button', { name: '4', exact: true }).tap();
+  await expect(box).toHaveValue('5*sin(x/4)');
+  await page.getByRole('button', { name: 'Fire', exact: true }).tap();
+  await expect(page.getByRole('list', { name: 'Shots in this match' })).toContainText('5*sin(x/4)', { timeout: 15_000 });
+  // ABC switches to the phone keyboard, and the keys can come back.
+  await keys.getByRole('button', { name: 'Use the phone keyboard' }).tap();
+  await expect(box).toHaveAttribute('inputmode', 'text');
+  await page.getByRole('button', { name: 'Show math keys' }).tap();
+  await expect(keys).toBeVisible();
+  // Never hides them everywhere.
+  await page.goto('/#/settings');
+  await page.getByRole('group', { name: 'Math keyboard' }).getByRole('button', { name: 'Never' }).tap();
+  await page.goto('/#/practice');
+  await expect(page.locator('#fn-input')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Math keys' })).toHaveCount(0);
+  await ctx.close();
 });
 
 test('an owned obstacle design is used on the real field', async ({ browser }) => {

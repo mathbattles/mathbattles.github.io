@@ -318,6 +318,16 @@ export function Settings() {
         </div>
       </div>
       <div class="sheet">
+        <h3>Math keyboard</h3>
+        <p>On-screen keys for typing functions, with x, powers, brackets and sin in easy reach. While they're showing, your phone's keyboard stays closed so the field stays in view.</p>
+        <div class="row" role="group" aria-label="Math keyboard">
+          {([['auto', 'Automatic'], ['on', 'Always'], ['off', 'Never']] as const).map(([v, label]) => (
+            <button class={profile.mathKeys === v ? 'on' : ''} aria-pressed={profile.mathKeys === v} onClick={() => { profile.mathKeys = v; saveProfile(); }}>{label}</button>
+          ))}
+        </div>
+        <p class="muted" style={{ marginTop: 8 }}>Automatic shows them on touch screens.</p>
+      </div>
+      <div class="sheet">
         <h3>Chat</h3>
         <label class="check"><input type="checkbox" checked={profile.chatOff} onChange={(e) => { profile.chatOff = (e.target as HTMLInputElement).checked; saveProfile(); }} /> Hide chat</label>
       </div>
