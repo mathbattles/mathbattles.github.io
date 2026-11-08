@@ -339,6 +339,11 @@ describe('moderation', () => {
     expect(cleanChat('you sh1t')).toBe('you ####');
     expect(cleanChat('class assignment')).toBe('class assignment');
     expect(cleanChat('a'.repeat(500)).length).toBe(140);
+    // Stretched spellings are caught, and everyday words aren't.
+    expect(cleanChat('fuuuuck that')).toBe('####### that');
+    expect(cleanChat('as far as i know, pass the class')).toBe('as far as i know, pass the class');
+    expect(cleanChat('sussex essex assess')).toBe('sussex essex assess');
+    expect(cleanChat('a'.repeat(500), 300).length).toBe(300);
     expect(cleanName('fuck')).toMatch(/^Player\d+$/);
     expect(cleanName('Ana')).toBe('Ana');
     expect(cleanChat('hi‮evil')).toBe('hievil');

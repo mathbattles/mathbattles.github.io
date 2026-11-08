@@ -165,7 +165,7 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
   const tooMany = () => json({ error: 'Too many requests. Wait a few minutes and try again.' }, 429);
   const limitIp = async (name: string, max: number, windowMs: number) => !!ip && overLimit(env.DB, `${name}:${ip}`, max, windowMs);
 
-  if (['social', 'friends', 'invites', 'party', 'maps', 'cosmetics', 'ranked', 'admin'].includes(parts[1] ?? '')) {
+  if (['social', 'friends', 'invites', 'party', 'maps', 'cosmetics', 'ranked', 'admin', 'messages'].includes(parts[1] ?? '')) {
     const claims = await verifyClaims(env, bearer(req));
     const handled = await handleSocial({ db: env.DB, req, parts, json, uid: claims?.uid ?? null, authTime: claims?.authTime ?? 0, mfaKey: env.ADMIN_MFA_KEY, newCode, ip });
     if (handled) return handled;
@@ -308,6 +308,7 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
           env.DB.prepare('DELETE FROM party_members WHERE uid = ?').bind(uid),
           env.DB.prepare('DELETE FROM parties WHERE leader = ? AND id NOT IN (SELECT party_id FROM party_members)').bind(uid),
           env.DB.prepare('DELETE FROM maps WHERE uid = ?').bind(uid),
+          env.DB.prepare('DELETE FROM messages WHERE from_uid = ? OR to_uid = ?').bind(uid, uid),
         ]);
         return json({ ok: true });
       }

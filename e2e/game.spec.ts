@@ -1067,6 +1067,59 @@ test('an adult who answers the age check gets the sign-up form', async ({ browse
   await ctx.close();
 });
 
+test('friends can message each other between two accounts, filtered, with unread and seen', async ({ browser }) => {
+  test.setTimeout(180_000);
+  const password = 'correct-horse-9';
+  const nameA = uniqueName('ma');
+  const nameB = uniqueName('mb');
+  const a = await createAccount(browser, nameA, password);
+  const b = await createAccount(browser, nameB, password);
+  try {
+    await a.goto('/#/friends');
+    await a.getByLabel('Username to add').fill(nameB);
+    await a.getByRole('button', { name: 'Send request' }).click();
+    await b.goto('/#/friends');
+    await b.getByRole('button', { name: 'Accept' }).click();
+    await a.reload();
+    // The Chat button sits between the friend's status and Remove.
+    const rowA = a.locator('.friend-row').filter({ hasText: nameB });
+    await rowA.getByRole('button', { name: `Chat with ${nameB}` }).click();
+    const chatA = a.getByRole('region', { name: `Chat with ${nameB}` });
+    await expect(chatA).toBeVisible();
+    await chatA.getByLabel(`Message ${nameB}`).fill('hi there, this is shit');
+    await chatA.getByRole('button', { name: 'Send' }).click();
+    await expect(chatA.locator('.chat-msg.mine')).toContainText('hi there, this is ####');
+    await expect(chatA.getByText('Some words were hidden by the chat filter.')).toBeVisible();
+    // B sees an unread count, opens the chat, and replies.
+    await b.reload();
+    const rowB = b.locator('.friend-row').filter({ hasText: nameA });
+    await expect(rowB.locator('.badge')).toHaveText('1', { timeout: 20_000 });
+    await rowB.getByRole('button', { name: new RegExp(`Chat with ${nameA}`) }).click();
+    const chatB = b.getByRole('region', { name: `Chat with ${nameA}` });
+    await expect(chatB.locator('.chat-msg.theirs')).toContainText('hi there, this is ####');
+    await chatB.getByLabel(`Message ${nameA}`).fill('hello back');
+    await chatB.getByRole('button', { name: 'Send' }).click();
+    // A gets the reply without reloading, and sees that B read the first message.
+    await expect(chatA.locator('.chat-msg.theirs')).toContainText('hello back', { timeout: 15_000 });
+    await expect(chatA.getByText(/Seen/)).toBeVisible({ timeout: 15_000 });
+    // Minimize hides the messages; opening brings them back; close removes the chat.
+    await chatA.getByRole('button', { name: `Minimize chat with ${nameB}` }).click();
+    await expect(chatA.locator('.chat-log')).toHaveCount(0);
+    await chatA.getByRole('button', { name: `Open chat with ${nameB}` }).click();
+    await expect(chatA.locator('.chat-log')).toBeVisible();
+    await chatA.getByRole('button', { name: `Close chat with ${nameB}` }).click();
+    await expect(chatA).toHaveCount(0);
+    // Three chats is the limit.
+    await a.evaluate(() => sessionStorage.setItem('mathbattles.openChats', JSON.stringify([{ name: 'x1', minimized: true }, { name: 'x2', minimized: true }, { name: 'x3', minimized: true }])));
+    await a.reload();
+    await a.locator('.friend-row').filter({ hasText: nameB }).getByRole('button', { name: `Chat with ${nameB}` }).click();
+    await expect(a.getByText('You can have 3 chats open at once. Close one to open another.')).toBeVisible();
+  } finally {
+    await deleteAccount(a);
+    await deleteAccount(b);
+  }
+});
+
 test('an owned obstacle design is used on the real field', async ({ browser }) => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();

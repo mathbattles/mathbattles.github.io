@@ -378,11 +378,11 @@ export function Privacy() {
         <h3>Children</h3>
         <p>Accounts are only for players 13 and older, and we ask before making one. We keep only whether you're 13 or older, on your own device, never your birth date. Players under 13 can play as guests, with online chat and analytics turned off. If you think a child under 13 has made an account, contact us below and we'll delete it.</p>
         <h3>Chat and reports</h3>
-        <p>Chat messages aren't saved. Reports you send about chat are kept for up to 90 days for review, then deleted.</p>
+        <p>Chat in game rooms isn't saved. Messages between friends are stored so you can read them later, filtered for bad words, and deleted after 30 days, when either of you removes the other as a friend, or when either account is deleted. Reports about chat or messages are kept for up to 90 days for review, then deleted.</p>
         <h3>Analytics</h3>
         <p>Anonymous usage stats load only if you allow them in <a href="#/settings">Settings</a>, and never for players under 13. We don't use session recording, advertising, or tracking across other sites. Fonts and other files are served from this site, not from third parties.</p>
         <h3>Your choices</h3>
-        <p>You can delete your account at any time from your profile. That removes your username, progress, rating, match history, friends, party and shared maps from our server.</p>
+        <p>You can delete your account at any time from your profile. That removes your username, progress, rating, match history, friends, messages, party and shared maps from our server.</p>
         <h3>Contact, and copyright</h3>
         <p>For privacy questions, deletion requests, or to report content that infringes your copyright (such as a shared map or a username), open an issue at <a href="https://github.com/mathbattles/mathbattles.github.io/issues" target="_blank" rel="noopener noreferrer">github.com/mathbattles/mathbattles.github.io/issues</a>, or report a security problem privately from that repository's Security tab.</p>
       </div>

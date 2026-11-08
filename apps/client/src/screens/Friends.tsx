@@ -5,6 +5,8 @@ import { currentRoom, refreshSocial, social, subscribeSocial } from '../social';
 import { go, sound } from '../util';
 import { profile } from '../store';
 import { TopBar } from './Shared';
+import { ChatWindow, useOpenChats } from './Chat';
+import { MAX_OPEN_CHATS, openChat } from '../dms';
 
 export function useSocial() {
   const [, force] = useState(0);
@@ -52,6 +54,18 @@ export function Friends() {
     await refreshSocial();
   };
   const state = s.state;
+  const chats = useOpenChats();
+  const startChat = (name: string) => {
+    if (!openChat(name)) {
+      setError(`You can have ${MAX_OPEN_CHATS} chats open at once. Close one to open another.`);
+      sound('error', profile.muted);
+      return;
+    }
+    setError('');
+    sound('open', profile.muted);
+    // Bring the chats into view on small screens, where they sit above the lists.
+    requestAnimationFrame(() => document.querySelector('.chats')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+  };
   const room = currentRoom() ?? lastRoom;
   const party = state?.party ?? null;
   const online = state?.friends.filter((f) => f.online) ?? [];
@@ -62,6 +76,16 @@ export function Friends() {
       <TopBar title="Friends" />
       {error && <p class="error" role="alert">{error}</p>}
       {note && <p class="ok" role="status">{note}</p>}
+      {chats.length > 0 && (
+        <div class="sheet chats-sheet">
+          <h3>Messages <small class="muted">{chats.length}/{MAX_OPEN_CHATS} open</small></h3>
+          <div class={`chats count-${chats.length}`}>
+            {chats.map((c) => (
+              <ChatWindow key={c.name} chat={c} online={!!state?.friends.find((f) => f.name.toLowerCase() === c.name.toLowerCase())?.online} />
+            ))}
+          </div>
+        </div>
+      )}
       <div class="grid-2">
         <div>
           <div class="sheet">
@@ -96,6 +120,9 @@ export function Friends() {
                       <i class="dot" aria-hidden="true" />
                       <a href={`#/player/${encodeURIComponent(f.name)}`}>{f.name}</a>
                       <small class="muted">{!f.online ? 'Offline' : f.room ? (f.inMatch ? 'In a match' : 'In a room') : 'Online'}</small>
+                      <button class="small chat-button" aria-label={`Chat with ${f.name}${state.unread?.[f.name] ? `, ${state.unread[f.name]} unread` : ''}`} onClick={() => startChat(f.name)}>
+                        Chat{state.unread?.[f.name] ? <span class="badge">{state.unread[f.name]}</span> : null}
+                      </button>
                     </span>
                     <span class="row">
                       {f.online && f.room && !f.inMatch && !f.room.startsWith('R-') && <a class="btn small primary" href={`#/room/${f.room}`}>Join</a>}
@@ -165,9 +192,24 @@ export function Friends() {
  */
 export function InviteToasts() {
   const s = useSocial();
-  const [hidden, setHidden] = useState<Set<number>>(new Set());
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [followed, setFollowed] = useState<string | null>(null);
   const [problem, setProblem] = useState('');
+  // Remembers unread counts already seen, so only new messages pop up.
+  const seenUnread = useState<Record<string, number>>({})[0];
+  const [newFrom, setNewFrom] = useState<string | null>(null);
+  useEffect(() => {
+    const unread = s.state?.unread ?? {};
+    const onFriends = location.hash.startsWith('#/friends');
+    for (const [name, n] of Object.entries(unread)) {
+      if (n > (seenUnread[name] ?? 0) && !onFriends) {
+        setNewFrom(name);
+        sound('turn', profile.muted);
+      }
+    }
+    for (const k of Object.keys(seenUnread)) delete seenUnread[k];
+    Object.assign(seenUnread, unread);
+  }, [JSON.stringify(s.state?.unread ?? {})]);
   const state = s.state;
   const party = state?.party;
 
@@ -185,6 +227,15 @@ export function InviteToasts() {
   }, [party?.room, party?.isLeader]);
 
   const invites = (state?.invites ?? []).filter((i) => !hidden.has(i.id));
+  const messageToast = newFrom && !location.hash.startsWith('#/friends') ? (
+    <div class="toast sheet">
+      <p>New message from <strong>{newFrom}</strong>.</p>
+      <div class="row">
+        <button class="small primary" onClick={() => { openChat(newFrom); setNewFrom(null); go('/friends'); }}>Open</button>
+        <button class="small" onClick={() => setNewFrom(null)}>Later</button>
+      </div>
+    </div>
+  ) : null;
   if (problem) {
     return (
       <div class="toasts" role="region" aria-label="Invitations">
@@ -192,13 +243,14 @@ export function InviteToasts() {
       </div>
     );
   }
-  if (!invites.length) return null;
-  const close = (id: number) => {
+  if (!invites.length && !messageToast) return null;
+  const close = (id: string) => {
     setHidden(new Set([...hidden, id]));
     void dismissInvite(id);
   };
   return (
     <div class="toasts" role="region" aria-label="Invitations">
+      {messageToast}
       {invites.slice(0, 3).map((i) => (
         <div class="toast sheet">
           <p><strong>{i.from}</strong> {i.kind === 'party' ? 'invited you to their party.' : 'invited you to play.'}</p>

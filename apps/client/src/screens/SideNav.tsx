@@ -1,6 +1,7 @@
 import type { ComponentChildren } from 'preact';
 import { useAuth } from '../auth';
 import { isAdminName } from './Admin';
+import { useSocial } from './Friends';
 
 interface Tab {
   path: string;
@@ -86,6 +87,8 @@ function isActive(tab: string, path: string): boolean {
 /** The left tab bar on larger screens. Phones use the menu page's tiles instead. */
 export function SideNav({ path }: { path: string }) {
   const auth = useAuth();
+  const social = useSocial();
+  const waiting = Object.values(social.state?.unread ?? {}).reduce((a, b) => a + b, 0) + (social.state?.incoming.length ?? 0);
   // The admin page shows up only for the game's owner.
   const sections = isAdminName(auth.username)
     ? SECTIONS.map((s) => (s.name === 'Misc' ? { ...s, tabs: [...s.tabs, { path: '/admin', label: 'Admin' }] } : s))
@@ -108,6 +111,7 @@ export function SideNav({ path }: { path: string }) {
               return (
                 <a class={`tab ${active ? 'active' : ''}`} href={`#${t.path}`} aria-current={active ? 'page' : undefined}>
                   {t.label}
+                  {t.path === '/friends' && waiting > 0 && <span class="badge" aria-label={`${waiting} waiting`}>{waiting}</span>}
                 </a>
               );
             })}

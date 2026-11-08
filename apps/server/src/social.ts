@@ -2,6 +2,7 @@ import { START_RATING, cleanMap } from '@mathbattles/sim';
 import { overLimit } from './limits';
 import { checkCode, decryptSecret, encryptSecret, newSecret, newSessionToken } from './mfa';
 import { newId, sha256Hex } from './security';
+import { cleanChat } from './moderation';
 
 /** What these routes need from the main worker, passed in so this file stays independent. */
 export interface ApiContext {
@@ -23,6 +24,8 @@ const ONLINE_MS = 45_000;
 const MAX_FRIENDS = 100;
 const MAX_PARTY = 6;
 const MAX_MAPS_PER_PLAYER = 30;
+const MESSAGE_MAX = 300;
+const MESSAGE_KEEP_MS = 30 * 86_400_000;
 export const ADMIN_USERNAME = 'bobblyionized';
 
 interface Named {
@@ -113,7 +116,15 @@ async function socialState(db: D1Database, uid: string) {
      JOIN usernames u ON u.uid = i.from_uid WHERE i.to_uid = ? AND i.created_at > ? ORDER BY i.created_at DESC LIMIT 10`,
   ).bind(uid, now - 10 * 60_000).all<{ id: string; from: string; kind: string; target: string }>()).results;
 
-  return { me: await nameOf(db, uid), friends, incoming, outgoing, party, invites };
+  const unreadRows = (await db.prepare('SELECT from_uid AS uid, COUNT(*) AS n FROM messages WHERE to_uid = ? AND read_at IS NULL GROUP BY from_uid')
+    .bind(uid).all<{ uid: string; n: number }>()).results;
+  const unread: Record<string, number> = {};
+  for (const r of unreadRows) {
+    const f = friendRows.find((x) => x.uid === r.uid);
+    if (f) unread[f.name] = r.n;
+  }
+
+  return { me: await nameOf(db, uid), friends, incoming, outgoing, party, invites, unread };
 }
 
 async function leaveParty(db: D1Database, uid: string): Promise<void> {
@@ -191,6 +202,7 @@ export async function handleSocial(ctx: ApiContext): Promise<Response | null> {
         await db.batch([
           db.prepare('DELETE FROM friends WHERE uid = ? AND friend_uid = ?').bind(uid, other.uid),
           db.prepare('DELETE FROM friends WHERE uid = ? AND friend_uid = ?').bind(other.uid, uid),
+          db.prepare('DELETE FROM messages WHERE (from_uid = ? AND to_uid = ?) OR (from_uid = ? AND to_uid = ?)').bind(uid, other.uid, other.uid, uid),
         ]);
         return json({ ok: true });
     }
@@ -215,6 +227,71 @@ export async function handleSocial(ctx: ApiContext): Promise<Response | null> {
       return json({ ok: true, message: `Invited ${other.display}.` });
     }
     return json({ error: 'Unknown action' }, 400);
+  }
+
+  if (route === 'messages') {
+    if (!uid) return signIn();
+    const me = await nameOf(db, uid);
+    if (!me) return json({ error: 'Choose a username first.' }, 403);
+
+    if (parts[2] === 'report' && req.method === 'POST') {
+      if (await overLimit(db, `dm-report:${uid}`, 20, 3_600_000)) return tooMany();
+      const b = await body<{ id?: string }>(req);
+      // Only a message someone sent to you can be reported.
+      const msg = await db.prepare('SELECT m.body AS body, u.display AS sender FROM messages m JOIN usernames u ON u.uid = m.from_uid WHERE m.id = ? AND m.to_uid = ?')
+        .bind(String(b?.id ?? '').slice(0, 64), uid).first<{ body: string; sender: string }>();
+      if (!msg) return json({ error: 'That message is gone.' }, 404);
+      await db.prepare('INSERT INTO reports (code, reported, text, created_at) VALUES (?, ?, ?, ?)').bind('DM', msg.sender.slice(0, 32), msg.body.slice(0, 300), Date.now()).run();
+      return json({ ok: true, message: 'Thanks. The message was reported.' });
+    }
+
+    if (req.method === 'POST' && !parts[2]) {
+      // Short bursts are fine; floods aren't.
+      if (await overLimit(db, `dm-burst:${uid}`, 15, 60_000)) return json({ error: 'Slow down a little, then try again.' }, 429);
+      if (await overLimit(db, `dm-hour:${uid}`, 400, 3_600_000)) return tooMany();
+      const b = await body<{ to?: string; text?: string }>(req);
+      const other = await byName(db, b?.to);
+      if (!other || !(await areFriends(db, uid, other.uid))) return json({ error: 'You can only message friends.' }, 403);
+      const text = cleanChat(String(b?.text ?? ''), MESSAGE_MAX);
+      if (!text) return json({ error: 'Type a message first.' }, 400);
+      const msg = { id: newId(), at: Date.now() };
+      await db.prepare('INSERT INTO messages (id, from_uid, to_uid, body, created_at) VALUES (?, ?, ?, ?, ?)').bind(msg.id, uid, other.uid, text, msg.at).run();
+      return json({ id: msg.id, from: me, mine: true, text, at: msg.at, seen: false });
+    }
+
+    if (req.method === 'GET' && parts[2]) {
+      if (await overLimit(db, `dm-read:${uid}`, 2000, 3_600_000)) return tooMany();
+      let name = '';
+      try {
+        name = decodeURIComponent(parts[2]);
+      } catch {
+        return json({ error: 'No such player' }, 404);
+      }
+      const other = await byName(db, name);
+      if (!other || !(await areFriends(db, uid, other.uid))) return json({ error: 'You can only message friends.' }, 403);
+      const url = new URL(req.url);
+      const before = Number(url.searchParams.get('before')) || Date.now() + 1;
+      const rows = (await db.prepare(
+        `SELECT id, from_uid, body, created_at, read_at FROM messages
+         WHERE ((from_uid = ? AND to_uid = ?) OR (from_uid = ? AND to_uid = ?)) AND created_at < ?
+         ORDER BY created_at DESC LIMIT 50`,
+      ).bind(uid, other.uid, other.uid, uid, before).all<{ id: string; from_uid: string; body: string; created_at: number; read_at: number | null }>()).results;
+      // Opening the conversation marks their messages as seen.
+      await db.prepare('UPDATE messages SET read_at = ? WHERE to_uid = ? AND from_uid = ? AND read_at IS NULL').bind(Date.now(), uid, other.uid).run();
+      return json({
+        friend: other.display,
+        more: rows.length === 50,
+        messages: rows.reverse().map((r) => ({
+          id: r.id,
+          from: r.from_uid === uid ? me : other.display,
+          mine: r.from_uid === uid,
+          text: r.body,
+          at: r.created_at,
+          seen: r.from_uid === uid ? r.read_at !== null : true,
+        })),
+      });
+    }
+    return json({ error: 'Not found' }, 404);
   }
 
   if (route === 'party' && req.method === 'POST') {
@@ -421,5 +498,6 @@ export function socialCleanup(db: D1Database, now: number): Promise<unknown>[] {
     db.prepare('DELETE FROM invites WHERE created_at < ?').bind(now - 86_400_000).run(),
     db.prepare('DELETE FROM presence WHERE last_seen < ?').bind(now - 7 * 86_400_000).run(),
     db.prepare('DELETE FROM admin_sessions WHERE expires_at < ?').bind(now).run(),
+    db.prepare('DELETE FROM messages WHERE created_at < ?').bind(now - MESSAGE_KEEP_MS).run(),
   ];
 }

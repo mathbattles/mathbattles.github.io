@@ -137,13 +137,15 @@ export interface SocialState {
   incoming: string[];
   outgoing: string[];
   party: { id: string; leader: string; isLeader: boolean; members: { name: string; online: boolean; leader: boolean }[]; room: string | null } | null;
-  invites: { id: number; from: string; kind: 'room' | 'party'; target: string }[];
+  invites: { id: string; from: string; kind: 'room' | 'party'; target: string }[];
+  /** Unread direct messages, by friend's name. */
+  unread?: Record<string, number>;
 }
 /** Says which room this player is in, and gets friends, party and invites back. */
 export const pingSocial = (room: string | null) => post<SocialState>('/api/social', { room });
 export const friendAction = (action: 'request' | 'accept' | 'decline' | 'cancel' | 'remove', name: string) => post<{ ok: boolean; message?: string }>('/api/friends', { action, name });
 export const inviteToRoom = (name: string, room: string) => post<{ ok: boolean; message?: string }>('/api/invites', { action: 'room', name, room });
-export const dismissInvite = (id: number) => post<{ ok: boolean }>('/api/invites', { action: 'dismiss', id });
+export const dismissInvite = (id: string) => post<{ ok: boolean }>('/api/invites', { action: 'dismiss', id });
 export const partyAction = (action: 'create' | 'invite' | 'join' | 'leave' | 'kick', extra: { name?: string; id?: string } = {}) =>
   post<{ ok: boolean; message?: string }>('/api/party', { action, ...extra });
 
@@ -219,3 +221,17 @@ export async function adminLogout() {
 }
 export const adminData = () => adminCall<AdminData>('/api/admin');
 export const adminDeleteReport = (id: number) => adminCall<{ ok: boolean }>(`/api/admin/reports/${id}`, { method: 'DELETE' });
+
+export interface DirectMessage {
+  id: string;
+  from: string;
+  mine: boolean;
+  text: string;
+  at: number;
+  /** For your own messages: whether your friend has opened the chat since. */
+  seen: boolean;
+}
+export const fetchMessages = (name: string, before?: number) =>
+  authed<{ friend: string; more: boolean; messages: DirectMessage[] }>(`/api/messages/${encodeURIComponent(name)}${before ? `?before=${before}` : ''}`);
+export const sendMessage = (to: string, text: string) => post<DirectMessage>('/api/messages', { to, text });
+export const reportMessage = (id: string) => post<{ ok: boolean; message?: string }>('/api/messages/report', { id });

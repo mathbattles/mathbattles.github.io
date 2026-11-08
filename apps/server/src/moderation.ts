@@ -1,8 +1,8 @@
 // Short starter lists. Reports cover what they miss.
 // Long, unambiguous words are blocked anywhere inside a word.
-const BLOCKED_ANYWHERE = ['fuck', 'shit', 'bitch', 'cunt', 'nigger', 'nigga', 'faggot'];
+const BLOCKED_ANYWHERE = ['fuck', 'shit', 'bitch', 'cunt', 'nigger', 'nigga', 'faggot', 'asshole', 'pussy', 'motherf', 'dickhead', 'wanker'];
 // Short words appear inside innocent words ("Skysurfer", "Slutsky"), so these must match exactly.
-const BLOCKED_EXACT = ['retard', 'whore', 'slut', 'kys'];
+const BLOCKED_EXACT = ['retard', 'whore', 'slut', 'kys', 'dick', 'cock', 'fag', 'rape', 'ass', 'bastard', 'porn', 'sex', 'twat'];
 
 function normalize(word: string): string {
   return word
@@ -17,8 +17,14 @@ function normalize(word: string): string {
 
 function isBlocked(word: string): boolean {
   const n = normalize(word);
-  if (BLOCKED_ANYWHERE.some((b) => n.includes(b))) return true;
-  return BLOCKED_EXACT.some((b) => n === b || n === `${b}s`);
+  // Stretched spellings ("fuuuck") are checked with repeated letters squeezed down too.
+  const squeeze = (t: string) => t.replace(/(.)\1+/g, '$1');
+  const squeezed = squeeze(n);
+  for (const form of [n, squeezed]) {
+    if (BLOCKED_ANYWHERE.some((b) => form.includes(b) || form.includes(squeeze(b)))) return true;
+    if (BLOCKED_EXACT.some((b) => form === b || form === `${b}s`)) return true;
+  }
+  return false;
 }
 
 // Control and formatting characters, direction overrides, and blank-looking letters.
@@ -28,8 +34,8 @@ function strip(text: string): string {
   return text.replace(INVISIBLE, '');
 }
 
-export function cleanChat(text: string): string {
-  const t = strip(text).trim().slice(0, 140);
+export function cleanChat(text: string, max = 140): string {
+  const t = strip(text).trim().replace(/\s{3,}/g, '  ').slice(0, max);
   return t
     .split(/(\s+)/)
     .map((w) => (isBlocked(w) ? '#'.repeat(w.length) : w))
