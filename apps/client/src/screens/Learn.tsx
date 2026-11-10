@@ -3,17 +3,17 @@ import {
   ParseError,
   RuleError,
   Terrain,
-  fire,
+  resolveRound,
   simulateShot,
   soloCleared,
   soloHitFriend,
-  soloNext,
   terrainOf,
   toGameX,
   toGameY,
   validate,
   type Dir,
   type EndReason,
+  type ShotEnd,
   type MatchState,
   type ShotMode,
   type ShotRecord,
@@ -40,6 +40,7 @@ import { cosmeticValue, look, markLearned, profile } from '../store';
 import { modeLabel, sound } from '../util';
 import { Tex } from './GameView';
 import { TopBar, useProfile } from './Shared';
+import { t } from '../i18n';
 
 /** Turns `backticks` into math text. */
 function Rich({ text }: { text: string }) {
@@ -47,12 +48,14 @@ function Rich({ text }: { text: string }) {
   return <>{parts.map((part, i) => (i % 2 ? <code>{part}</code> : part))}</>;
 }
 
-const REASON_TEXT: Record<EndReason, string> = {
+const REASON_TEXT: Record<EndReason | Exclude<ShotEnd, EndReason>, string> = {
   obstacle: 'It ended at an obstacle.',
   edge: 'It left the board.',
   invalid: "It hit an invalid value, such as the square root of a negative number.",
   steep: 'It hit a sudden jump, and shots can\'t jump.',
   'too-long': 'It ran out of length, because the curve is too wiggly.',
+  killed: 'Its shooter was knocked out, so it stopped.',
+  collision: 'It met another shot head to head.',
 };
 
 const fmt = (n: number) => (Math.round(n * 10) / 10).toString();
@@ -111,7 +114,7 @@ function Board(props: {
   };
   return (
     <div class="lesson-field">
-      <canvas ref={canvas} width={770} height={450} onMouseMove={move} onMouseLeave={() => setHover('')} aria-label="Practice graph" role="img" />
+      <canvas ref={canvas} width={770} height={450} onMouseMove={move} onMouseLeave={() => setHover('')} aria-label={t('ui.practiceGraph')} role="img" />
       {hover && <span class="coords">{hover}</span>}
       {props.overlay}
     </div>
@@ -134,7 +137,7 @@ function FunctionBox(props: {
     <>
       <div class="shotrow">
         <label>{modeLabel(props.mode)}
-          <span class="sr-only"> function</span>
+          <span class="sr-only"> {t('ui.function')}</span>
         </label>
         <input
           ref={box}
@@ -146,7 +149,7 @@ function FunctionBox(props: {
           autocomplete="off"
           autocapitalize="off"
           spellcheck={false}
-          placeholder="Type a function"
+          placeholder={t('ui.typeAFunction')}
           onInput={(e) => props.onExpr((e.target as HTMLInputElement).value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') props.onFire();
@@ -167,10 +170,10 @@ function AngleControls({ angle, onAngle, disabled }: { angle: number; onAngle: (
   return (
     <div class="controls2">
       <span>Angle {((angle * 180) / Math.PI).toFixed(1)}°</span>
-      <button class="small" aria-label="Lower angle" disabled={disabled} onClick={() => onAngle(clamp(angle - 0.02))}>Down</button>
-      <button class="small" aria-label="Raise angle" disabled={disabled} onClick={() => onAngle(clamp(angle + 0.02))}>Up</button>
-      <button class="small" aria-label="Lower angle a lot" disabled={disabled} onClick={() => onAngle(clamp(angle - 0.1))}>Down more</button>
-      <button class="small" aria-label="Raise angle a lot" disabled={disabled} onClick={() => onAngle(clamp(angle + 0.1))}>Up more</button>
+      <button class="small" aria-label={t('ui.lowerAngle')} disabled={disabled} onClick={() => onAngle(clamp(angle - 0.02))}>{t('ui.down')}</button>
+      <button class="small" aria-label={t('ui.raiseAngle')} disabled={disabled} onClick={() => onAngle(clamp(angle + 0.02))}>{t('ui.up')}</button>
+      <button class="small" aria-label={t('ui.lowerAngleALot')} disabled={disabled} onClick={() => onAngle(clamp(angle - 0.1))}>{t('ui.downMore')}</button>
+      <button class="small" aria-label={t('ui.raiseAngleALot')} disabled={disabled} onClick={() => onAngle(clamp(angle + 0.1))}>{t('ui.upMore')}</button>
     </div>
   );
 }
@@ -188,12 +191,16 @@ function showCurve(stage: Stage | null, state: MatchState, expr: string, angle: 
 
 /** Fires for real on this board, and returns what happened. */
 async function fireOn(stage: Stage | null, state: MatchState, terrain: Terrain, expr: string, angle: number, dir: Dir): Promise<ShotRecord> {
-  const { record, result } = fire(state, ME, { expr, angle, dir }, terrain);
-  soloNext(state);
+  const err = validate(expr, state.config.mode);
+  if (err) throw new ParseError(err.message, err.position);
+  const holes = state.holes.slice();
+  const round = resolveRound(state, [{ playerId: ME, expr, angle, dir }], terrain);
+  const record = round.shots[0]!;
   sound('fire', profile.muted);
   if (stage) {
     stage.state = state;
-    await stage.playShot(record, { xs: result.xs, ys: result.ys, steps: result.steps });
+    const path = simulateShot({ mode: record.mode, expr, angle: record.angle, dir: record.dir, mirrored: record.mirrored, from: record.from, terrain: new Terrain(state.circles, holes), targets: [] });
+    await stage.playRound(round, [{ xs: path.xs, ys: path.ys, steps: Math.min(path.steps, record.steps) }]);
   }
   return record;
 }
@@ -235,7 +242,7 @@ function PlaygroundBlock({ block }: { block: Playground }) {
     <div class="lesson-box">
       <p class="box-note"><Rich text={block.note} /></p>
       <Board state={state.current} handle={handle} aimAngle={block.mode === 'ode2' ? angle : null} dir={1} />
-      <div class="chips" role="group" aria-label="Examples">
+      <div class="chips" role="group" aria-label={t('ui.examples')}>
         {block.examples.map((ex) => (
           <button class={`chip ${expr === ex.expr ? 'on' : ''}`} disabled={busy} onClick={() => { setExpr(ex.expr); if (ex.angle !== undefined) setAngle(ex.angle); }}>
             <code>{ex.expr}</code>
@@ -408,23 +415,23 @@ function ChallengeBlock({ block, onDone, done }: { block: Challenge; onDone: (id
 
   return (
     <div class={`lesson-box challenge ${won || done ? 'cleared' : ''}`} data-challenge={block.id}>
-      <h3>{block.title}{(won || done) && <span class="ok"> Done</span>}</h3>
+      <h3>{block.title}{(won || done) && <span class="ok"> {t('ui.done')}</span>}</h3>
       <p><Rich text={block.task} /></p>
       <Board state={state.current} handle={handle} aimAngle={block.mode === 'ode2' ? angle : null} dir={dir} />
       {positions()}
       {won ? (
         <div class="row">
           <p class="ok" role="status" style={{ margin: 0 }}>{message}</p>
-          <button class="small" onClick={again}>Try another way</button>
+          <button class="small" onClick={again}>{t('ui.tryAnotherWay')}</button>
         </div>
       ) : (
         <>
           <FunctionBox mode={block.mode} expr={expr} onExpr={setExpr} onFire={() => void shoot()} disabled={busy} error={error} />
           {block.mode === 'ode2' && <AngleControls angle={angle} onAngle={setAngle} disabled={busy} />}
           {block.ffa && (
-            <div class="controls2" role="group" aria-label="Shot direction">
-              <button class="small dir-plus" disabled={busy} onClick={() => setDir(1)} aria-pressed={dir === 1}>Fire toward +x</button>
-              <button class="small dir-minus" disabled={busy} onClick={() => setDir(-1)} aria-pressed={dir === -1}>Fire toward −x</button>
+            <div class="controls2" role="group" aria-label={t('ui.shotDirection')}>
+              <button class="small dir-plus" disabled={busy} onClick={() => setDir(1)} aria-pressed={dir === 1}>{t('ui.fireTowardX')}</button>
+              <button class="small dir-minus" disabled={busy} onClick={() => setDir(-1)} aria-pressed={dir === -1}>{t('ui.fireTowardX2')}</button>
             </div>
           )}
           {message && <p class="miss" role="status">{message}</p>}
@@ -433,7 +440,7 @@ function ChallengeBlock({ block, onDone, done }: { block: Challenge; onDone: (id
             {hintsShown < block.hints.length ? (
               <button class={`small ${misses >= 2 ? 'on' : ''}`} onClick={() => setHintsShown(hintsShown + 1)}>{hintsShown === 0 ? 'Show a hint' : 'Show another hint'}</button>
             ) : (
-              <button class="small" onClick={() => { setExpr(block.solution); if (block.angle !== undefined) setAngle(block.angle); if (block.dir) setDir(block.dir); }}>Fill in the answer</button>
+              <button class="small" onClick={() => { setExpr(block.solution); if (block.angle !== undefined) setAngle(block.angle); if (block.dir) setDir(block.dir); }}>{t('ui.fillInTheAnswer')}</button>
             )}
           </div>
         </>
@@ -448,7 +455,7 @@ function QuizBlock({ block, onDone, done }: { block: Quiz; onDone: (id: string) 
   return (
     <div class={`lesson-box quiz ${right ? 'cleared' : ''}`} data-quiz={block.id}>
       <h3><Rich text={block.q} /></h3>
-      <div class="quiz-options" role="group" aria-label="Answers">
+      <div class="quiz-options" role="group" aria-label={t('ui.answers')}>
         {block.options.map((o, i) => (
           <button
             class={`${picked === i ? (i === block.answer ? 'right' : 'wrong') : ''}`}
@@ -513,16 +520,16 @@ function LessonScreen({ lesson }: { lesson: Lesson }) {
   }, [lesson.id]);
   return (
     <div class="page lesson">
-      <TopBar title="Learn" />
-      <p class="crumb"><a href="#/learn">All lessons</a>, lesson {index + 1} of {LESSONS.length}</p>
+      <TopBar title={t('ui.learn')} />
+      <p class="crumb"><a href="#/learn">{t('ui.allLessons')}</a>, lesson {index + 1} of {LESSONS.length}</p>
       <h2>{lesson.title}</h2>
       <p class="muted">{lesson.blurb}</p>
       {lesson.blocks.map((b, i) => <BlockView key={`${lesson.id}-${i}`} block={b} lesson={lesson} onDone={markLearned} />)}
       <div class="lesson-foot">
         {!isRead && <p class={finished === required.length ? 'ok' : 'muted'}>{finished === required.length ? 'Lesson complete.' : `${finished} of ${required.length} exercises done.`}</p>}
         <div class="row">
-          {prev && <a class="btn" href={`#/learn/${prev.id}`}>Previous lesson</a>}
-          {next ? <a class={`btn ${finished === required.length ? 'primary' : ''}`} href={`#/learn/${next.id}`}>Next: {next.title}</a> : <a class="btn primary" href="#/local">Play your first match</a>}
+          {prev && <a class="btn" href={`#/learn/${prev.id}`}>{t('ui.previousLesson')}</a>}
+          {next ? <a class={`btn ${finished === required.length ? 'primary' : ''}`} href={`#/learn/${next.id}`}>Next: {next.title}</a> : <a class="btn primary" href="#/local">{t('ui.playYourFirstMatch')}</a>}
         </div>
       </div>
     </div>
@@ -535,19 +542,19 @@ function Overview() {
   const nextUp = LESSONS.find((l) => !lessonDone(l, profile.learnDone));
   return (
     <div class="page">
-      <TopBar title="Learn" />
+      <TopBar title={t('ui.learn')} />
       <div class="sheet learn-top">
         <h3>{done === 0 ? 'Learn to play, step by step' : done === LESSONS.length ? "You've finished the course" : 'Pick up where you left off'}</h3>
-        <p>Each lesson explains one idea, lets you experiment with it on a real board, then has you try it. By the end, you'll be able to read any board and pick the right shot.</p>
-        <div class="bar" role="progressbar" aria-label="Course progress" aria-valuenow={done} aria-valuemax={LESSONS.length}><i style={{ width: `${(done / LESSONS.length) * 100}%` }} /></div>
+        <p>{t('ui.eachLessonExplainsOneIdeaLets')}</p>
+        <div class="bar" role="progressbar" aria-label={t('ui.courseProgress')} aria-valuenow={done} aria-valuemax={LESSONS.length}><i style={{ width: `${(done / LESSONS.length) * 100}%` }} /></div>
         <p class="muted" style={{ marginTop: 6 }}>{done} of {LESSONS.length} lessons complete</p>
         {nextUp ? (
           <a class="btn primary" href={`#/learn/${nextUp.id}`}>{done === 0 ? 'Start the first lesson' : `Continue: ${nextUp.title}`}</a>
         ) : (
           <div class="row">
-            <a class="btn primary" href="#/local">Play bots</a>
-            <a class="btn" href="#/campaign">Try the campaign</a>
-            <a class="btn" href="#/online">Play online</a>
+            <a class="btn primary" href="#/local">{t('ui.playBots')}</a>
+            <a class="btn" href="#/campaign">{t('ui.tryTheCampaign')}</a>
+            <a class="btn" href="#/online">{t('ui.playOnline')}</a>
           </div>
         )}
       </div>
@@ -562,7 +569,7 @@ function Overview() {
                 const isDone = lessonDone(l, profile.learnDone);
                 return (
                   <a class={`lesson-link ${isDone ? 'done' : ''} ${nextUp === l ? 'next' : ''}`} href={`#/learn/${l.id}`}>
-                    <strong>{isDone && <span aria-label="Complete">✓ </span>}{l.title}</strong>
+                    <strong>{isDone && <span aria-label={t('ui.complete')}>✓ </span>}{l.title}</strong>
                     <small>{l.blurb}</small>
                   </a>
                 );
@@ -581,8 +588,8 @@ export function Learn({ lessonId }: { lessonId?: string }) {
   if (!lesson) {
     return (
       <div class="page">
-        <TopBar title="Learn" />
-        <div class="sheet"><h3>That lesson doesn't exist</h3><a class="btn" href="#/learn">See all lessons</a></div>
+        <TopBar title={t('ui.learn')} />
+        <div class="sheet"><h3>{t('ui.thatLessonDoesnTExist')}</h3><a class="btn" href="#/learn">{t('ui.seeAllLessons')}</a></div>
       </div>
     );
   }

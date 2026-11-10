@@ -20,6 +20,7 @@ import { cleanName, isBlockedName } from './moderation';
 import { RoomCore } from './roomCore';
 import { handleSocial, socialCleanup } from './social';
 import { SECURITY_HEADERS, allowedOrigins, logError, originOk } from './security';
+import { loadReplay, replayCleanup, storeReplay } from './replays';
 
 export interface Env {
   ROOM: DurableObjectNamespace;
@@ -152,6 +153,7 @@ function cleanDeviceRecord(b: Partial<MatchRecord> | null): MatchRecord | null {
     kills: count(b.kills),
     shots: count(b.shots),
     ...(b.replay ? { replay: b.replay } : {}),
+    ...(typeof b.replayId === 'string' && /^[A-Za-z0-9]{8}$/.test(b.replayId) ? { replayId: b.replayId } : {}),
   };
 }
 
@@ -173,6 +175,22 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
   switch (parts[1]) {
     case 'health':
       return json({ ok: true });
+
+    case 'replays': {
+      // Short replay links. Anyone can make or open one; making them is rate-limited.
+      if (req.method === 'POST' && !parts[2]) {
+        if (await limitIp('replays', 60, HOUR)) return tooMany();
+        const body = await readJson<{ code?: unknown }>(req);
+        const id = await storeReplay(env.DB, typeof body?.code === 'string' ? body.code : '');
+        return id ? json({ id }) : json({ error: "That replay couldn't be saved." }, 400);
+      }
+      if (req.method === 'GET' && parts[2]) {
+        if (await limitIp('replay-view', 600, HOUR)) return tooMany();
+        const code = await loadReplay(env.DB, parts[2]);
+        return code ? json({ code }) : json({ error: 'Replay not found' }, 404);
+      }
+      return json({ error: 'Not found' }, 404);
+    }
 
     case 'rooms': {
       if (req.method === 'POST') {
@@ -376,6 +394,7 @@ export default {
       env.DB.prepare('DELETE FROM reports WHERE created_at < ?').bind(now.getTime() - 90 * 86_400_000).run(),
       env.DB.prepare('DELETE FROM rate_limits WHERE window_start < ?').bind(now.getTime() - 86_400_000).run(),
       ...socialCleanup(env.DB, now.getTime()),
+      replayCleanup(env.DB, now.getTime()).run(),
     ];
     if (now.getUTCDate() === 1 && now.getUTCMonth() % 3 === 0) {
       const period = `${now.getUTCFullYear()}-${now.getUTCMonth() + 1}`;
@@ -464,7 +483,8 @@ export class RoomObject implements DurableObject {
       },
       onLobbyChange: (info) => this.saveLobby(code, info),
       onRankedOver: (winner, loser) => this.settleRanked(winner, loser),
-      onMatchOver: (state, setups, delta) => this.saveHistory(code, state, setups, delta),
+      saveReplay: async (replay) => (await storeReplay(this.env.DB, replay)) ?? undefined,
+      onMatchOver: (state, setups, delta, replayId) => this.saveHistory(code, state, setups, delta, replayId),
     }, { ranked, rankedPair: pair });
     return this.core;
   }
@@ -495,12 +515,12 @@ export class RoomObject implements DurableObject {
   }
 
   /** Records the match for every signed-in player in it. Guests' devices keep their own copy. */
-  private saveHistory(code: string, state: MatchState, setups: PlayerSetup[], ratingDelta: number | undefined): void {
+  private saveHistory(code: string, state: MatchState, setups: PlayerSetup[], ratingDelta: number | undefined, replayId?: string): void {
     const statements: D1PreparedStatement[] = [];
     const at = Date.now();
     for (const [seat, uid] of this.seatUid) {
       if (!state.players.some((p) => p.id === seat)) continue;
-      const base = matchRecordFor(state, setups, seat, { id: `${code}-${state.config.seed}`, at, kind: code.startsWith('R-') ? 'ranked' : 'online' });
+      const base = matchRecordFor(state, setups, seat, { id: `${code}-${state.config.seed}`, at, kind: code.startsWith('R-') ? 'ranked' : 'online', ...(replayId ? { replayId } : {}) });
       const record = ratingDelta === undefined ? base : { ...base, ratingDelta: base.result === 'win' ? ratingDelta : -ratingDelta };
       statements.push(...historyStatements(this.env, uid, record, 'server'));
     }

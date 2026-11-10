@@ -1,5 +1,5 @@
 /**
- * The three background tracks, written as notes. Nothing here makes sound, so it can be tested.
+ * The six background tracks, written as notes. Nothing here makes sound, so it can be tested.
  *
  * The style follows published guidance for focus music: about 75 BPM, warm major keys,
  * one chord every two bars, three to five layers (soft pad, sparse piano, sub bass, plus
@@ -36,6 +36,8 @@ export interface Track {
   seed: number;
   /** Length in bars before the next track starts. */
   bars: number;
+  /** How many of the piano's notes play, from 0 to 1. Lower is sparser and more spacious. */
+  pianoDensity?: number;
 }
 
 export const BEATS_PER_BAR = 4;
@@ -81,6 +83,44 @@ export const TRACKS: Track[] = [
     seed: 37,
     bars: 48,
   },
+  {
+    // E-flat major, warm and low: Ebmaj9, Cm7, Abmaj7, Bbsus4.
+    name: 'Chalk Dust',
+    bpm: 70,
+    scale: scaleOf(3),
+    chords: [[55, 58, 62, 65], [55, 58, 60, 63], [56, 60, 63, 67], [53, 58, 63, 65]],
+    bass: [39, 36, 32, 34],
+    melody: [[67, 70, 74, 75, 77], [67, 70, 72, 75, 79], [68, 72, 75, 79, 80], [70, 72, 75, 77, 82]],
+    bells: false,
+    seed: 51,
+    bars: 48,
+    pianoDensity: 0.85,
+  },
+  {
+    // G major, brighter, with glass bells: Gmaj7, Em9, Cmaj9, D6.
+    name: 'Quiet Proof',
+    bpm: 76,
+    scale: scaleOf(7),
+    chords: [[55, 59, 62, 66], [52, 59, 62, 66], [52, 55, 59, 62], [54, 57, 59, 62]],
+    bass: [43, 40, 36, 38],
+    melody: [[67, 71, 74, 78, 79], [66, 67, 71, 74, 76], [64, 67, 71, 72, 76], [66, 69, 71, 74, 78]],
+    bells: true,
+    seed: 67,
+    bars: 48,
+  },
+  {
+    // C major, leaning on its relative minor, slow and spacious: Am9, Fmaj7, Cmaj7, G6.
+    name: 'Night Shift',
+    bpm: 74,
+    scale: scaleOf(0),
+    chords: [[55, 59, 60, 64], [53, 57, 60, 64], [52, 55, 59, 64], [55, 59, 62, 64]],
+    bass: [33, 29, 36, 31],
+    melody: [[64, 67, 69, 71, 72], [64, 65, 69, 72, 76], [64, 67, 71, 72, 76], [62, 64, 67, 71, 74]],
+    bells: false,
+    seed: 83,
+    bars: 48,
+    pianoDensity: 0.7,
+  },
 ];
 
 /** A small seeded random number generator, so each track is always the same. */
@@ -116,7 +156,10 @@ function phraseFor(track: Track): Phrase {
   const bars: [number, number][][] = [];
   let idx = 2;
   for (let b = 0; b < 8; b++) {
-    const rhythm = RHYTHMS[Math.floor(r() * RHYTHMS.length)]!;
+    let rhythm = RHYTHMS[Math.floor(r() * RHYTHMS.length)]!;
+    // Sparser tracks drop some notes. Tracks without a density keep their exact notes.
+    const density = track.pianoDensity;
+    if (density !== undefined && density < 1) rhythm = rhythm.filter((_, k) => k === 0 || r() < density);
     bars.push(rhythm.map((beat) => {
       // Small steps up or down, so the line is smooth.
       idx = Math.max(0, Math.min(4, idx + Math.floor(r() * 3) - 1));

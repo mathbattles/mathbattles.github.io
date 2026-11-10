@@ -6,7 +6,9 @@ import { runDemo } from '../render/demo';
 import { drawHat } from '../render/doodles';
 import { drawObstacle, obstacleStyle } from '../render/obstacles';
 import { Stage, THEMES, drawBlast, strokeTrail, type ThemeId } from '../render/stage';
-import { buy, cosmeticValue, equip, profile, saveProfile } from '../store';
+import { UI_SCALE_MAX, UI_SCALE_MIN, buy, cosmeticValue, equip, profile, saveProfile, setUiScale } from '../store';
+import { Dropdown } from './Dropdown';
+import { LANGS, browserLang, isLang, setLanguage, t, useLang } from '../i18n';
 import { AccountPanel } from './Account';
 import { MyHistory } from './History';
 import { TopBar, useProfile } from './Shared';
@@ -166,7 +168,7 @@ export function Shop() {
       <div class={`item ${previewId === c.id ? 'previewing' : ''}`}>
         <ItemThumb item={c} />
         <strong>{c.name}</strong>
-        <button class={`small ${previewId === c.id ? 'on' : ''}`} aria-label={`Preview ${c.name}`} aria-pressed={previewId === c.id} onClick={() => setPreviewId(c.id)}>Preview</button>
+        <button class={`small ${previewId === c.id ? 'on' : ''}`} aria-label={`Preview ${c.name}`} aria-pressed={previewId === c.id} onClick={() => setPreviewId(c.id)}>{t('ui.preview')}</button>
         {owned ? (
           <button class="small" data-sfx="none" disabled={on} onClick={() => { equip(c.id); sound('equip', profile.muted); }}>{on ? 'Equipped' : 'Equip'}</button>
         ) : c.season ? (
@@ -189,8 +191,8 @@ export function Shop() {
   };
   return (
     <div class="page">
-      <TopBar title="Shop" />
-      <p>Season pass rewards aren't sold here: earn them on your profile's season pass, and find them in your Inventory. Everything here is cosmetic. All functions and modes are free to every player. Obstacle designs change what you see, and everyone else sees their own. Kill effects play where your shot knocks someone out.</p>
+      <TopBar title={t('ui.shop')} />
+      <p>{t('ui.seasonPassRewardsArenTSold')}</p>
       {error && <p class="error" role="alert">{error}</p>}
       <div class="shop-layout">
         <ShopPreview item={previewing} />
@@ -217,12 +219,12 @@ export function ProfileScreen() {
   useEffect(() => setName(profile.name), [profile.name]);
   return (
     <div class="page">
-      <TopBar title="Profile" />
+      <TopBar title={t('ui.profile')} />
       <div class="grid-2">
         <div class="sheet">
           <h3>{profile.name}{title ? `, ${title}` : ''}</h3>
           {auth.username ? (
-            <p>Your name is your username.</p>
+            <p>{t('ui.yourNameIsYourUsername')}</p>
           ) : (
             <label>Name{' '}
               <input
@@ -241,18 +243,18 @@ export function ProfileScreen() {
             </label>
           )}
           <p style={{ marginTop: 10, marginBottom: 4 }}>Level {lv.level}: {lv.into} of {lv.need} XP</p>
-          <div class="bar" role="progressbar" aria-valuenow={lv.into} aria-valuemax={lv.need} aria-label="Progress to next level"><i style={{ width: `${(lv.into / lv.need) * 100}%` }} /></div>
+          <div class="bar" role="progressbar" aria-valuenow={lv.into} aria-valuemax={lv.need} aria-label={t('ui.progressToNextLevel')}><i style={{ width: `${(lv.into / lv.need) * 100}%` }} /></div>
           <p style={{ marginTop: 10 }}>{profile.wins} wins in {profile.matches} matches. {profile.kills} hits. Best shot: {profile.bestCombo} hits.</p>
         </div>
         <div class="sheet">
-          <h3>Account</h3>
+          <h3>{t('ui.account')}</h3>
           <AccountPanel />
         </div>
       </div>
       <SeasonPass />
       <QuestsPanel />
       <div class="sheet">
-        <h3>Match history</h3>
+        <h3>{t('ui.matchHistory')}</h3>
         <MyHistory />
       </div>
       <div class="sheet">
@@ -278,68 +280,117 @@ export function ProfileScreen() {
 
 export function Settings() {
   useProfile();
-  const setTheme = (t: ThemeId) => { profile.theme = t; saveProfile(); };
+  useLang();
+  const setTheme = (id: ThemeId) => { profile.theme = id; saveProfile(); };
+  const lang = isLang(profile.language) ? profile.language : '';
+  const pct = Math.round(profile.uiScale * 100);
   return (
     <div class="page">
-      <TopBar title="Settings" />
+      <TopBar title={t('settings.title')} />
       <div class="sheet">
-        <h3>UI design</h3>
-        <p>Changes the look of the whole game. It doesn't affect how anything plays.</p>
-        <div class="designs" role="group" aria-label="UI design">
-          {(Object.keys(THEMES) as ThemeId[]).map((t) => (
-            <button
-              class={`design ${profile.theme === t ? 'on' : ''}`}
-              aria-pressed={profile.theme === t}
-              onClick={() => setTheme(t)}
-            >
-              <span class="swatch" style={{ '--sw-page': THEMES[t].swatch.page, '--sw-line': THEMES[t].swatch.line, '--sw-ink': THEMES[t].swatch.ink }} />
-              <span class="label">{THEMES[t].name}</span>
+        <h3>{t('settings.language')}</h3>
+        <span class="dd-field">
+          <Dropdown
+            label={t('settings.language')}
+            value={lang}
+            onChange={(v) => {
+              profile.language = v;
+              saveProfile();
+              void setLanguage(isLang(v) ? v : browserLang());
+            }}
+            options={[{ value: '', label: t('settings.languageAuto') }, ...LANGS.map((l) => ({ value: l.id, label: l.name }))]}
+          />
+        </span>
+        <p class="muted small-note" style={{ marginTop: 8 }}>{t('settings.languageNote')}</p>
+      </div>
+      <div class="sheet">
+        <h3>{t('settings.uiSize')}</h3>
+        <p>{t('settings.uiSizeHint')}</p>
+        <div class="ui-scale-row">
+          <label class="slider">{t('settings.uiSize')}
+            <input
+              type="range"
+              min={UI_SCALE_MIN}
+              max={UI_SCALE_MAX}
+              step={0.05}
+              value={profile.uiScale}
+              aria-valuetext={`${pct}%`}
+              style={{ '--val': `${((profile.uiScale - UI_SCALE_MIN) / (UI_SCALE_MAX - UI_SCALE_MIN)) * 100}%` }}
+              onInput={(e) => setUiScale(Number((e.target as HTMLInputElement).value))}
+            />
+          </label>
+          <output class="ui-scale-value" aria-live="polite">{pct}%</output>
+          <button class="small" disabled={pct === 100} onClick={() => setUiScale(1)}>{t('settings.reset')}</button>
+        </div>
+        <p class="muted small-note">{t('settings.uiSizeKeys')}</p>
+        <h4 style={{ marginTop: 14 }}>{t('settings.gameText')}</h4>
+        <p class="muted small-note" style={{ marginTop: 0 }}>{t('settings.gameTextHint')}</p>
+        <div class="row" role="group" aria-label={t('settings.gameText')}>
+          {(['small', 'normal', 'large'] as const).map((v) => (
+            <button class={profile.gameText === v ? 'on' : ''} aria-pressed={profile.gameText === v} onClick={() => { profile.gameText = v; saveProfile(); }}>
+              {t(`settings.gameText.${v}`)}
             </button>
           ))}
         </div>
       </div>
       <div class="sheet">
-        <h3>Sound and music</h3>
+        <h3>{t('settings.design')}</h3>
+        <p>{t('settings.designHint')}</p>
+        <div class="designs" role="group" aria-label={t('settings.design')}>
+          {(Object.keys(THEMES) as ThemeId[]).map((id) => (
+            <button
+              class={`design ${profile.theme === id ? 'on' : ''}`}
+              aria-pressed={profile.theme === id}
+              onClick={() => setTheme(id)}
+            >
+              <span class="swatch" style={{ '--sw-page': THEMES[id].swatch.page, '--sw-line': THEMES[id].swatch.line, '--sw-ink': THEMES[id].swatch.ink }} />
+              <span class="label">{t(`theme.${id}`)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div class="sheet">
+        <h3>{t('settings.sound')}</h3>
         <div class="sound-grid">
-          <label class="check"><input type="checkbox" checked={profile.muted} onChange={(e) => { profile.muted = (e.target as HTMLInputElement).checked; saveProfile(); }} /> Mute sound effects</label>
-          <label class="slider">Effects volume
+          <label class="check"><input type="checkbox" checked={profile.muted} onChange={(e) => { profile.muted = (e.target as HTMLInputElement).checked; saveProfile(); }} /> {t('settings.mute')}</label>
+          <label class="slider">{t('settings.sfxVolume')}
             <input type="range" min={0} max={1} step={0.05} value={profile.sfxVolume} disabled={profile.muted} style={{ '--val': `${profile.sfxVolume * 100}%` }}
               onInput={(e) => { profile.sfxVolume = Number((e.target as HTMLInputElement).value); saveProfile(); }} />
           </label>
-          <label class="check"><input type="checkbox" checked={profile.music} onChange={(e) => { profile.music = (e.target as HTMLInputElement).checked; saveProfile(); }} /> Play music</label>
-          <label class="slider">Music volume
+          <label class="check"><input type="checkbox" checked={profile.music} onChange={(e) => { profile.music = (e.target as HTMLInputElement).checked; saveProfile(); }} /> {t('settings.music')}</label>
+          <label class="slider">{t('settings.musicVolume')}
             <input type="range" min={0} max={1} step={0.05} value={profile.musicVolume} disabled={!profile.music} style={{ '--val': `${profile.musicVolume * 100}%` }}
               onInput={(e) => { profile.musicVolume = Number((e.target as HTMLInputElement).value); saveProfile(); }} />
           </label>
         </div>
-        <p style={{ marginTop: 12, marginBottom: 6 }}>Music: three calm tracks made for focus.</p>
-        <div class="row" role="group" aria-label="Music track">
-          <button class={profile.musicTrack === -1 ? 'on' : ''} aria-pressed={profile.musicTrack === -1} onClick={() => { profile.musicTrack = -1; saveProfile(); }}>All, in order</button>
-          {TRACKS.map((t, i) => (
-            <button class={profile.musicTrack === i ? 'on' : ''} aria-pressed={profile.musicTrack === i} onClick={() => { profile.musicTrack = i; saveProfile(); }}>{t.name}</button>
+        <p style={{ marginTop: 12, marginBottom: 6 }}>{t('settings.musicTracks', { count: TRACKS.length })}</p>
+        <div class="row" role="group" aria-label={t('settings.musicTrack')}>
+          <button class={profile.musicTrack === -1 ? 'on' : ''} aria-pressed={profile.musicTrack === -1} onClick={() => { profile.musicTrack = -1; saveProfile(); }}>{t('settings.allInOrder')}</button>
+          {TRACKS.map((tr, i) => (
+            <button class={profile.musicTrack === i ? 'on' : ''} aria-pressed={profile.musicTrack === i} onClick={() => { profile.musicTrack = i; saveProfile(); }}>{tr.name}</button>
           ))}
         </div>
       </div>
       <div class="sheet">
-        <h3>Math keyboard</h3>
-        <p>On-screen keys for typing functions, with x, powers, brackets and sin in easy reach. While they're showing, your phone's keyboard stays closed so the field stays in view.</p>
-        <div class="row" role="group" aria-label="Math keyboard">
-          {([['auto', 'Automatic'], ['on', 'Always'], ['off', 'Never']] as const).map(([v, label]) => (
-            <button class={profile.mathKeys === v ? 'on' : ''} aria-pressed={profile.mathKeys === v} onClick={() => { profile.mathKeys = v; saveProfile(); }}>{label}</button>
+        <h3>{t('settings.mathKeys')}</h3>
+        <p>{t('settings.mathKeysHint')}</p>
+        <div class="row" role="group" aria-label={t('settings.mathKeys')}>
+          {(['auto', 'on', 'off'] as const).map((v) => (
+            <button class={profile.mathKeys === v ? 'on' : ''} aria-pressed={profile.mathKeys === v} onClick={() => { profile.mathKeys = v; saveProfile(); }}>{t(`settings.mathKeys.${v}`)}</button>
           ))}
         </div>
-        <p class="muted" style={{ marginTop: 8 }}>Automatic shows them on touch screens.</p>
+        <p class="muted" style={{ marginTop: 8 }}>{t('settings.mathKeysAuto')}</p>
       </div>
       <div class="sheet">
-        <h3>Chat</h3>
-        <label class="check"><input type="checkbox" checked={profile.chatOff} onChange={(e) => { profile.chatOff = (e.target as HTMLInputElement).checked; saveProfile(); }} /> Hide chat</label>
+        <h3>{t('settings.chat')}</h3>
+        <label class="check"><input type="checkbox" checked={profile.chatOff} onChange={(e) => { profile.chatOff = (e.target as HTMLInputElement).checked; saveProfile(); }} /> {t('settings.hideChat')}</label>
       </div>
       <div class="sheet">
-        <h3>Analytics</h3>
-        <p>Anonymous usage stats help improve the game. They're off unless you allow them.</p>
+        <h3>{t('settings.analytics')}</h3>
+        <p>{t('settings.analyticsHint')}</p>
         <div class="row">
-          <button class={profile.analytics === 'yes' ? 'on' : ''} onClick={() => setAnalyticsConsent(true)}>Allow</button>
-          <button class={profile.analytics !== 'yes' ? 'on' : ''} onClick={() => setAnalyticsConsent(false)}>Don't allow</button>
+          <button class={profile.analytics === 'yes' ? 'on' : ''} onClick={() => setAnalyticsConsent(true)}>{t('settings.allow')}</button>
+          <button class={profile.analytics !== 'yes' ? 'on' : ''} onClick={() => setAnalyticsConsent(false)}>{t('settings.dontAllow')}</button>
         </div>
       </div>
     </div>
@@ -351,11 +402,11 @@ export function Leaderboard() {
   useEffect(() => { void fetchLeaderboard().then(setRows); }, []);
   return (
     <div class="page">
-      <TopBar title="Leaderboard" />
+      <TopBar title={t('ui.leaderboard')} />
       <div class="sheet">
-        {rows === 'loading' ? <p>Loading the ladder.</p> : rows === null ? <p>The leaderboard is offline right now. Try again soon.</p> : rows.length === 0 ? <p>Nobody has played ranked yet. <a href="#/ranked">Be the first</a>.</p> : (
+        {rows === 'loading' ? <p>{t('ui.loadingTheLadder')}</p> : rows === null ? <p>{t('ui.theLeaderboardIsOfflineRightNow')}</p> : rows.length === 0 ? <p>{t('ui.nobodyHasPlayedRankedYet')} <a href="#/ranked">{t('ui.beTheFirst')}</a>.</p> : (
           <div class="table-wrap"><table>
-            <thead><tr><th>Place</th><th>Player</th><th>Rank</th><th>Rating</th></tr></thead>
+            <thead><tr><th>{t('ui.place')}</th><th>{t('ui.player')}</th><th>{t('ui.rank')}</th><th>{t('ui.rating')}</th></tr></thead>
             <tbody>{rows.map((r, i) => <tr><td>{i + 1}</td><td><a href={`#/player/${encodeURIComponent(r.name)}`}>{r.name}</a></td><td>{rankFor(r.rating)}</td><td>{r.rating}</td></tr>)}</tbody>
           </table></div>
         )}
@@ -367,24 +418,24 @@ export function Leaderboard() {
 export function Privacy() {
   return (
     <div class="page">
-      <TopBar title="Privacy" />
+      <TopBar title={t('ui.privacy')} />
       <div class="sheet legal">
-        <p class="muted small-note">Last updated November 2026.</p>
-        <h3>Playing as a guest</h3>
-        <p>You can play without an account. Guest progress, settings and match history stay in this browser. Online matches pass your game name, chat messages and shots through our server while you play.</p>
-        <h3>If you make an account</h3>
-        <p>We store your username, your game progress (levels, Sparks, items, stars, season pass), your ranked rating, your last 100 matches, your friends list and party, which room you're in while the game is open (shown only to your friends), and maps you choose to share. A login ID links these to you.</p>
-        <p>Your password goes to our sign-in provider, Google Firebase. We never store it. An email address or Google account is optional, and is only used for signing in and resetting your password.</p>
-        <h3>Children</h3>
-        <p>Accounts are only for players 13 and older, and we ask before making one. We keep only whether you're 13 or older, on your own device, never your birth date. Players under 13 can play as guests, with online chat and analytics turned off. If you think a child under 13 has made an account, contact us below and we'll delete it.</p>
-        <h3>Chat and reports</h3>
-        <p>Chat in game rooms isn't saved. Messages between friends are stored so you can read them later, filtered for bad words, and deleted after 30 days, when either of you removes the other as a friend, or when either account is deleted. Reports about chat or messages are kept for up to 90 days for review, then deleted.</p>
-        <h3>Analytics</h3>
-        <p>Anonymous usage stats load only if you allow them in <a href="#/settings">Settings</a>, and never for players under 13. We don't use session recording, advertising, or tracking across other sites. Fonts and other files are served from this site, not from third parties.</p>
-        <h3>Your choices</h3>
-        <p>You can delete your account at any time from your profile. That removes your username, progress, rating, match history, friends, messages, party and shared maps from our server.</p>
-        <h3>Contact, and copyright</h3>
-        <p>For privacy questions, deletion requests, or to report content that infringes your copyright (such as a shared map or a username), open an issue at <a href="https://github.com/mathbattles/mathbattles.github.io/issues" target="_blank" rel="noopener noreferrer">github.com/mathbattles/mathbattles.github.io/issues</a>, or report a security problem privately from that repository's Security tab.</p>
+        <p class="muted small-note">{t('ui.lastUpdatedNovember2026')}</p>
+        <h3>{t('ui.playingAsAGuest')}</h3>
+        <p>{t('ui.youCanPlayWithoutAnAccount')}</p>
+        <h3>{t('ui.ifYouMakeAnAccount')}</h3>
+        <p>{t('ui.weStoreYourUsernameYourGame')}</p>
+        <p>{t('ui.yourPasswordGoesToOurSign')}</p>
+        <h3>{t('ui.children')}</h3>
+        <p>{t('ui.accountsAreOnlyForPlayers13')}</p>
+        <h3>{t('ui.chatAndReports')}</h3>
+        <p>{t('ui.chatInGameRoomsIsnT')}</p>
+        <h3>{t('ui.analytics')}</h3>
+        <p>{t('ui.anonymousUsageStatsLoadOnlyIf')} <a href="#/settings">{t('ui.settings')}</a>, and never for players under 13. We don't use session recording, advertising, or tracking across other sites. Fonts and other files are served from this site, not from third parties.</p>
+        <h3>{t('ui.yourChoices')}</h3>
+        <p>{t('ui.youCanDeleteYourAccountAt')}</p>
+        <h3>{t('ui.contactAndCopyright')}</h3>
+        <p>{t('ui.forPrivacyQuestionsDeletionRequestsOr')} <a href="https://github.com/mathbattles/mathbattles.github.io/issues" target="_blank" rel="noopener noreferrer">{t('ui.githubComMathbattlesMathbattlesGithubIo')}</a>, or report a security problem privately from that repository's Security tab.</p>
       </div>
     </div>
   );

@@ -1,4 +1,25 @@
-import { ALLIES, TARGETS, BLAST_R, DRAW_STEPS_PER_SEC, NEXT_TURN_DELAY_MS, PLANE_H, PLANE_W, PX_PER_UNIT, SOLDIER_R, type Circle, type MatchState, type ShotRecord } from '@mathbattles/sim';
+import {
+  BEAM_CARVE_R,
+  BEAM_PX_PER_STEP,
+  BEAM_WIDTH_MULT,
+  BLAST_R,
+  DRAW_STEPS_PER_SEC,
+  NEXT_ROUND_DELAY_MS,
+  PLANE_H,
+  PLANE_W,
+  PX_PER_UNIT,
+  SOLDIER_R,
+  TEAM_RING,
+  isAlly,
+  isTarget,
+  mixColors,
+  type BeamRecord,
+  type Circle,
+  type KillRecord,
+  type MatchState,
+  type RoundRecord,
+  type ShotRecord,
+} from '@mathbattles/sim';
 import { drawHat } from './doodles';
 import { drawObstacle, obstacleStyle, type ObstacleStyle } from './obstacles';
 
@@ -51,14 +72,42 @@ interface ActiveShot {
   color: string;
   trail: string;
   blast: string;
+  exploded: boolean;
+}
+
+interface ActiveBeam {
+  rec: BeamRecord;
+  color: string;
+  started: boolean;
+  /** How far each direction has carved its channel so far, in pixels. */
+  carved: number[];
+}
+
+/** Every shot of a round, drawn together on one clock. */
+interface ActiveRound {
+  round: RoundRecord;
+  shots: ActiveShot[];
+  beams: ActiveBeam[];
+  /** Kills already shown, by index in round.kills. */
+  shown: Set<number>;
+  /** Kills so far this round, by shooter, for DOUBLE! and TRIPLE!. */
+  combo: Map<string, number>;
+  luckShown: Set<string>;
   /** Simulated time in ms. It runs slower during a final knockout. */
   clock: number;
   lastFrame: number;
-  exploded: boolean;
   finalShot: boolean;
   lastKillStep: number;
-  kills: number;
+  ending: boolean;
+  /** The terrain as the round began, for scrubbing back and forth. */
+  holesStart: Circle[];
   resolve: () => void;
+}
+
+/** Lightens a player's colour on dark boards so it stays easy to see. */
+export function themedColor(hex: string, themeId: ThemeId): string {
+  if (themeId === 'paper' || !/^#[0-9a-f]{6}$/i.test(hex)) return hex;
+  return mixColors(mixColors(hex, '#ffffff'), hex === '#2b50e8' && themeId === 'blueprint' ? '#ffffff' : hex);
 }
 
 interface Particle {
@@ -456,9 +505,9 @@ export function drawFireball(c: CanvasRenderingContext2D, x: number, y: number, 
 export interface PastView {
   soldiers: { id: number; x: number; y: number; alive: boolean; playerId: string; angle: number }[];
   holes: Circle[];
-  shooterId: number;
-  path: { xs: ArrayLike<number>; ys: ArrayLike<number>; steps: number };
-  shooterPlayer: string;
+  /** Every shot of the round being looked at. */
+  paths: { path: { xs: ArrayLike<number>; ys: ArrayLike<number>; steps: number }; playerId: string }[];
+  beams: BeamRecord[];
 }
 
 const MAX_PARTICLES = 700;
@@ -498,7 +547,15 @@ export class Stage {
   private soldiers: { id: number; x: number; y: number; alive: boolean; playerId: string; angle: number; flown: boolean; bornAt: number }[] = [];
   private circles: Circle[] = [];
   private holes: Circle[] = [];
-  private shot: ActiveShot | null = null;
+  private shot: ActiveRound | null = null;
+  /** Playback speed for replays. */
+  speed = 1;
+  /** Replays can freeze a round mid-flight. */
+  paused = false;
+  /** The viewer's player: an arrow floats over their soldier. */
+  youId: string | null = null;
+  /** Bigger or smaller names and arrow, from the game text size setting. */
+  labelScale = 1;
   private rings: Ring[] = [];
   private fireballs: { x: number; y: number; r: number; at: number }[] = [];
   private particles: Particle[] = [];
@@ -519,6 +576,9 @@ export class Stage {
   private past: PastView | null = null;
   onExplode?: (kills: number) => void;
   onKill?: () => void;
+  /** Someone survived an exact tie on a coin flip. */
+  onLuck?: (playerId: string) => void;
+  onBeam?: () => void;
   /** Called when the field needs a big callout, such as the final knockout. */
   onFinalKill?: () => void;
 
@@ -593,6 +653,12 @@ export class Stage {
     return !!this.shot;
   }
 
+  /** A player's colour as this board shows it. */
+  colorOf(playerId: string): string {
+    const p = this.state?.players.find((q) => q.id === playerId);
+    return themedColor(p?.color ?? '#2b50e8', this.themeId);
+  }
+
   start(): void {
     if (this.running) return;
     this.running = true;
@@ -625,55 +691,121 @@ export class Stage {
     this.watcher = null;
     this.onScreen = true;
     // Anything waiting on a shot must not wait forever once this view is gone.
-    this.finishShotNow();
+    this.finishRoundNow();
   }
 
   /** Hidden tabs don't draw, so shots there finish at once rather than piling up. */
   private onVisibility = (): void => {
-    if (document.hidden) this.finishShotNow();
+    if (document.hidden) this.finishRoundNow();
   };
 
-  private finishShotNow(): void {
-    const shot = this.shot;
-    if (!shot) return;
+  /** Ends any round being drawn at once, jumping to how it finished. */
+  finishRoundNow(): void {
+    const round = this.shot;
+    if (!round) return;
     this.shot = null;
     this.zoom.target = 1;
     if (this.state) this.sync(this.state);
-    shot.resolve();
+    round.resolve();
   }
 
-  /** Plays a shot on the display. Resolves after the post-shot delay. */
+  /** Plays one shot on its own, for demos and lessons. */
   playShot(record: ShotRecord, path: { xs: ArrayLike<number>; ys: ArrayLike<number>; steps: number }): Promise<void> {
+    const round: RoundRecord = {
+      n: 0,
+      shots: [record],
+      beams: [],
+      kills: record.hits.map((h) => ({ id: h.id, step: h.step, by: [record.playerId] })),
+      luck: [],
+      steps: path.steps,
+      holes: 1,
+    };
+    return this.playRound(round, [path]);
+  }
+
+  /** Plays every shot of a round together. Resolves after the pause that follows. */
+  playRound(round: RoundRecord, paths: { xs: ArrayLike<number>; ys: ArrayLike<number>; steps: number }[]): Promise<void> {
     return new Promise((resolve) => {
       if (document.hidden || !this.running) {
         resolve();
         return;
       }
-      const theme = THEMES[this.themeId];
-      const owner = this.state?.players.find((p) => p.id === record.playerId);
-      const look = this.looks[record.playerId] ?? {};
       this.previewPath = null;
-      const color = owner?.team === 2 ? theme.team2 : theme.team1;
+      const shots: ActiveShot[] = round.shots.map((record, i) => {
+        const look = this.looks[record.playerId] ?? {};
+        const color = this.colorOf(record.playerId);
+        this.faceDirs.set(record.soldierId, record.dir);
+        // Muzzle flash.
+        this.burst(record.from.x, record.from.y, 14, color, 'spark', 2.2);
+        const path = paths[i] ?? { xs: [], ys: [], steps: 0 };
+        return { xs: path.xs, ys: path.ys, steps: Math.min(path.steps, record.steps), record, color, trail: look.trail ?? 'ink', blast: look.blast ?? 'ring', exploded: false };
+      });
+      const beams: ActiveBeam[] = round.beams.map((rec) => ({
+        rec,
+        color: mixColors(this.colorOf(rec.owners[0]), this.colorOf(rec.owners[1])),
+        started: false,
+        carved: rec.dirs.map(() => 0),
+      }));
       this.shot = {
-        xs: path.xs,
-        ys: path.ys,
-        steps: path.steps,
-        record,
-        color,
-        trail: look.trail ?? 'ink',
-        blast: look.blast ?? 'ring',
+        round,
+        shots,
+        beams,
+        shown: new Set(),
+        combo: new Map(),
+        luckShown: new Set(),
         clock: 0,
         lastFrame: performance.now(),
-        exploded: false,
-        finalShot: !!this.state?.over && record.hits.length > 0,
-        lastKillStep: record.hits.reduce((m, h) => Math.max(m, h.step), 0),
-        kills: 0,
+        finalShot: !!this.state?.over && round.kills.length > 0,
+        lastKillStep: round.kills.reduce((m, k) => Math.max(m, k.step), 0),
+        ending: false,
+        holesStart: this.holes.slice(),
         resolve,
       };
-      this.faceDirs.set(record.soldierId, record.dir);
-      // Muzzle flash.
-      this.burst(record.from.x, record.from.y, 14, color, 'spark', 2.2);
     });
+  }
+
+  /**
+   * Moves a round being drawn forward or back in time, for stepping through a replay frame by
+   * frame. Kills, explosions and carved rock jump to match, without replaying their effects.
+   */
+  scrubRound(deltaMs: number): void {
+    const r = this.shot;
+    if (!r) return;
+    r.clock = Math.max(0, r.clock + deltaMs);
+    const reached = Math.floor((r.clock / 1000) * DRAW_STEPS_PER_SEC);
+    r.round.kills.forEach((k, i) => {
+      const s = this.soldiers.find((q) => q.id === k.id);
+      if (k.step <= reached) {
+        r.shown.add(i);
+        if (s) {
+          s.alive = false;
+          s.flown = true;
+        }
+      } else {
+        r.shown.delete(i);
+        if (s) {
+          s.alive = true;
+          s.flown = false;
+        }
+      }
+    });
+    this.holes = r.holesStart.slice();
+    for (const shot of r.shots) {
+      shot.exploded = reached >= shot.steps;
+      if (shot.exploded) this.holes.push({ x: shot.record.end.x, y: shot.record.end.y, r: BLAST_R });
+    }
+    for (const beam of r.beams) {
+      beam.started = reached >= beam.rec.step;
+      beam.rec.dirs.forEach((d, k) => {
+        const steps = Math.max(0, Math.min(reached, beam.rec.ends[k]!) - beam.rec.step);
+        const dist = steps * BEAM_PX_PER_STEP;
+        for (let s2 = 0; s2 <= dist && reached >= beam.rec.step; s2 += BEAM_CARVE_R * 0.75) {
+          this.holes.push({ x: beam.rec.at.x + d.x * s2, y: beam.rec.at.y + d.y * s2, r: BEAM_CARVE_R });
+        }
+        beam.carved[k] = dist;
+      });
+    }
+    this.terrainDirty = true;
   }
 
   /** Confetti across the field when a viewer wins. */
@@ -842,7 +974,7 @@ export class Stage {
 
   private drawSoldier(c: CanvasRenderingContext2D, s: Stage['soldiers'][number], now: number, theme: Theme): void {
     const owner = this.state?.players.find((p) => p.id === s.playerId);
-    const color = owner?.team === 2 ? theme.team2 : theme.team1;
+    const color = this.colorOf(s.playerId);
     const x = this.px(s.x);
     const y = s.y;
     if (!s.alive) {
@@ -860,66 +992,76 @@ export class Stage {
       c.restore();
       return;
     }
-    const active = this.past ? s.id === this.past.shooterId : s.id === this.activeSoldierId;
-    if (active) {
-      const pulse = reducedMotion() ? 0 : (Math.sin(now / 240) + 1) * 1.6;
-      c.fillStyle = theme.mark;
-      c.globalAlpha = 0.75;
-      c.beginPath();
-      c.arc(x, y, SOLDIER_R + 7 + pulse, 0, Math.PI * 2);
-      c.fill();
-      c.globalAlpha = 1;
-    }
     let facing: number;
+    const aimingThis = s.id === this.activeSoldierId && this.aiming && !this.past;
     if (this.state?.config.kind === 'ffa') {
       // Free-for-all shots can go either way, so soldiers look where they aim or last fired.
-      facing = active && this.aiming && !this.past ? this.aimDir : this.faceDirs.get(s.id) ?? 1;
+      facing = aimingThis ? this.aimDir : this.faceDirs.get(s.id) ?? 1;
     } else {
       facing = this.mirror ? (owner?.team === 2 ? 1 : -1) : owner?.team === 2 ? -1 : 1;
     }
+    // In team matches a thin ring in the team's colour shows the side.
+    if (this.state?.config.kind === 'teams' && owner && !owner.passive && !isTarget(owner.id) && !isAlly(owner.id)) {
+      c.strokeStyle = themedColor(TEAM_RING[owner.team], this.themeId);
+      c.lineWidth = 2;
+      c.globalAlpha = 0.9;
+      c.beginPath();
+      c.arc(x, y, SOLDIER_R + 3.2, 0, Math.PI * 2);
+      c.stroke();
+      c.globalAlpha = 1;
+    }
     this.drawFigure(c, x, y, color, facing, theme.bg);
     drawHat(c, this.looks[s.playerId]?.hat ?? 'none', x, y - SOLDIER_R + 1, color, facing);
-    // Practice targets and allies each get a label. A player's name follows their next soldier.
-    const everyOne = owner?.id === TARGETS || owner?.id === ALLIES;
-    if (owner?.name && (everyOne || this.nameBelongsOn(owner, s.id))) {
-      c.font = '600 11px "Shantell Sans", sans-serif';
+
+    const k = this.labelScale;
+    const mine = !!this.youId && s.playerId === this.youId && !this.past;
+    const name = owner?.name ?? '';
+    const lx = Math.max(34, Math.min(PLANE_W - 34, x));
+    // Above the soldier and any hat, or below when that would leave the field.
+    const arrowH = mine ? 9 * k : 0;
+    const textH = 13 * k;
+    const above = y - SOLDIER_R - 9 - arrowH;
+    const flip = above - textH < 0;
+    const bob = mine && !reducedMotion() ? Math.sin(now / 260) * 1.6 : 0;
+    if (mine) {
+      // An upside-down triangle in your colour: name, arrow, soldier from the top. Near the top
+      // of the field everything goes below instead: soldier, arrow, name.
+      const w = 7 * k;
+      const h = 7 * k;
+      const ay = flip ? y + SOLDIER_R + 5 + bob : y - SOLDIER_R - 6 - h + bob;
+      c.fillStyle = color;
+      c.strokeStyle = theme.bg;
+      c.lineWidth = 2;
+      c.beginPath();
+      c.moveTo(x - w, ay);
+      c.lineTo(x + w, ay);
+      c.lineTo(x, ay + h);
+      c.closePath();
+      c.stroke();
+      c.fill();
+    }
+    if (name) {
+      c.font = `600 ${11 * k}px "Shantell Sans", sans-serif`;
       c.textAlign = 'center';
       c.fillStyle = color;
-      const lx = Math.max(34, Math.min(PLANE_W - 34, x));
-      // Above the soldier and any hat, or below when that would leave the field.
-      const above = y - SOLDIER_R - 9;
-      if (above >= 13) {
+      const locked = !!owner?.locked && !this.state?.over && !this.shot;
+      const label = locked ? `${name} \u2713` : name;
+      if (!flip) {
         c.textBaseline = 'bottom';
-        c.fillText(owner.name, lx, above);
+        c.fillText(label, lx, above);
       } else {
         c.textBaseline = 'top';
-        c.fillText(owner.name, lx, y + SOLDIER_R + 6);
+        c.fillText(label, lx, y + SOLDIER_R + 6 + arrowH + (mine ? 3 : 0));
       }
     }
   }
 
-  /** A player's name sits over the soldier who acts next, so it moves with the highlight. */
-  private nameBelongsOn(owner: NonNullable<MatchState['players'][number]>, soldierId: number): boolean {
-    const list = this.past?.soldiers ?? this.soldiers;
-    if (this.past && owner.id === this.past.shooterPlayer) return soldierId === this.past.shooterId;
-    const ids = owner.soldierIds;
-    const start = this.past ? 0 : owner.nextSoldier;
-    for (let i = 0; i < ids.length; i++) {
-      const id = ids[(start + i) % ids.length]!;
-      if (list.find((q) => q.id === id)?.alive) return id === soldierId;
-    }
-    return false;
-  }
-
-  private knockOut(s: Stage['soldiers'][number], now: number, shot: ActiveShot): void {
+  private knockOut(s: Stage['soldiers'][number], now: number, by: { color: string; blast: string; kills: number }): void {
     s.alive = false;
     s.flown = true;
-    shot.kills++;
     this.onKill?.();
     if (reducedMotion()) return;
-    const theme = THEMES[this.themeId];
-    const owner = this.state?.players.find((p) => p.id === s.playerId);
-    const color = owner?.team === 2 ? theme.team2 : theme.team1;
+    const color = this.colorOf(s.playerId);
     this.flyers.push({
       x: s.x,
       y: s.y,
@@ -934,16 +1076,15 @@ export class Stage {
     this.burst(s.x, s.y, 18, '#ffd33d', 'star', 2);
     this.burst(s.x, s.y, 16, color, 'spark', 3);
     // The shooter's kill effect plays where the soldier falls.
-    this.rings.push({ x: s.x, y: s.y, r: BLAST_R, at: now, color: shot.color, style: shot.blast });
+    this.rings.push({ x: s.x, y: s.y, r: BLAST_R, at: now, color: by.color, style: by.blast });
     this.shake = Math.max(this.shake, 9);
     this.flash = Math.max(this.flash, 0.3);
     const words = ['KO!', 'DOUBLE!', 'TRIPLE!', 'QUAD!'];
-    const word = words[Math.min(shot.kills - 1, words.length - 1)]!;
-    this.float(word, this.px(s.x), s.y - 16, shot.kills > 1 ? 34 : 26, shot.kills > 1 ? '#ff4d7e' : color, now);
+    const word = words[Math.min(by.kills - 1, words.length - 1)]!;
+    this.float(word, this.px(s.x), s.y - 16, by.kills > 1 ? 34 : 26, by.kills > 1 ? '#ff4d7e' : color, now);
   }
 
-  private explode(shot: ActiveShot, now: number): void {
-    shot.exploded = true;
+  private explode(shot: ActiveShot, now: number, kills: number): void {
     const r = BLAST_R;
     const { x, y } = shot.record.end;
     const theme = THEMES[this.themeId];
@@ -958,14 +1099,19 @@ export class Stage {
     this.rings.push({ x, y, r, at: now, color: shot.color, style: 'ring' });
     this.shake = Math.max(this.shake, 8);
     this.flash = Math.max(this.flash, 0.18);
-    this.onExplode?.(shot.kills);
+    this.onExplode?.(kills);
+  }
+
+  /** The round is over once every shot has landed and every beam has left the field. */
+  private endRound(round: ActiveRound): void {
+    round.ending = true;
     this.zoom.target = 1;
     setTimeout(() => {
-      const done = this.shot === shot;
+      const done = this.shot === round;
       if (done) this.shot = null;
       if (done && this.state) this.sync(this.state);
-      shot.resolve();
-    }, NEXT_TURN_DELAY_MS);
+      round.resolve();
+    }, NEXT_ROUND_DELAY_MS / Math.max(0.25, this.speed));
   }
 
   private stepEffects(dt: number): void {
@@ -1109,18 +1255,99 @@ export class Stage {
     }
   }
 
-  private advanceShot(c: CanvasRenderingContext2D, shot: ActiveShot, now: number): void {
+  private drawHead(c: CanvasRenderingContext2D, hx: number, hy: number, color: string): void {
+    const x = this.px(hx);
+    // Comet head with sparks thrown off behind it.
+    c.fillStyle = color;
+    c.globalAlpha = 0.3;
+    c.beginPath();
+    c.arc(x, hy, 9, 0, Math.PI * 2);
+    c.fill();
+    c.globalAlpha = 1;
+    c.beginPath();
+    c.arc(x, hy, 4.6, 0, Math.PI * 2);
+    c.fill();
+    c.fillStyle = '#ffffff';
+    c.beginPath();
+    c.arc(x, hy, 2, 0, Math.PI * 2);
+    c.fill();
+    if (this.particles.length < MAX_PARTICLES) {
+      this.particles.push({
+        x: hx, y: hy, vx: (Math.random() - 0.5) * 70, vy: (Math.random() - 0.5) * 70,
+        life: 0, max: 0.3 + Math.random() * 0.3, size: 1.5 + Math.random() * 1.8, color, kind: 'spark', spin: 0,
+      });
+    }
+  }
+
+  /** A beam: a thick glowing straight line, twice a shot's width, that tears through rock. */
+  private drawBeam(c: CanvasRenderingContext2D, beam: ActiveBeam, reached: number, now: number, full = false): void {
+    const { rec } = beam;
+    if (reached < rec.step && !full) return;
+    if (!beam.started && !full) {
+      beam.started = true;
+      this.flash = Math.max(this.flash, 0.45);
+      this.shake = Math.max(this.shake, 12);
+      this.burst(rec.at.x, rec.at.y, 30, beam.color, 'spark', 4);
+      this.burst(rec.at.x, rec.at.y, 16, '#ffffff', 'star', 2.5);
+      this.float('BEAM!', this.px(rec.at.x), rec.at.y - 18, 30, beam.color, now);
+      this.onBeam?.();
+    }
+    const width = 3 * BEAM_WIDTH_MULT;
+    rec.dirs.forEach((d, k) => {
+      const steps = full ? rec.ends[k]! - rec.step : Math.min(reached, rec.ends[k]!) - rec.step;
+      const dist = Math.max(0, steps) * BEAM_PX_PER_STEP;
+      const x0 = this.px(rec.at.x);
+      const x1 = this.px(rec.at.x + d.x * dist);
+      const y0 = rec.at.y;
+      const y1 = rec.at.y + d.y * dist;
+      c.save();
+      c.lineCap = 'round';
+      c.strokeStyle = beam.color;
+      c.globalAlpha = 0.25;
+      c.lineWidth = width * 3.2;
+      c.beginPath();
+      c.moveTo(x0, y0);
+      c.lineTo(x1, y1);
+      c.stroke();
+      c.globalAlpha = 1;
+      c.lineWidth = width;
+      c.stroke();
+      c.strokeStyle = '#ffffff';
+      c.lineWidth = width * 0.35;
+      c.stroke();
+      c.restore();
+      if (full) return;
+      // Rip the channel as the front passes, a little at a time so redrawing stays cheap.
+      if (dist - beam.carved[k]! >= 20 || (steps >= rec.ends[k]! - rec.step && dist > beam.carved[k]!)) {
+        for (let s2 = beam.carved[k]!; s2 <= dist; s2 += BEAM_CARVE_R * 0.75) {
+          this.holes.push({ x: rec.at.x + d.x * s2, y: rec.at.y + d.y * s2, r: BEAM_CARVE_R });
+        }
+        beam.carved[k] = dist;
+        this.terrainDirty = true;
+      }
+      if (steps < rec.ends[k]! - rec.step && !reducedMotion() && this.particles.length < MAX_PARTICLES - 4) {
+        const fx = rec.at.x + d.x * dist;
+        const fy = rec.at.y + d.y * dist;
+        this.burst(fx, fy, 2, beam.color, 'spark', 2.5);
+        if (Math.random() < 0.35) this.burst(fx, fy, 1, this.rockColorAt(fx, fy), 'chunk', 2);
+      }
+    });
+    if (!full && !reducedMotion()) this.shake = Math.max(this.shake, 3);
+  }
+
+  private advanceRound(c: CanvasRenderingContext2D, round: ActiveRound, now: number): void {
     const still = reducedMotion();
-    const realDt = now - shot.lastFrame;
-    shot.lastFrame = now;
+    const realDt = this.paused ? 0 : (now - round.lastFrame) * this.speed;
+    round.lastFrame = now;
+    const rec = round.round;
     // A match-ending hit slows time and moves in close.
-    const reachedBefore = Math.floor((shot.clock / 1000) * DRAW_STEPS_PER_SEC);
+    const reachedBefore = Math.floor((round.clock / 1000) * DRAW_STEPS_PER_SEC);
     let scale = 1;
-    if (shot.finalShot && !still && reachedBefore < shot.lastKillStep) {
-      const left = shot.lastKillStep - reachedBefore;
+    if (round.finalShot && !still && reachedBefore < round.lastKillStep) {
+      const left = round.lastKillStep - reachedBefore;
       if (left < 260) {
         scale = 0.22;
-        const last = shot.record.hits.find((h) => h.step === shot.lastKillStep);
+        const last = rec.kills.find((k) => k.step === round.lastKillStep);
         const victim = last && this.soldiers.find((q) => q.id === last.id);
         if (victim) {
           this.zoom.target = 1.7;
@@ -1132,47 +1359,48 @@ export class Stage {
         }
       }
     }
-    shot.clock += realDt * scale;
-    const reached = still ? shot.steps : Math.min(shot.steps, Math.floor((shot.clock / 1000) * DRAW_STEPS_PER_SEC));
-    strokeTrail(c, shot.xs, shot.ys, reached, shot.color, shot.trail, true, (x) => this.px(x));
+    round.clock += realDt * scale;
+    const reached = still ? rec.steps : Math.floor((round.clock / 1000) * DRAW_STEPS_PER_SEC);
 
-    for (const hit of shot.record.hits) {
-      const s = this.soldiers.find((q) => q.id === hit.id);
-      if (s && s.alive && reached >= hit.step) {
-        this.knockOut(s, now, shot);
-        if (shot.finalShot && hit.step === shot.lastKillStep) {
-          this.zoom.target = 1;
-          this.onFinalKill?.();
-        }
+    for (const shot of round.shots) {
+      const upto = Math.min(shot.steps, reached);
+      strokeTrail(c, shot.xs, shot.ys, upto, shot.color, shot.trail, true, (x) => this.px(x));
+      if (upto < shot.steps && !still && Number.isFinite(shot.ys[upto]!)) this.drawHead(c, shot.xs[upto]!, shot.ys[upto]!, shot.color);
+    }
+    for (const beam of round.beams) this.drawBeam(c, beam, reached, now, still);
+
+    rec.kills.forEach((kill: KillRecord, i) => {
+      if (round.shown.has(i) || reached < kill.step) return;
+      round.shown.add(i);
+      const s = this.soldiers.find((q) => q.id === kill.id);
+      const killer = kill.by[0] ?? '';
+      const n = (round.combo.get(killer) ?? 0) + 1;
+      round.combo.set(killer, n);
+      const shot = round.shots.find((x) => x.record.playerId === killer);
+      const beam = kill.beam ? round.beams.find((b) => b.rec.owners.includes(killer)) : undefined;
+      const color = beam?.color ?? shot?.color ?? this.colorOf(killer);
+      if (s && s.alive) this.knockOut(s, now, { color, blast: shot?.blast ?? 'ring', kills: n });
+      // A coin flip saved someone: say so over their head.
+      for (const lucky of rec.luck) {
+        if (round.luckShown.has(lucky) || !kill.by.includes(lucky)) continue;
+        round.luckShown.add(lucky);
+        const ls = this.soldiers.find((q) => q.playerId === lucky);
+        if (ls) this.float('LUCK!', this.px(ls.x), ls.y - 28, 40, '#ffb800', now, 1800);
+        this.onLuck?.(lucky);
+      }
+      if (round.finalShot && kill.step === round.lastKillStep) {
+        this.zoom.target = 1;
+        this.onFinalKill?.();
+      }
+    });
+
+    for (const shot of round.shots) {
+      if (!shot.exploded && reached >= shot.steps) {
+        shot.exploded = true;
+        this.explode(shot, now, shot.record.hits.length);
       }
     }
-
-    if (reached < shot.steps && !still && Number.isFinite(shot.ys[reached]!)) {
-      const hx = shot.xs[reached]!;
-      const hy = shot.ys[reached]!;
-      const x = this.px(hx);
-      // Comet head with sparks thrown off behind it.
-      c.fillStyle = shot.color;
-      c.globalAlpha = 0.3;
-      c.beginPath();
-      c.arc(x, hy, 9, 0, Math.PI * 2);
-      c.fill();
-      c.globalAlpha = 1;
-      c.beginPath();
-      c.arc(x, hy, 4.6, 0, Math.PI * 2);
-      c.fill();
-      c.fillStyle = '#ffffff';
-      c.beginPath();
-      c.arc(x, hy, 2, 0, Math.PI * 2);
-      c.fill();
-      if (this.particles.length < MAX_PARTICLES) {
-        this.particles.push({
-          x: hx, y: hy, vx: (Math.random() - 0.5) * 70, vy: (Math.random() - 0.5) * 70,
-          life: 0, max: 0.3 + Math.random() * 0.3, size: 1.5 + Math.random() * 1.8, color: shot.color, kind: 'spark', spin: 0,
-        });
-      }
-    }
-    if (reached >= shot.steps && !shot.exploded) this.explode(shot, now);
+    if (!round.ending && reached >= rec.steps && round.shots.every((x) => x.exploded)) this.endRound(round);
   }
 
   private draw(now: number): void {
@@ -1208,27 +1436,33 @@ export class Stage {
     c.drawImage(this.baseLayer, -MARGIN, -MARGIN, PLANE_W + 2 * MARGIN, PLANE_H + 2 * MARGIN);
 
     if (this.previewPath && !this.past) {
+      // Your whole curve, dotted, in your colour.
       c.save();
-      c.setLineDash([4, 6]);
-      c.strokeStyle = theme.axis;
+      c.setLineDash([2, 6]);
+      c.strokeStyle = this.youId ? this.colorOf(this.youId) : theme.axis;
+      c.globalAlpha = 0.85;
       c.lineWidth = 2.5;
       c.lineCap = 'round';
       c.beginPath();
       const p = this.previewPath;
-      const stride = Math.max(1, Math.floor(p.steps / 600));
+      const stride = Math.max(1, Math.floor(p.steps / 1200));
       c.moveTo(this.px(p.xs[0]!), p.ys[0]!);
       for (let i = stride; i < p.steps; i += stride) if (Number.isFinite(p.ys[i]!)) c.lineTo(this.px(p.xs[i]!), p.ys[i]!);
+      if (p.steps > 1 && Number.isFinite(p.ys[p.steps - 1]!)) c.lineTo(this.px(p.xs[p.steps - 1]!), p.ys[p.steps - 1]!);
       c.stroke();
       c.restore();
     }
 
     if (this.past) {
-      const owner = this.state?.players.find((q) => q.id === this.past!.shooterPlayer);
-      const color = owner?.team === 2 ? theme.team2 : theme.team1;
-      strokeTrail(c, this.past.path.xs, this.past.path.ys, this.past.path.steps, color, this.looks[this.past.shooterPlayer]?.trail ?? 'ink', true, (x) => this.px(x));
+      for (const { path, playerId } of this.past.paths) {
+        strokeTrail(c, path.xs, path.ys, path.steps, this.colorOf(playerId), this.looks[playerId]?.trail ?? 'ink', true, (x) => this.px(x));
+      }
+      for (const rec of this.past.beams) {
+        this.drawBeam(c, { rec, color: mixColors(this.colorOf(rec.owners[0]), this.colorOf(rec.owners[1])), started: true, carved: [] }, Infinity, now, true);
+      }
     }
 
-    if (this.shot) this.advanceShot(c, this.shot, now);
+    if (this.shot) this.advanceRound(c, this.shot, now);
 
     if (this.past) {
       for (const s of this.past.soldiers) this.drawSoldier(c, { ...s, flown: false, bornAt: 0 }, now, theme);

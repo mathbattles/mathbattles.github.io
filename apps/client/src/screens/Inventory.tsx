@@ -5,6 +5,7 @@ import { equip, profile } from '../store';
 import { sound } from '../util';
 import { ItemThumb } from './Meta';
 import { TopBar, useProfile } from './Shared';
+import { t } from '../i18n';
 
 const SECTIONS: { kind: CosmeticKind; name: string }[] = [
   { kind: 'hat', name: 'Hats' },
@@ -53,8 +54,8 @@ export function Inventory() {
   };
   return (
     <div class="page">
-      <TopBar title="Inventory" />
-      <p>You've collected <strong>{owned.length}</strong> of {COSMETICS.length} items. Choose one to see more, or to wear it.</p>
+      <TopBar title={t('ui.inventory')} />
+      <p>{t('ui.youVeCollected')} <strong>{owned.length}</strong> of {COSMETICS.length} items. Choose one to see more, or to wear it.</p>
       <div class="inventory-layout">
         <div>
           {SECTIONS.map((sec) => {
@@ -63,7 +64,7 @@ export function Inventory() {
             return (
               <div class="sheet">
                 <h3>{sec.name} <small class="muted">{mine.length}/{all}</small></h3>
-                {mine.length === 0 ? <p class="muted">None yet. Find them in the Shop and the season pass.</p> : (
+                {mine.length === 0 ? <p class="muted">{t('ui.noneYetFindThemInThe')}</p> : (
                   <div class="cards">
                     {mine.map((c) => (
                       <button
@@ -74,7 +75,7 @@ export function Inventory() {
                         <ItemThumb item={c} />
                         <strong>{c.name}</strong>
                         <small>{RARITY_NAME[rarityOf(c)]}</small>
-                        {profile.equipped[c.kind] === c.id && <span class="worn-tag">On</span>}
+                        {profile.equipped[c.kind] === c.id && <span class="worn-tag">{t('ui.on')}</span>}
                       </button>
                     ))}
                   </div>
@@ -90,9 +91,9 @@ export function Inventory() {
               <h3>{item.name}</h3>
               <span class={`rarity-pill rarity-${rarityOf(item)}`}>{RARITY_NAME[rarityOf(item)]}</span>
               <dl>
-                <dt>Type</dt><dd>{SECTIONS.find((s) => s.kind === item.kind)?.name.replace(/s$/, '')}</dd>
-                <dt>How many exist</dt><dd>{countText(item)}</dd>
-                <dt>How to get it</dt><dd>{obtainText(item)}</dd>
+                <dt>{t('ui.type')}</dt><dd>{SECTIONS.find((s) => s.kind === item.kind)?.name.replace(/s$/, '')}</dd>
+                <dt>{t('ui.howManyExist')}</dt><dd>{countText(item)}</dd>
+                <dt>{t('ui.howToGetIt')}</dt><dd>{obtainText(item)}</dd>
               </dl>
               <button
                 class="primary"
@@ -107,11 +108,11 @@ export function Inventory() {
               </button>
             </>
           ) : (
-            <p class="muted">Choose an item to see its details.</p>
+            <p class="muted">{t('ui.chooseAnItemToSeeIts')}</p>
           )}
         </div>
       </div>
-      <p class="muted small-note">Counts include players with accounts, and update every few minutes.</p>
+      <p class="muted small-note">{t('ui.countsIncludePlayersWithAccountsAnd')}</p>
     </div>
   );
 }

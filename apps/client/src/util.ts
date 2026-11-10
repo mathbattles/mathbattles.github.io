@@ -62,7 +62,8 @@ export function go(path: string): void {
 
 export type SoundKind =
   | 'fire' | 'boom' | 'kill' | 'turn' | 'tick' | 'go' | 'win' | 'lose'
-  | 'click' | 'hover' | 'toggle' | 'page' | 'buy' | 'equip' | 'error' | 'slide' | 'open' | 'close' | 'key';
+  | 'click' | 'hover' | 'toggle' | 'page' | 'buy' | 'equip' | 'error' | 'slide' | 'open' | 'close' | 'key'
+  | 'lock' | 'unlock' | 'beam' | 'luck';
 
 let out: AudioNode | null = null;
 
@@ -181,6 +182,24 @@ export function sound(kind: SoundKind, muted: boolean): void {
         break;
       case 'key':
         noise(c, 0.018, 0.03, 5200);
+        break;
+      case 'lock':
+        // A latch clicking shut.
+        noise(c, 0.03, 0.06, 3800);
+        tone(c, 'square', 330, 330, 0.05, 0.05);
+        tone(c, 'triangle', 660, 990, 0.1, 0.06, 0.05);
+        break;
+      case 'unlock':
+        noise(c, 0.03, 0.05, 3000);
+        tone(c, 'triangle', 990, 520, 0.1, 0.05);
+        break;
+      case 'beam':
+        tone(c, 'sawtooth', 120, 1600, 0.5, 0.09);
+        tone(c, 'square', 60, 240, 0.6, 0.08, 0.05);
+        noise(c, 0.6, 0.18, 1800);
+        break;
+      case 'luck':
+        [784, 988, 1175, 1568, 1976].forEach((f, i) => tone(c, 'triangle', f, f, 0.18, 0.1, i * 0.07));
         break;
     }
   } catch {

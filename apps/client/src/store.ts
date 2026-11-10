@@ -61,6 +61,12 @@ export interface Profile {
   mathKeys: 'auto' | 'on' | 'off';
   chatOff: boolean;
   analytics: 'unset' | 'yes' | 'no';
+  /** Interface size, from 0.6 to 1.5. */
+  uiScale: number;
+  /** Names and arrows on the battlefield. */
+  gameText: 'small' | 'normal' | 'large';
+  /** Interface language, or '' to follow the browser. Saved with the account, so it follows you. */
+  language: string;
   /** Set by the age check before making an account. Only the band is kept, never the birth year. */
   ageBand?: 'adult' | 'child';
   updatedAt: number;
@@ -127,6 +133,10 @@ function fresh(): Profile {
     mathKeys: 'auto',
     chatOff: false,
     analytics: 'unset',
+    // Narrow screens start a little smaller, so more of the game fits.
+    uiScale: typeof window !== 'undefined' && window.innerWidth < 520 ? 0.9 : 1,
+    gameText: 'normal',
+    language: '',
     updatedAt: 0,
   };
 }
@@ -174,7 +184,7 @@ export function saveProfile(): void {
 
 /** Settings that belong to this device, not to whoever is signed in. */
 function deviceSettings(p: Profile) {
-  return { guestToken: p.guestToken, theme: p.theme, lookVersion: p.lookVersion, muted: p.muted, sfxVolume: p.sfxVolume, music: p.music, musicVolume: p.musicVolume, musicTrack: p.musicTrack, mathKeys: p.mathKeys, chatOff: p.chatOff, analytics: p.analytics, ageBand: p.ageBand };
+  return { guestToken: p.guestToken, theme: p.theme, lookVersion: p.lookVersion, muted: p.muted, sfxVolume: p.sfxVolume, music: p.music, musicVolume: p.musicVolume, musicTrack: p.musicTrack, mathKeys: p.mathKeys, chatOff: p.chatOff, analytics: p.analytics, ageBand: p.ageBand, uiScale: p.uiScale, gameText: p.gameText };
 }
 
 /**
@@ -226,6 +236,30 @@ export function markLearned(id: string): void {
   profile.learnDone.push(id);
   bumpQuest('learn');
   saveProfile();
+}
+
+export const UI_SCALE_MIN = 0.6;
+export const UI_SCALE_MAX = 1.5;
+
+/** Applies the interface size to the page. Everything sized in rem follows it. */
+export function applyUiScale(scale = profile.uiScale): void {
+  const v = Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX, Number.isFinite(scale) ? scale : 1));
+  try {
+    document.documentElement.style.setProperty('--ui-scale', String(v));
+  } catch {
+    /* no page here */
+  }
+}
+
+export function setUiScale(scale: number): void {
+  profile.uiScale = Math.round(Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX, scale)) * 100) / 100;
+  applyUiScale();
+  saveProfile();
+}
+
+/** How big names and arrows are drawn on the battlefield. */
+export function gameTextScale(): number {
+  return profile.gameText === 'small' ? 0.85 : profile.gameText === 'large' ? 1.3 : 1;
 }
 
 export function cosmeticValue(kind: CosmeticKind): string {

@@ -1,7 +1,7 @@
 import { MAX_STEPS, type ShotMode } from './constants';
 import { compile, varsForMode } from './parser';
 import { Rng } from './rng';
-import { currentPlayer, currentSoldier, isMirrored, livingTargets, terrainOf, type MatchState } from './rules';
+import { isMirrored, livingTargets, playerById, terrainOf, type MatchState } from './rules';
 import { simulateShot } from './trajectory';
 
 export const BOT_LEVELS = {
@@ -85,6 +85,8 @@ export interface BotMove {
 }
 
 export interface ThinkOptions {
+  /** The bot that is aiming. Everyone aims at once, so each bot plans from its own soldier. */
+  playerId: string;
   generations: number;
   seed: number;
   /** Random change to the final numbers, so lower levels miss like people do. */
@@ -98,10 +100,10 @@ export interface ThinkOptions {
 
 /** Evolves candidate functions against the actual simulation and returns the best one. */
 export function chooseMove(state: MatchState, opts: ThinkOptions): BotMove {
-  const shooter = currentSoldier(state);
-  const me = currentPlayer(state);
   const fallback: BotMove = { expr: '0', angle: 0, dir: 1, expectedHit: false };
-  if (!shooter) return fallback;
+  const me = playerById(state, opts.playerId);
+  const shooter = me ? state.soldiers[me.soldierId] : undefined;
+  if (!me || !shooter?.alive) return fallback;
 
   const rng = new Rng(opts.seed);
   const mode = state.config.mode;

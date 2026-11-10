@@ -1,10 +1,11 @@
-import { rankFor, type MatchRecord } from '@mathbattles/sim';
+import { rankFor, replayIsOld, type MatchRecord } from '@mathbattles/sim';
 import { useEffect, useState } from 'preact/hooks';
 import { useAuth } from '../auth';
 import { loadHistory } from '../history';
 import { fetchPlayer, type PlayerPage } from '../net/api';
 import { modeName } from '../util';
 import { TopBar } from './Shared';
+import { t } from '../i18n';
 
 const RESULT_TEXT = { win: 'Won', loss: 'Lost', draw: 'Draw', none: 'Played' } as const;
 const KIND_TEXT = { bots: 'Vs bots', online: 'Online', ranked: 'Ranked', shared: 'Same device' } as const;
@@ -29,7 +30,7 @@ export function MatchList({ matches, empty }: { matches: MatchRecord[]; empty: s
             </small>
           </span>
           {m.ratingDelta !== undefined && <span class="rating-change">{m.ratingDelta >= 0 ? '+' : ''}{m.ratingDelta}</span>}
-          {m.replay ? <a class="btn small" href={`#/replay/${m.replay}`}>Watch</a> : <span class="muted small-note">Too long to save</span>}
+          {m.replayId ? <a class="btn small" href={`#/r/${m.replayId}`}>{t('ui.watch')}</a> : m.replay && !replayIsOld(m.replay) ? <a class="btn small" href={`#/replay/${m.replay}`}>{t('ui.watch')}</a> : m.replay ? <span class="muted small-note" title={t('ui.thisMatchWasPlayedBeforeRounds')}>{t('ui.olderVersion')}</span> : <span class="muted small-note">{t('ui.noReplay')}</span>}
         </li>
       ))}
     </ul>
@@ -50,7 +51,7 @@ export function MyHistory() {
       live = false;
     };
   }, [auth.ready, auth.user?.uid]);
-  if (matches === null) return <p>Loading your matches.</p>;
+  if (matches === null) return <p>{t('ui.loadingYourMatches')}</p>;
   return <MatchList matches={matches} empty="No matches yet. Play bots or go online, and they'll appear here to watch again." />;
 }
 
@@ -64,12 +65,12 @@ export function PlayerScreen({ name }: { name: string }) {
     <div class="page">
       <TopBar title={page !== 'loading' && page ? page.name : 'Player'} />
       {page === 'loading' ? (
-        <p>Loading this player.</p>
+        <p>{t('ui.loadingThisPlayer')}</p>
       ) : !page ? (
         <div class="sheet">
-          <h3>No player found</h3>
+          <h3>{t('ui.noPlayerFound')}</h3>
           <p>There's no player called {name}, or the server can't be reached right now.</p>
-          <a class="btn" href="#/leaderboard">Open the leaderboard</a>
+          <a class="btn" href="#/leaderboard">{t('ui.openTheLeaderboard')}</a>
         </div>
       ) : (
         <>
@@ -78,7 +79,7 @@ export function PlayerScreen({ name }: { name: string }) {
             <p>Rating {page.rating}. {page.games} ranked {page.games === 1 ? 'match' : 'matches'} played.</p>
           </div>
           <div class="sheet">
-            <h3>Recent matches</h3>
+            <h3>{t('ui.recentMatches')}</h3>
             <MatchList matches={page.matches} empty="No matches played yet." />
           </div>
         </>

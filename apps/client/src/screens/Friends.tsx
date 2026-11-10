@@ -7,6 +7,7 @@ import { profile } from '../store';
 import { TopBar } from './Shared';
 import { ChatWindow, useOpenChats } from './Chat';
 import { MAX_OPEN_CHATS, openChat } from '../dms';
+import { t } from '../i18n';
 
 export function useSocial() {
   const [, force] = useState(0);
@@ -28,14 +29,14 @@ export function Friends() {
     void refreshSocial();
   }, []);
 
-  if (!auth.ready) return <div class="page"><TopBar title="Friends" /><p>Checking your account.</p></div>;
+  if (!auth.ready) return <div class="page"><TopBar title={t('ui.friends')} /><p>{t('ui.checkingYourAccount')}</p></div>;
   if (!auth.user || !auth.username) {
     return (
       <div class="page">
-        <TopBar title="Friends" />
+        <TopBar title={t('ui.friends')} />
         <div class="sheet">
-          <p>Make a free account to add friends, see who's online, start a party, and invite people into your games.</p>
-          <a class="btn primary" href="#/signin">Sign in or create an account</a>
+          <p>{t('ui.makeAFreeAccountToAdd')}</p>
+          <a class="btn primary" href="#/signin">{t('ui.signInOrCreateAnAccount')}</a>
         </div>
       </div>
     );
@@ -73,12 +74,12 @@ export function Friends() {
 
   return (
     <div class="page">
-      <TopBar title="Friends" />
+      <TopBar title={t('ui.friends')} />
       {error && <p class="error" role="alert">{error}</p>}
       {note && <p class="ok" role="status">{note}</p>}
       {chats.length > 0 && (
         <div class="sheet chats-sheet">
-          <h3>Messages <small class="muted">{chats.length}/{MAX_OPEN_CHATS} open</small></h3>
+          <h3>{t('ui.messages')} <small class="muted">{chats.length}/{MAX_OPEN_CHATS} open</small></h3>
           <div class={`chats count-${chats.length}`}>
             {chats.map((c) => (
               <ChatWindow key={c.name} chat={c} online={!!state?.friends.find((f) => f.name.toLowerCase() === c.name.toLowerCase())?.online} />
@@ -89,22 +90,22 @@ export function Friends() {
       <div class="grid-2">
         <div>
           <div class="sheet">
-            <h3>Add a friend</h3>
+            <h3>{t('ui.addAFriend')}</h3>
             <form class="row" onSubmit={(e) => { e.preventDefault(); if (name.trim()) void run(friendAction('request', name.trim())).then(() => setName('')); }}>
-              <input type="text" placeholder="Their username" maxLength={16} value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} aria-label="Username to add" />
-              <button class="primary" type="submit" disabled={!name.trim()}>Send request</button>
+              <input type="text" placeholder={t('ui.theirUsername')} maxLength={16} value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} aria-label={t('ui.usernameToAdd')} />
+              <button class="primary" type="submit" disabled={!name.trim()}>{t('ui.sendRequest')}</button>
             </form>
-            <p class="muted small-note" style={{ marginTop: 6 }}>Your username is <strong>{auth.username}</strong>. Share it so friends can add you.</p>
+            <p class="muted small-note" style={{ marginTop: 6 }}>{t('ui.yourUsernameIs')} <strong>{auth.username}</strong>{t('ui.shareItSoFriendsCanAdd')}</p>
           </div>
           {!!state?.incoming.length && (
             <div class="sheet">
-              <h3>Friend requests</h3>
+              <h3>{t('ui.friendRequests')}</h3>
               {state.incoming.map((n) => (
                 <div class="friend-row">
                   <strong>{n}</strong>
                   <span class="row">
-                    <button class="small primary" onClick={() => void run(friendAction('accept', n), `You and ${n} are now friends.`)}>Accept</button>
-                    <button class="small" onClick={() => void run(friendAction('decline', n))}>Decline</button>
+                    <button class="small primary" onClick={() => void run(friendAction('accept', n), `You and ${n} are now friends.`)}>{t('ui.accept')}</button>
+                    <button class="small" onClick={() => void run(friendAction('decline', n))}>{t('ui.decline')}</button>
                   </span>
                 </div>
               ))}
@@ -112,7 +113,7 @@ export function Friends() {
           )}
           <div class="sheet">
             <h3>Friends {state ? <small class="muted">{online.length} online</small> : null}</h3>
-            {!state ? <p>{s.error || 'Loading your friends.'}</p> : state.friends.length === 0 ? <p class="muted">No friends yet. Add someone by their username.</p> : (
+            {!state ? <p>{s.error || 'Loading your friends.'}</p> : state.friends.length === 0 ? <p class="muted">{t('ui.noFriendsYetAddSomeoneBy')}</p> : (
               <>
                 {[...online, ...offline].map((f) => (
                   <div class={`friend-row ${f.online ? 'on' : ''}`}>
@@ -125,18 +126,18 @@ export function Friends() {
                       </button>
                     </span>
                     <span class="row">
-                      {f.online && f.room && !f.inMatch && !f.room.startsWith('R-') && <a class="btn small primary" href={`#/room/${f.room}`}>Join</a>}
-                      {f.online && f.room && f.inMatch && <a class="btn small" href={`#/watch/${f.room}`}>Watch</a>}
-                      {room && f.online && f.room !== room && <button class="small" onClick={() => void run(inviteToRoom(f.name, room))}>Invite</button>}
+                      {f.online && f.room && !f.inMatch && !f.room.startsWith('R-') && <a class="btn small primary" href={`#/room/${f.room}`}>{t('ui.join')}</a>}
+                      {f.online && f.room && f.inMatch && <a class="btn small" href={`#/watch/${f.room}`}>{t('ui.watch')}</a>}
+                      {room && f.online && f.room !== room && <button class="small" onClick={() => void run(inviteToRoom(f.name, room))}>{t('ui.invite')}</button>}
                       {party?.isLeader !== false && f.online && !party?.members.some((m) => m.name === f.name) && (
-                        <button class="small" onClick={() => void run(party ? partyAction('invite', { name: f.name }) : partyAction('create').then(() => partyAction('invite', { name: f.name })))}>Party up</button>
+                        <button class="small" onClick={() => void run(party ? partyAction('invite', { name: f.name }) : partyAction('create').then(() => partyAction('invite', { name: f.name })))}>{t('ui.partyUp')}</button>
                       )}
                       {removing === f.name ? (
                         <>
-                          <button class="small danger" onClick={() => { setRemoving(null); void run(friendAction('remove', f.name), `Removed ${f.name}.`); }}>Yes, remove</button>
-                          <button class="small plain" onClick={() => setRemoving(null)}>Keep</button>
+                          <button class="small danger" onClick={() => { setRemoving(null); void run(friendAction('remove', f.name), `Removed ${f.name}.`); }}>{t('ui.yesRemove')}</button>
+                          <button class="small plain" onClick={() => setRemoving(null)}>{t('ui.keep')}</button>
                         </>
-                      ) : <button class="small plain" onClick={() => setRemoving(f.name)}>Remove</button>}
+                      ) : <button class="small plain" onClick={() => setRemoving(f.name)}>{t('ui.remove')}</button>}
                     </span>
                   </div>
                 ))}
@@ -145,7 +146,7 @@ export function Friends() {
             {!!state?.outgoing.length && (
               <p class="muted small-note" style={{ marginTop: 8 }}>
                 Waiting for: {state.outgoing.map((n, i) => (
-                  <span>{i ? ', ' : ''}{n} <button class="plain small" onClick={() => void run(friendAction('cancel', n))}>cancel</button></span>
+                  <span>{i ? ', ' : ''}{n} <button class="plain small" onClick={() => void run(friendAction('cancel', n))}>{t('ui.cancel')}</button></span>
                 ))}
               </p>
             )}
@@ -153,11 +154,11 @@ export function Friends() {
         </div>
         <div>
           <div class="sheet">
-            <h3>Party</h3>
+            <h3>{t('ui.party')}</h3>
             {!party ? (
               <>
-                <p>A party moves together: when the leader joins a room, everyone in the party follows.</p>
-                <button class="primary" onClick={() => void run(partyAction('create'), 'Party started. Invite friends to it.')}>Start a party</button>
+                <p>{t('ui.aPartyMovesTogetherWhenThe')}</p>
+                <button class="primary" onClick={() => void run(partyAction('create'), 'Party started. Invite friends to it.')}>{t('ui.startAParty')}</button>
               </>
             ) : (
               <>
@@ -166,20 +167,20 @@ export function Friends() {
                   {party.members.map((m) => (
                     <li class={m.online ? 'on' : ''}>
                       <i class="dot" aria-hidden="true" />
-                      <strong>{m.name}</strong>{m.leader ? <small class="muted"> leader</small> : null}
-                      {party.isLeader && !m.leader && <button class="small plain" onClick={() => void run(partyAction('kick', { name: m.name }))}>Remove</button>}
+                      <strong>{m.name}</strong>{m.leader ? <small class="muted"> {t('ui.leader')}</small> : null}
+                      {party.isLeader && !m.leader && <button class="small plain" onClick={() => void run(partyAction('kick', { name: m.name }))}>{t('ui.remove')}</button>}
                     </li>
                   ))}
                 </ul>
-                {party.room && !party.isLeader && currentRoom() !== party.room && <a class="btn primary" href={`#/room/${party.room}`}>Join your party's room</a>}
+                {party.room && !party.isLeader && currentRoom() !== party.room && <a class="btn primary" href={`#/room/${party.room}`}>{t('ui.joinYourPartySRoom')}</a>}
                 <div class="row" style={{ marginTop: 10 }}>
-                  {party.isLeader && <button onClick={() => go('/online')}>Find a room</button>}
-                  <button onClick={() => void run(partyAction('leave'), 'You left the party.')}>Leave party</button>
+                  {party.isLeader && <button onClick={() => go('/online')}>{t('ui.findARoom')}</button>}
+                  <button onClick={() => void run(partyAction('leave'), 'You left the party.')}>{t('ui.leaveParty')}</button>
                 </div>
               </>
             )}
           </div>
-          {!room && <p class="muted small-note">Tip: join a room first, and an Invite button appears next to each online friend.</p>}
+          {!room && <p class="muted small-note">{t('ui.tipJoinARoomFirstAnd')}</p>}
         </div>
       </div>
     </div>
@@ -229,17 +230,17 @@ export function InviteToasts() {
   const invites = (state?.invites ?? []).filter((i) => !hidden.has(i.id));
   const messageToast = newFrom && !location.hash.startsWith('#/friends') ? (
     <div class="toast sheet">
-      <p>New message from <strong>{newFrom}</strong>.</p>
+      <p>{t('ui.newMessageFrom')} <strong>{newFrom}</strong>.</p>
       <div class="row">
-        <button class="small primary" onClick={() => { openChat(newFrom); setNewFrom(null); go('/friends'); }}>Open</button>
-        <button class="small" onClick={() => setNewFrom(null)}>Later</button>
+        <button class="small primary" onClick={() => { openChat(newFrom); setNewFrom(null); go('/friends'); }}>{t('ui.open')}</button>
+        <button class="small" onClick={() => setNewFrom(null)}>{t('ui.later')}</button>
       </div>
     </div>
   ) : null;
   if (problem) {
     return (
-      <div class="toasts" role="region" aria-label="Invitations">
-        <div class="toast sheet"><p class="error">{problem}</p><button class="small" onClick={() => setProblem('')}>OK</button></div>
+      <div class="toasts" role="region" aria-label={t('ui.invitations')}>
+        <div class="toast sheet"><p class="error">{problem}</p><button class="small" onClick={() => setProblem('')}>{t('ui.ok')}</button></div>
       </div>
     );
   }
@@ -249,7 +250,7 @@ export function InviteToasts() {
     void dismissInvite(id);
   };
   return (
-    <div class="toasts" role="region" aria-label="Invitations">
+    <div class="toasts" role="region" aria-label={t('ui.invitations')}>
       {messageToast}
       {invites.slice(0, 3).map((i) => (
         <div class="toast sheet">
@@ -268,7 +269,7 @@ export function InviteToasts() {
                 go(`/room/${i.target}`);
               }
             }}>{i.kind === 'party' ? 'Join party' : 'Join'}</button>
-            <button class="small" onClick={() => close(i.id)}>Not now</button>
+            <button class="small" onClick={() => close(i.id)}>{t('ui.notNow')}</button>
           </div>
         </div>
       ))}

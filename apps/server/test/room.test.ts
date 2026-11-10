@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RECONNECT_GRACE_MS, TURN_MS, currentPlayer, type ClientMsg, type ServerMsg } from '@mathbattles/sim';
+import { RECONNECT_GRACE_MS, ROUND_MS, type ClientMsg, type ServerMsg } from '@mathbattles/sim';
 import { cleanChat, cleanName, isBlockedName } from '../src/moderation';
 import { MessageBucket } from '../src/limits';
 import { RoomCore, type RoomIO } from '../src/roomCore';
@@ -52,14 +52,14 @@ describe('watching and custom maps', () => {
     expect(h.last('w', 'match')).toBeTruthy();
     expect(h.last('a', 'lobby')).toMatchObject({ spectators: 1 });
     const before = JSON.stringify(h.room.state);
-    h.room.handle('w', { t: 'fire', expr: 'x/3' });
+    h.room.handle('w', { t: 'lock', expr: 'x/3' });
     h.room.handle('w', { t: 'chat', text: 'hello' });
     h.room.handle('w', { t: 'start' });
     expect(JSON.stringify(h.room.state)).toBe(before);
-    // Watchers get each shot like players do.
-    const cur = currentPlayer(h.room.state!);
-    h.room.handle(connFor(cur.id, h), { t: 'fire', expr: 'x/7' });
-    expect(h.last('w', 'shot')).toBeTruthy();
+    // Watchers get each round like players do.
+    h.room.handle('a', { t: 'lock', expr: 'x/7' });
+    h.room.handle('b', { t: 'lock', expr: 'x/9' });
+    expect(h.last('w', 'round')).toBeTruthy();
     h.room.disconnect('w');
     expect(h.last('a', 'lobby')).toMatchObject({ spectators: 0 });
   });
@@ -95,9 +95,9 @@ describe('room lobby', () => {
     expect(h.room.settings.kind).toBe('teams');
     h.room.handle('b', { t: 'start' });
     expect(h.room.state).toBeNull();
-    h.room.handle('a', { t: 'settings', settings: { kind: 'ffa', soldiers: 99 } });
+    h.room.handle('a', { t: 'settings', settings: { kind: 'ffa', soldiers: 99 } as never });
     expect(h.room.settings.kind).toBe('ffa');
-    expect(h.room.settings.soldiers).toBe(4);
+    expect('soldiers' in h.room.settings).toBe(false);
   });
   it('requires everyone ready and valid teams', () => {
     const h = harness();
@@ -111,50 +111,68 @@ describe('room lobby', () => {
 });
 
 describe('match on the server', () => {
-  it('rejects a shot out of turn and bad math, without ending the turn', () => {
+  it('fires only when everyone has locked, and unlocking takes you back off the list', () => {
     const h = startDuel();
     const state = h.room.state!;
-    const cur = currentPlayer(state).id;
-    const other = h.room.seats.find((s) => s.id !== cur)!;
-    h.room.handle(connFor(other.id, h), { t: 'fire', expr: '0' });
-    expect((h.last(connFor(other.id, h), 'error') as { message: string }).message).toMatch(/your turn/);
-    expect(state.turnNumber).toBe(1);
-    h.room.handle(connFor(cur, h), { t: 'fire', expr: 'sin(x' });
-    expect((h.last(connFor(cur, h), 'error') as { message: string }).message).toMatch(/Missing/);
-    expect(state.turnNumber).toBe(1);
+    h.room.handle('a', { t: 'lock', expr: 'x/3' });
+    expect(state.round).toBe(1);
+    expect(state.players.find((p) => p.id === h.room.seats[0]!.id)!.locked).toBe(true);
+    h.room.handle('a', { t: 'unlock' });
+    expect(state.players.find((p) => p.id === h.room.seats[0]!.id)!.locked).toBe(false);
+    h.room.handle('a', { t: 'lock', expr: 'x/3' });
+    h.room.handle('b', { t: 'lock', expr: 'x/5' });
+    expect(state.round).toBe(2);
+    const round = h.last('a', 'round') as { round: { shots: unknown[] } };
+    expect(round.round.shots.length).toBe(2);
+  });
+  it('never sends anyone else’s function before the round fires', () => {
+    const h = startDuel();
+    h.room.handle('a', { t: 'draft', expr: 'secretcurve*0' });
+    h.room.handle('a', { t: 'lock', expr: 'secretcurve*0+x/4' });
+    expect(JSON.stringify(h.sent.b ?? [])).not.toContain('secretcurve');
   });
   it("ignores any result a client claims: only the server's simulation counts", () => {
     const h = startDuel();
     const state = h.room.state!;
-    const cur = currentPlayer(state).id;
-    const forged = { t: 'fire', expr: '0', hits: [{ id: 0, step: 1 }, { id: 1, step: 1 }, { id: 2, step: 1 }, { id: 3, step: 1 }], kills: 99 } as unknown as ClientMsg;
-    const aliveBefore = state.soldiers.filter((s) => s.alive).length;
+    const forged = { t: 'lock', expr: '0', hits: [{ id: 0, step: 1 }, { id: 1, step: 1 }], kills: 99 } as unknown as ClientMsg;
     state.circles.length = 0;
-    state.soldiers.forEach((s, i) => { s.x = i < 2 ? 100 : 600; s.y = 40 + i * 90; });
-    h.room.handle(connFor(cur, h), forged);
-    expect(state.soldiers.filter((s) => s.alive).length).toBe(aliveBefore);
-    const shot = h.last(connFor(cur, h), 'shot') as { shot: { hits: unknown[] } };
-    expect(shot.shot.hits).toEqual([]);
+    state.soldiers.forEach((s, i) => { s.x = i === 0 ? 100 : 600; s.y = 40 + i * 300; });
+    h.room.handle('a', forged);
+    h.room.handle('b', forged);
+    expect(state.soldiers.filter((s) => s.alive).length).toBe(2);
+    const round = h.last('a', 'round') as { round: { kills: unknown[] } };
+    expect(round.round.kills).toEqual([]);
   });
-  it('makes the next player wait for the shot to land', () => {
+  it('makes everyone wait for the last round to land before locking again', () => {
     const h = startDuel();
-    const state = h.room.state!;
-    const first = currentPlayer(state).id;
-    h.room.handle(connFor(first, h), { t: 'fire', expr: '0' });
-    const next = currentPlayer(state).id;
-    expect(next).not.toBe(first);
-    h.room.handle(connFor(next, h), { t: 'fire', expr: '0' });
-    expect((h.last(connFor(next, h), 'error') as { message: string }).message).toMatch(/land/);
-    const shot = h.last(connFor(next, h), 'shot') as { deadline: number };
-    h.clock.t = shot.deadline - TURN_MS + 1;
-    h.room.handle(connFor(next, h), { t: 'fire', expr: '0' });
-    expect(state.turnNumber).toBe(3);
+    h.room.handle('a', { t: 'lock', expr: '0' });
+    h.room.handle('b', { t: 'lock', expr: '0' });
+    h.room.handle('a', { t: 'lock', expr: '0' });
+    expect((h.last('a', 'error') as { message: string }).message).toMatch(/last round/);
+    const round = h.last('a', 'round') as { deadline: number };
+    h.clock.t = round.deadline - ROUND_MS + 1;
+    h.room.handle('a', { t: 'lock', expr: '0' });
+    expect(h.room.state!.players.find((p) => p.id === h.room.seats[0]!.id)!.locked).toBe(true);
   });
-  it('skips a player who runs out of time', () => {
+  it('when time runs out, a valid draft fires and a broken one is no shot', () => {
     const h = startDuel();
-    const first = currentPlayer(h.room.state!).id;
-    h.advance(TURN_MS + 10);
-    expect(currentPlayer(h.room.state!).id).not.toBe(first);
+    h.room.handle('a', { t: 'draft', expr: 'x/6' });
+    h.room.handle('b', { t: 'draft', expr: 'sin(' });
+    h.advance(ROUND_MS + 10);
+    const round = h.last('a', 'round') as { round: { shots: { playerId: string; expr: string }[] } };
+    expect(round.round.shots.map((s) => s.expr)).toEqual(['x/6']);
+  });
+  it('a round with no shots still moves on when the clock runs out', () => {
+    const h = startDuel();
+    h.advance(ROUND_MS + 10);
+    expect(h.room.state!.round).toBe(2);
+  });
+  it('gives a reconnecting player their draft back', () => {
+    const h = startDuel();
+    h.room.handle('b', { t: 'draft', expr: 'x/11' });
+    h.room.disconnect('b');
+    h.join('b2', 'tokB');
+    expect(h.last('b2', 'match')).toMatchObject({ draft: { expr: 'x/11' } });
   });
   it('lets a disconnected player rejoin the same seat within the grace period', () => {
     const h = startDuel();
@@ -184,19 +202,20 @@ describe('match on the server', () => {
     expect((h.last('c', 'error') as { message: string }).message).toMatch(/in progress/);
     expect(h.room.seats.length).toBe(2);
   });
-  it('bots take their turns', () => {
+  it('bots lock in by themselves, at the same time as everyone else', () => {
     const h = harness();
     h.join('a', '1');
     h.room.handle('a', { t: 'addBot', level: 'easy' });
+    h.room.handle('a', { t: 'addBot', level: 'normal' });
     h.room.handle('a', { t: 'start' });
     const state = h.room.state!;
-    expect(state.players.some((p) => p.isBot)).toBe(true);
-    for (let i = 0; i < 4 && !state.over; i++) {
-      const cur = currentPlayer(state);
-      if (!cur.isBot) h.room.handle('a', { t: 'fire', expr: '0' });
-      h.advance(30_000);
-    }
-    expect(state.log.some((e) => e.type === 'shot' && state.players.find((p) => p.id === e.shot.playerId)?.isBot)).toBe(true);
+    h.advance(5001 + 20_000);
+    const bots = state.players.filter((p) => p.isBot);
+    expect(bots.length).toBe(2);
+    expect(bots.every((p) => p.locked)).toBe(true);
+    h.room.handle('a', { t: 'lock', expr: '0' });
+    const round = state.log.find((e) => e.type === 'round');
+    expect(round && round.type === 'round' && round.round.shots.filter((s) => bots.some((b) => b.id === s.playerId)).length).toBe(2);
   });
   it('a unanimous -skip makes a new map', () => {
     const h = startDuel();
@@ -216,10 +235,9 @@ describe('match on the server', () => {
     const h = harness({ ranked: true, rankedPair: ['g:1', 'g:2'] });
     h.join('a', '1');
     expect(h.room.state).toBeNull();
-    h.room.handle('a', { t: 'settings', settings: { soldiers: 4 } });
     h.join('b', '2');
     expect(h.room.state).not.toBeNull();
-    expect(h.room.state!.config.soldiers).toBe(1);
+    expect(h.room.state!.soldiers.length).toBe(2);
     expect(h.room.seats.map((s) => s.team)).toEqual([1, 2]);
   });
 });
@@ -273,8 +291,7 @@ describe('review fixes', () => {
     h.room.handle('a', { t: 'start' });
     h.advance(5001);
     const state = h.room.state!;
-    const cur = currentPlayer(state);
-    const conn = connFor(cur.id, h);
+    const conn = 'a';
     const before = JSON.stringify(state);
     h.room.handle(conn, { t: 'teleport', x: 50, y: 50 } as unknown as ClientMsg);
     h.room.handle(conn, { t: 'missile' } as unknown as ClientMsg);
@@ -303,12 +320,12 @@ describe('review fixes', () => {
   it('a too-big match gives a message instead of failing silently', () => {
     const h = harness();
     h.join('a', '1');
-    h.room.handle('a', { t: 'settings', settings: { kind: 'ffa', soldiers: 4 } });
+    h.room.handle('a', { t: 'settings', settings: { kind: 'ffa' } });
     for (let i = 0; i < 9; i++) h.room.handle('a', { t: 'addBot', level: 'easy' });
     expect(h.room.seats.length).toBe(10);
     h.room.handle('a', { t: 'start' });
     expect(h.room.state).not.toBeNull();
-    expect(h.room.state!.soldiers.length).toBe(40);
+    expect(h.room.state!.soldiers.length).toBe(10);
   });
   it('sends the exact setups used, so replays match', () => {
     const h = startDuel();

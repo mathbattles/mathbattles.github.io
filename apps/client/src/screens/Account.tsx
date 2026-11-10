@@ -19,6 +19,7 @@ import { go } from '../util';
 import { profile, saveProfile } from '../store';
 import { Dropdown } from './Dropdown';
 import { TopBar, useProfile } from './Shared';
+import { t } from '../i18n';
 
 function Notice({ result }: { result: AuthResult | null }) {
   if (!result) return null;
@@ -92,13 +93,13 @@ function AgeCheck() {
   };
   return (
     <div class="sheet age-check">
-      <h3>Before you make an account</h3>
-      <p>What year were you born?</p>
+      <h3>{t('ui.beforeYouMakeAnAccount')}</h3>
+      <p>{t('ui.whatYearWereYouBorn')}</p>
       <div class="row">
-        <Dropdown label="Birth year" value={year} placeholder="Choose a year" onChange={setYear} options={years.map((y) => ({ value: y, label: String(y) }))} />
-        <button class="primary" disabled={year === null} onClick={confirm}>Continue</button>
+        <Dropdown label={t('ui.birthYear')} value={year} placeholder={t('ui.chooseAYear')} onChange={setYear} options={years.map((y) => ({ value: y, label: String(y) }))} />
+        <button class="primary" disabled={year === null} onClick={confirm}>{t('ui.continue')}</button>
       </div>
-      <p class="muted small-note">We only keep whether you're 13 or older, on this device. Your birth year isn't saved or sent anywhere.</p>
+      <p class="muted small-note">{t('ui.weOnlyKeepWhetherYouRe')}</p>
     </div>
   );
 }
@@ -106,9 +107,9 @@ function AgeCheck() {
 function UnderThirteen() {
   return (
     <div class="age-check">
-      <p><strong>Accounts are for players 13 and older.</strong></p>
-      <p>You can still play everything as a guest: bots, Free Play, the campaign, Learn, custom maps, and online matches. Your progress stays on this device.</p>
-      <a class="btn primary" href="#/">Keep playing</a>
+      <p><strong>{t('ui.accountsAreForPlayers13And')}</strong></p>
+      <p>{t('ui.youCanStillPlayEverythingAs')}</p>
+      <a class="btn primary" href="#/">{t('ui.keepPlaying')}</a>
     </div>
   );
 }
@@ -126,11 +127,11 @@ export function SignIn() {
 
   return (
     <div class="page narrow">
-      <TopBar title="Sign in" />
+      <TopBar title={t('ui.signIn')} />
       <div class="sheet">
-        <div class="row tabs" role="group" aria-label="Sign in or create an account">
-          <button class={mode === 'in' ? 'on' : ''} aria-pressed={mode === 'in'} onClick={() => setMode('in')}>Sign in</button>
-          <button class={mode === 'new' ? 'on' : ''} aria-pressed={mode === 'new'} onClick={() => setMode('new')}>Create account</button>
+        <div class="row tabs" role="group" aria-label={t('ui.signInOrCreateAnAccount')}>
+          <button class={mode === 'in' ? 'on' : ''} aria-pressed={mode === 'in'} onClick={() => setMode('in')}>{t('ui.signIn')}</button>
+          <button class={mode === 'new' ? 'on' : ''} aria-pressed={mode === 'new'} onClick={() => setMode('new')}>{t('ui.createAccount')}</button>
         </div>
         {mode === 'in' && <Credentials key="in" submitLabel="Sign in" newPassword={false} onSubmit={signInWithUsername} />}
         {mode === 'new' && !profile.ageBand && <AgeCheck />}
@@ -138,31 +139,31 @@ export function SignIn() {
         {mode === 'new' && profile.ageBand === 'adult' && <Credentials key="new" submitLabel="Create account" newPassword onSubmit={register} />}
         {mode === 'forgot' && (
           <form class="stack" onSubmit={(e) => { e.preventDefault(); void resetPassword(email).then(setForgot); }}>
-            <p>Enter the email you added to your account, and we'll send a reset link.</p>
+            <p>{t('ui.enterTheEmailYouAddedTo')}</p>
             <label>Email
               <input name="email" type="email" autocomplete="email" value={email} onInput={(e) => setEmail((e.target as HTMLInputElement).value)} />
             </label>
-            <button class="primary">Send reset link</button>
+            <button class="primary">{t('ui.sendResetLink')}</button>
             <Notice result={forgot} />
-            <p class="muted small-note">No email on your account? If you linked Google, sign in with it, then choose a new password on your profile. Accounts with neither can't be recovered.</p>
+            <p class="muted small-note">{t('ui.noEmailOnYourAccountIf')}</p>
           </form>
         )}
         <div class="row" style={{ marginTop: 14 }}>
-          {mode !== 'forgot' && <button class="plain" onClick={() => setMode('forgot')}>Forgot your password?</button>}
-          {mode === 'forgot' && <button class="plain" onClick={() => setMode('in')}>Back to sign in</button>}
+          {mode !== 'forgot' && <button class="plain" onClick={() => setMode('forgot')}>{t('ui.forgotYourPassword')}</button>}
+          {mode === 'forgot' && <button class="plain" onClick={() => setMode('in')}>{t('ui.backToSignIn')}</button>}
         </div>
       </div>
       <div class="sheet">
-        <h3>Or use Google</h3>
+        <h3>{t('ui.orUseGoogle')}</h3>
         {profile.ageBand === 'adult' ? (
-          <button onClick={() => void signIn()}>Sign in with Google</button>
+          <button onClick={() => void signIn()}>{t('ui.signInWithGoogle')}</button>
         ) : profile.ageBand === 'child' ? (
-          <p class="muted">Google sign-in can make a new account, so it's for players 13 and older.</p>
+          <p class="muted">{t('ui.googleSignInCanMakeA')}</p>
         ) : (
-          <button onClick={() => setMode('new')}>Sign in with Google</button>
+          <button onClick={() => setMode('new')}>{t('ui.signInWithGoogle')}</button>
         )}
         {auth.error && <p class="error" role="alert">{auth.error}</p>}
-        <p class="muted small-note" style={{ marginTop: 10 }}>You can also keep playing as a guest. Your progress stays on this device.</p>
+        <p class="muted small-note" style={{ marginTop: 10 }}>{t('ui.youCanAlsoKeepPlayingAs')}</p>
       </div>
     </div>
   );
@@ -185,24 +186,24 @@ export function AccountPanel() {
     return r;
   };
 
-  if (!auth.ready) return <p>Checking your account.</p>;
+  if (!auth.ready) return <p>{t('ui.checkingYourAccount')}</p>;
   if (!auth.user) {
     return (
       <>
-        <p>You're playing as a guest, so progress stays on this device. Make a free account to keep it everywhere and play ranked.</p>
-        <a class="btn primary" href="#/signin">Sign in or create an account</a>
+        <p>{t('ui.youRePlayingAsAGuest')}</p>
+        <a class="btn primary" href="#/signin">{t('ui.signInOrCreateAnAccount')}</a>
       </>
     );
   }
   return (
     <div class="stack">
-      <p>Signed in as <strong>{auth.username ?? auth.user.displayName ?? 'your account'}</strong>. Your progress syncs across devices.</p>
+      <p>{t('ui.signedInAs')} <strong>{auth.username ?? auth.user.displayName ?? 'your account'}</strong>{t('ui.yourProgressSyncsAcrossDevices')}</p>
       {auth.rating !== null && <p>Rank: {rankFor(auth.rating)}</p>}
 
-      {auth.hasGoogle ? <p class="ok">Google is linked.</p> : (
+      {auth.hasGoogle ? <p class="ok">{t('ui.googleIsLinked')}</p> : (
         <div>
-          <button onClick={() => void linkGoogle().then(setResult)}>Add a Google account</button>
-          <p class="muted small-note">Then you can sign in with Google too, which also helps if you forget your password.</p>
+          <button onClick={() => void linkGoogle().then(setResult)}>{t('ui.addAGoogleAccount')}</button>
+          <p class="muted small-note">{t('ui.thenYouCanSignInWith')}</p>
         </div>
       )}
 
@@ -211,22 +212,22 @@ export function AccountPanel() {
           <label>Add an email
             <input name="email" type="email" autocomplete="email" value={email} onInput={(e) => setEmail((e.target as HTMLInputElement).value)} />
           </label>
-          <button disabled={!email.trim()}>Send confirmation link</button>
-          <p class="muted small-note">It lets you reset your password. It's optional.</p>
+          <button disabled={!email.trim()}>{t('ui.sendConfirmationLink')}</button>
+          <p class="muted small-note">{t('ui.itLetsYouResetYourPassword')}</p>
         </form>
       )}
 
       {!auth.username && (
         <div>
-          <h3>Add a username and password</h3>
+          <h3>{t('ui.addAUsernameAndPassword')}</h3>
           <Credentials submitLabel="Save username and password" newPassword onSubmit={addUsernameAndPassword} />
         </div>
       )}
 
       {auth.username && !auth.hasPassword && (
         <form class="stack" onSubmit={(e) => { e.preventDefault(); void run(addPassword(addedPassword)).then((r) => { if (!r.error) setAddedPassword(''); }); }}>
-          <h3>Add a password</h3>
-          <p class="muted small-note">Then you can sign in with your username, <strong>{auth.username}</strong>, and this password, as well as with Google.</p>
+          <h3>{t('ui.addAPassword')}</h3>
+          <p class="muted small-note">{t('ui.thenYouCanSignInWith2')} <strong>{auth.username}</strong>{t('ui.andThisPasswordAsWellAs')}</p>
           <input type="hidden" name="username" autocomplete="username" value={auth.username} />
           <label>Password
             <input name="new-password" type="password" autocomplete="new-password" value={addedPassword} onInput={(e) => setAddedPassword((e.target as HTMLInputElement).value)} />
@@ -238,7 +239,7 @@ export function AccountPanel() {
 
       {auth.hasPassword && (
         <form class="stack" onSubmit={(e) => { e.preventDefault(); void run(changePassword(newPassword, currentPassword || undefined)).then((r) => { if (!r.error) { setNewPassword(''); setCurrentPassword(''); } }); }}>
-          <h3>Change password</h3>
+          <h3>{t('ui.changePassword')}</h3>
           {!auth.hasGoogle && (
             <label>Current password
               <input name="current-password" type="password" autocomplete="current-password" value={currentPassword} onInput={(e) => setCurrentPassword((e.target as HTMLInputElement).value)} />
@@ -247,27 +248,27 @@ export function AccountPanel() {
           <label>New password
             <input name="new-password" type="password" autocomplete="new-password" value={newPassword} onInput={(e) => setNewPassword((e.target as HTMLInputElement).value)} />
           </label>
-          <button disabled={busy || !newPassword}>Change password</button>
+          <button disabled={busy || !newPassword}>{t('ui.changePassword')}</button>
         </form>
       )}
 
       <Notice result={result} />
 
       <div class="row">
-        <button onClick={() => void signOutUser()}>Sign out</button>
-        {!confirming && <button class="plain" onClick={() => setConfirming(true)}>Delete account</button>}
+        <button onClick={() => void signOutUser()}>{t('ui.signOut')}</button>
+        {!confirming && <button class="plain" onClick={() => setConfirming(true)}>{t('ui.deleteAccount')}</button>}
       </div>
       {confirming && (
         <div class="stack">
-          <span>Delete your account, rank, and online progress for good?</span>
+          <span>{t('ui.deleteYourAccountRankAndOnline')}</span>
           {auth.hasPassword && !auth.hasGoogle && (
             <label>Your password, to confirm
               <input name="confirm-password" type="password" autocomplete="current-password" value={currentPassword} onInput={(e) => setCurrentPassword((e.target as HTMLInputElement).value)} />
             </label>
           )}
           <div class="row">
-            <button class="danger" disabled={busy} onClick={() => void run(deleteAccount(currentPassword || undefined)).then((r) => { if (!r.error) { setConfirming(false); setResult({ message: 'Your account was deleted.' }); setCurrentPassword(''); } })}>Delete for good</button>
-            <button onClick={() => setConfirming(false)}>Keep my account</button>
+            <button class="danger" disabled={busy} onClick={() => void run(deleteAccount(currentPassword || undefined)).then((r) => { if (!r.error) { setConfirming(false); setResult({ message: 'Your account was deleted.' }); setCurrentPassword(''); } })}>{t('ui.deleteForGood')}</button>
+            <button onClick={() => setConfirming(false)}>{t('ui.keepMyAccount')}</button>
           </div>
         </div>
       )}

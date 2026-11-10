@@ -4,6 +4,7 @@ import { useAuth } from '../auth';
 import { loadHistory } from '../history';
 import { fetchLeaderboard, myRanked, type LeaderRow } from '../net/api';
 import { MatchList } from './History';
+import { t } from '../i18n';
 
 /** Where a rating sits: its tier, the next tier, and how far along it is. */
 export function tierProgress(rating: number) {
@@ -72,31 +73,31 @@ export function RankedInfo() {
         <div class="rank-top">
           <RankBadge index={p.index} size={86} />
           <div>
-            <p class="muted" style={{ margin: 0 }}>Your rank</p>
+            <p class="muted" style={{ margin: 0 }}>{t('ui.yourRank')}</p>
             <h2 style={{ margin: 0 }}>{p.tier.name}</h2>
             <p style={{ margin: '2px 0 0' }}><strong>{rating}</strong> rating{me?.place ? `, #${me.place} of ${me.total} ranked players` : ''}</p>
           </div>
         </div>
-        <div class="bar rank-bar" role="progressbar" aria-valuenow={Math.round(p.share * 100)} aria-valuemax={100} aria-label="Progress to the next rank">
+        <div class="bar rank-bar" role="progressbar" aria-valuenow={Math.round(p.share * 100)} aria-valuemax={100} aria-label={t('ui.progressToTheNextRank')}>
           <i style={{ width: `${p.share * 100}%` }} />
         </div>
         <p class="muted small-note" style={{ marginTop: 6 }}>{p.next ? `${p.toNext} more rating to reach ${p.next.name}.` : 'The highest rank. Stay on top.'}</p>
         <div class="rank-stats">
-          <div><strong>{me?.games ?? ranked.length}</strong><span>Matches</span></div>
-          <div><strong>{wins}–{losses}</strong><span>Won–lost</span></div>
-          <div><strong>{wins + losses ? Math.round((wins / (wins + losses)) * 100) : 0}%</strong><span>Win rate</span></div>
-          <div><strong>{streak > 0 ? `${streak} won` : streak < 0 ? `${-streak} lost` : '—'}</strong><span>Streak</span></div>
-          <div><strong>{change >= 0 ? '+' : ''}{change}</strong><span>Last 10</span></div>
+          <div><strong>{me?.games ?? ranked.length}</strong><span>{t('ui.matches')}</span></div>
+          <div><strong>{wins}–{losses}</strong><span>{t('ui.wonLost')}</span></div>
+          <div><strong>{wins + losses ? Math.round((wins / (wins + losses)) * 100) : 0}%</strong><span>{t('ui.winRate')}</span></div>
+          <div><strong>{streak > 0 ? `${streak} won` : streak < 0 ? `${-streak} lost` : '—'}</strong><span>{t('ui.streak')}</span></div>
+          <div><strong>{change >= 0 ? '+' : ''}{change}</strong><span>{t('ui.last10')}</span></div>
         </div>
       </div>
       <div class="grid-2">
         <div class="sheet">
-          <h3>Ranked matches</h3>
-          {matches === null ? <p>Loading.</p> : <MatchList matches={ranked.slice(0, 15)} empty="No ranked matches yet. Your first one is a click away." />}
+          <h3>{t('ui.rankedMatches')}</h3>
+          {matches === null ? <p>{t('ui.loading')}</p> : <MatchList matches={ranked.slice(0, 15)} empty="No ranked matches yet. Your first one is a click away." />}
         </div>
         <div>
           <div class="sheet">
-            <h3>Ranks</h3>
+            <h3>{t('ui.ranks')}</h3>
             <ol class="rank-ladder">
               {[...RANKS].reverse().map((r) => {
                 const i = RANKS.indexOf(r);
@@ -111,8 +112,8 @@ export function RankedInfo() {
             </ol>
           </div>
           <div class="sheet">
-            <h3>Top players</h3>
-            {top === null ? <p>Loading.</p> : top.length === 0 ? <p class="muted">Nobody has played ranked yet.</p> : (
+            <h3>{t('ui.topPlayers')}</h3>
+            {top === null ? <p>{t('ui.loading')}</p> : top.length === 0 ? <p class="muted">{t('ui.nobodyHasPlayedRankedYet')}</p> : (
               <ol class="top-list">
                 {top.map((r) => (
                   <li class={r.name === auth.username ? 'me' : ''}>
@@ -122,7 +123,7 @@ export function RankedInfo() {
                 ))}
               </ol>
             )}
-            <a class="btn small" href="#/leaderboard">Full leaderboard</a>
+            <a class="btn small" href="#/leaderboard">{t('ui.fullLeaderboard')}</a>
           </div>
         </div>
       </div>

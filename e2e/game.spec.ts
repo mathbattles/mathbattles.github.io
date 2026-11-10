@@ -1,5 +1,5 @@
 import { expect, test, type Browser, type Locator, type Page } from '@playwright/test';
-import { createMatch, currentPlayer, encodeReplay, fire as fireShot, makeReplay } from '../packages/sim/src/index';
+import { createMatch, encodeReplay, makeReplay, resolveRound } from '../packages/sim/src/index';
 
 async function newPlayer(browser: Browser, name: string): Promise<Page> {
   const ctx = await browser.newContext();
@@ -21,9 +21,10 @@ async function choose(trigger: Locator, option: string): Promise<void> {
   await trigger.page().getByRole('option', { name: option, exact: true }).click();
 }
 
+/** Types a function and locks it in. In a match, the round fires once everyone has locked. */
 const fire = async (page: Page, expr: string) => {
   await page.locator('#fn-input').fill(expr);
-  await page.getByRole('button', { name: 'Fire', exact: true }).click();
+  await page.getByRole('button', { name: /^(Lock in|Fire)$/ }).click();
 };
 
 test('a whole match against a bot can be finished, and pays rewards', async ({ browser }) => {
@@ -34,7 +35,7 @@ test('a whole match against a bot can be finished, and pays rewards', async ({ b
   });
   await page.goto('/#/local');
   await choose(page.getByRole('button', { name: 'Who plays' }).nth(1), 'Hard bot');
-  await choose(page.getByRole('button', { name: 'Soldiers each' }), '1');
+  await expect(page.getByRole('button', { name: 'Soldiers each' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Start match' }).click();
   await expect(page.locator('canvas')).toBeVisible();
   const over = page.getByRole('heading', { name: /You win|You lose|Draw/ });
@@ -97,7 +98,6 @@ test('two players can play online, with reconnect', async ({ browser }) => {
   await a.getByRole('button', { name: 'Start match' }).click();
   await expect(a.getByRole('alert')).toContainText('ready');
 
-  await choose(a.getByRole('button', { name: 'Soldiers each' }), '2');
   // Host's rule change reaches the other player.
   await a.getByRole('button', { name: 'Free-for-all' }).click();
   await expect(b.getByRole('button', { name: 'Free-for-all' })).toHaveClass(/on/);
@@ -109,23 +109,26 @@ test('two players can play online, with reconnect', async ({ browser }) => {
   await expect(a.locator('.game canvas')).toBeVisible();
   await expect(b.locator('.game canvas')).toBeVisible();
 
-  // After the start delay, one player has the turn and the other doesn't.
+  // After the start delay, both players aim at once, with a shared countdown listing who's left.
   await expect(a.locator('.who')).toHaveText('Get ready');
-  await expect(async () => {
-    const aTurn = await a.locator('.who').textContent();
-    const bTurn = await b.locator('.who').textContent();
-    expect([aTurn, bTurn].filter((t) => t === 'Your turn').length).toBe(1);
-  }).toPass({ timeout: 10_000 });
+  await expect(a.locator('#fn-input')).toBeEnabled({ timeout: 10_000 });
+  await expect(b.locator('#fn-input')).toBeEnabled({ timeout: 10_000 });
+  await expect(a.locator('.who')).toContainText(/\d+s - .*Ana.*Bo|\d+s - .*Bo.*Ana/);
 
-  const aFirst = (await a.locator('.who').textContent()) === 'Your turn';
-  const first = aFirst ? a : b;
-  const second = aFirst ? b : a;
-  await expect(second.locator('#fn-input')).toBeDisabled();
-
-  await fire(first, 'x/8');
-  await expect(first.locator('.who')).toHaveText(/Shot in the air|aiming/, { timeout: 5000 });
-
-  await expect(second.locator('.who')).toHaveText('Your turn', { timeout: 25_000 });
+  // Locking in takes you off the list; unlocking puts you back.
+  await fire(a, 'x/8');
+  await expect(a.getByRole('button', { name: 'Unlock' })).toBeVisible();
+  await expect(b.locator('.who')).not.toContainText('Ana');
+  await a.getByRole('button', { name: 'Unlock' }).click();
+  await expect(b.locator('.who')).toContainText('Ana');
+  await fire(a, 'x/8');
+  await fire(b, 'x/9');
+  // Everyone locked: the round fires together and shows in both histories.
+  await expect(a.locator('.history button.shot')).toHaveCount(1, { timeout: 15_000 });
+  await expect(b.locator('.history button.shot')).toHaveCount(1, { timeout: 15_000 });
+  const first = a;
+  const second = b;
+  const aFirst = true;
 
   // Second player drops and returns to the same seat.
   await second.reload();
@@ -148,9 +151,9 @@ test('two players can play online, with reconnect', async ({ browser }) => {
 
 test('a saved replay link really plays a match back to its end', async ({ browser }) => {
   const setups = [{ id: 'a', name: 'Ana', team: 1 as const }, { id: 'b', name: 'Bo', team: 2 as const }];
-  const match = createMatch({ kind: 'teams', mode: 'fn', soldiers: 1, seed: 5 }, setups);
-  fireShot(match, currentPlayer(match).id, { expr: 'x/9' });
-  fireShot(match, currentPlayer(match).id, { expr: 'sin(x)' });
+  const match = createMatch({ kind: 'teams', mode: 'fn', seed: 5 }, setups);
+  resolveRound(match, [{ playerId: 'a', expr: 'x/9' }]);
+  resolveRound(match, [{ playerId: 'b', expr: 'sin(x)' }]);
   const data = encodeReplay(makeReplay(match, setups));
   const page = await newPlayer(browser, 'Watcher');
   await page.goto(`/#/replay/${data}`);
@@ -158,14 +161,21 @@ test('a saved replay link really plays a match back to its end', async ({ browse
   await expect(page.locator('.last-shot code')).toHaveText('x/9', { timeout: 15_000 });
   await expect(page.locator('.last-shot code')).toHaveText('sin(x)', { timeout: 25_000 });
   await expect(page.locator('.history button.shot')).toHaveCount(2);
+  // The replay player: pause, jump back, and step a round at a time.
+  await page.getByRole('button', { name: 'Jump to the start' }).click();
+  await expect(page.locator('.replay-progress')).toHaveText('Round 1 of 2');
+  await page.getByRole('button', { name: 'Pause' }).click();
+  await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: /broken/ })).toHaveCount(0);
 });
 
 test('a replay link for an impossible match shows a message, not a crash', async ({ browser }) => {
   const page = await newPlayer(browser, 'Watcher');
-  const bad = Buffer.from(JSON.stringify({ v: 1, config: { kind: 'teams', mode: 'fn', soldiers: 1, seed: 1 }, setups: [], actions: [] })).toString('base64url');
-  await page.goto(`/#/replay/${bad}`);
-  await expect(page.getByRole('heading', { name: 'This replay link is broken' })).toBeVisible();
+  const old = Buffer.from(JSON.stringify({ v: 1, config: { kind: 'teams', mode: 'fn', soldiers: 1, seed: 1 }, setups: [], actions: [] })).toString('base64url');
+  await page.goto(`/#/replay/${old}`);
+  await expect(page.getByRole('heading', { name: 'This replay is from an older version' })).toBeVisible();
+  await page.goto('/#/r/zzzzzzzz');
+  await expect(page.getByRole('heading', { name: 'Replay not found' })).toBeVisible({ timeout: 15_000 });
 });
 
 test('a mistyped room code says so, instead of opening an empty room', async ({ browser }) => {
@@ -194,7 +204,6 @@ test('after a match the room still works: leaving, rejoining, and a rematch', as
   await b.goto(`/#/room/${code}`);
   await expect(a.getByText('Bo', { exact: true })).toBeVisible();
   await b.getByRole('button', { name: 'Mark ready' }).click();
-  await choose(a.getByRole('button', { name: 'Soldiers each' }), '1');
   await a.getByRole('button', { name: 'Start match' }).click();
   await expect(a.locator('.game canvas')).toBeVisible();
   await expect(b.locator('.game canvas')).toBeVisible();
@@ -217,7 +226,7 @@ test('after a match the room still works: leaving, rejoining, and a rematch', as
   await a.getByRole('button', { name: 'Start match' }).click();
   await expect(a.locator('.game canvas')).toBeVisible();
   await expect(a.getByRole('heading', { name: 'You win' })).toHaveCount(0);
-  await expect(a.locator('.who')).toHaveText(/Your turn|aiming|Get ready/);
+  await expect(a.locator('.who')).toHaveText(/Get ready|\d+s - /);
 });
 
 test('a chat error does not hide the function box', async ({ browser }) => {
@@ -244,7 +253,6 @@ test('a too-big local free-for-all starts normally', async ({ browser }) => {
   const page = await newPlayer(browser, 'Big');
   await page.goto('/#/local');
   await page.getByRole('button', { name: 'Free-for-all' }).click();
-  await choose(page.getByRole('button', { name: 'Soldiers each' }), '4');
   for (let i = 0; i < 8; i++) await page.getByRole('button', { name: 'Add player' }).click();
   await page.getByRole('button', { name: 'Start match' }).click();
   await expect(page.locator('.scores div')).toHaveCount(10);
@@ -276,7 +284,7 @@ test('free-for-all offers both firing directions and runs against bots', async (
   await page.getByRole('button', { name: /toward −x/ }).click();
   await expect(page.getByRole('button', { name: /toward −x/ })).toHaveAttribute('aria-pressed', 'true');
   await fire(page, 'x/8');
-  await expect(page.locator('.who')).toHaveText(/Shot in the air|aiming/);
+  await expect(page.getByRole('button', { name: 'Unlock' }).or(page.locator('.history button.shot').first())).toBeVisible({ timeout: 20_000 });
 });
 
 test('a new player is sent to the tutorial', async ({ browser }) => {
@@ -582,26 +590,26 @@ test('Learn: every lesson opens with no errors, and the firing-left lesson can b
   await expect(dig.getByText('Direct hit')).toBeVisible();
 });
 
-test('shot history lists shots, rewinds like chess, and returns to live', async ({ browser }) => {
+test('round history lists rounds, rewinds like chess, and returns to live', async ({ browser }) => {
   const page = await newPlayer(browser, 'Rewind');
   await page.goto('/#/practice');
   const history = page.locator('.history');
-  await expect(history).toContainText("Shots appear here");
+  await expect(history).toContainText('Rounds appear here');
   for (const expr of ['x/40', '-x/40']) {
     await expect(page.locator('#fn-input')).toBeEnabled({ timeout: 25_000 });
     await fire(page, expr);
     await expect(page.locator('.last-shot code')).toHaveText(expr);
-    await expect(page.locator('.who')).toHaveText('Your turn', { timeout: 25_000 });
   }
+  await expect(page.locator('#fn-input')).toBeEnabled({ timeout: 25_000 });
   const before = await page.locator('.game canvas').screenshot();
   await history.locator('button.shot').first().click();
-  await expect(page.locator('.past-banner')).toContainText('shot 1 of');
+  await expect(page.locator('.past-banner')).toContainText('round 1 of');
   await expect(history.locator('li.current code')).toHaveText('x/40');
   await page.waitForTimeout(300);
   const past = await page.locator('.game canvas').screenshot();
   expect(past.equals(before)).toBe(false);
-  await history.getByRole('button', { name: 'Next shot' }).click();
-  await expect(page.locator('.past-banner')).toContainText('shot 2 of');
+  await history.getByRole('button', { name: 'Next round' }).click();
+  await expect(page.locator('.past-banner')).toContainText('round 2 of');
   // Looking back doesn't stop you playing.
   await expect(page.locator('#fn-input')).toBeEnabled();
   await page.keyboard.press('Escape');
@@ -615,7 +623,7 @@ test('shot history lists shots, rewinds like chess, and returns to live', async 
   await expect(page.locator('.past-banner')).toHaveCount(0);
 });
 
-test('long functions stay inside the Last shot and history boxes', async ({ browser }) => {
+test('long functions stay inside the Last round and history boxes', async ({ browser }) => {
   const page = await newPlayer(browser, 'Long');
   await page.goto('/#/practice');
   const long = '0.834*cos(1.852*x+2.085)+x/2.085+0.5*sin(x/3)+0.25*cos(x/5)+x/100+0.1*sin(x/9)';
@@ -653,7 +661,7 @@ test('finished matches appear in match history and can be watched', async ({ bro
   await expect(row).toContainText('vs Euler');
   await expect(row).toContainText('Vs bots');
   await row.getByRole('link', { name: 'Watch' }).click();
-  await expect(page.getByText('Replay', { exact: true })).toBeVisible();
+  await expect(page.getByText('Replay', { exact: true }).first()).toBeVisible();
   await expect(page.locator('.history button.shot').first()).toBeVisible({ timeout: 20_000 });
 });
 
@@ -795,26 +803,26 @@ test('music and sound settings work, and every track renders cleanly', async ({ 
 test('dropdowns open a game-styled list that works with the mouse and keyboard', async ({ browser }) => {
   const page = await newPlayer(browser, 'Picker');
   await page.goto('/#/local');
-  const soldiers = page.getByRole('button', { name: 'Soldiers each' });
-  await expect(soldiers).toHaveText('1');
+  const picker = page.getByRole('button', { name: 'Who plays' }).nth(1);
+  await expect(picker).toHaveText('Normal bot');
   // Mouse: open, pick, and it closes showing the choice.
-  await choose(soldiers, '3');
-  await expect(soldiers).toHaveText('3');
+  await choose(picker, 'Hard bot');
+  await expect(picker).toHaveText('Hard bot');
   await expect(page.getByRole('listbox')).toHaveCount(0);
   // Keyboard: arrows move, Enter picks, Escape closes without changing anything.
-  await soldiers.focus();
+  await picker.focus();
   await page.keyboard.press('ArrowDown');
-  await expect(page.getByRole('listbox', { name: 'Soldiers each' })).toBeVisible();
+  await expect(page.getByRole('listbox', { name: 'Who plays' })).toBeVisible();
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
-  await expect(soldiers).toHaveText('4');
-  await soldiers.click();
+  await expect(picker).toHaveText('Genius bot');
+  await picker.click();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('listbox')).toHaveCount(0);
-  await expect(soldiers).toHaveText('4');
-  await expect(soldiers).toBeFocused();
+  await expect(picker).toHaveText('Genius bot');
+  await expect(picker).toBeFocused();
   // A click elsewhere closes it too.
-  await soldiers.click();
+  await picker.click();
   await page.getByRole('heading', { name: 'Players' }).click();
   await expect(page.getByRole('listbox')).toHaveCount(0);
   // The choice is really used: who plays changes to a bot.
@@ -830,6 +838,8 @@ test('the shot preview shows in a normal match, not just Free Play', async ({ br
   // Two people at one screen, so a bot can't end the match before anyone types.
   await choose(page.getByRole('button', { name: 'Who plays' }).nth(1), 'Person');
   await page.getByRole('button', { name: 'Start match' }).click();
+  // Pass and lock: the first person takes the device before their screen shows.
+  await page.getByRole('button', { name: /show my screen/ }).click({ timeout: 20_000 });
   const box = page.locator('#fn-input');
   await expect(box).toBeEnabled({ timeout: 20_000 });
   // Names on the field change look when the game's font arrives, so let it load first.
@@ -865,7 +875,7 @@ test('phones get math keys that type functions, and the setting can turn them of
   await keys.getByRole('button', { name: '4', exact: true }).tap();
   await expect(box).toHaveValue('5*sin(x/4)');
   await page.getByRole('button', { name: 'Fire', exact: true }).tap();
-  await expect(page.getByRole('list', { name: 'Shots in this match' })).toContainText('5*sin(x/4)', { timeout: 15_000 });
+  await expect(page.getByRole('list', { name: 'Rounds in this match' })).toContainText('5*sin(x/4)', { timeout: 15_000 });
   // ABC switches to the phone keyboard, and the keys can come back.
   await keys.getByRole('button', { name: 'Use the phone keyboard' }).tap();
   await expect(box).toHaveAttribute('inputmode', 'text');
@@ -924,7 +934,7 @@ test('custom maps: draw one, save it, and play it against a bot', async ({ brows
   await expect(page.getByText('Saved on this device.')).toBeVisible();
   await page.getByRole('button', { name: 'Play it' }).click();
   await expect(page.getByRole('heading', { name: 'Local match' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Map' })).toHaveText('Test canyon');
+  await expect(page.getByRole('button', { name: 'Map', exact: true })).toHaveText('Test canyon');
   await page.getByRole('button', { name: 'Start match' }).click();
   await expect(page.locator('.game canvas')).toBeVisible();
   // It's listed with the player's maps.
@@ -1136,18 +1146,37 @@ test('an owned obstacle design is used on the real field', async ({ browser }) =
   await page.goto('/#/practice');
   await expect(page.locator('.game canvas')).toBeVisible();
   await fire(page, '0');
-  await expect(page.locator('.who')).toHaveText('Your turn', { timeout: 25_000 });
+  await expect(page.locator('#fn-input')).toBeEnabled({ timeout: 25_000 });
 });
 
-test('matches start as 1v1 by default', async ({ browser }) => {
+test('everyone controls exactly one soldier, with no option to add more', async ({ browser }) => {
   const page = await newPlayer(browser, 'Default');
   await page.goto('/#/local');
-  await expect(page.getByRole('button', { name: 'Soldiers each' })).toHaveText('1');
+  await expect(page.getByRole('button', { name: 'Soldiers each' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Start match' }).click();
-  await expect(page.locator('.scores')).toContainText('1/1');
+  await expect(page.locator('.scores .score-row')).toHaveCount(2);
   await page.goto('/#/online');
   await page.getByRole('button', { name: 'Create private room' }).click();
-  await expect(page.getByRole('button', { name: 'Soldiers each' })).toHaveText('1');
+  await expect(page.getByRole('button', { name: 'Start match' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Soldiers each' })).toHaveCount(0);
+});
+
+test('the ↑ button pastes your last function, and settings change size and language', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Recall');
+  await page.goto('/#/practice');
+  await expect(page.getByRole('button', { name: 'Paste your last function' })).toBeDisabled();
+  await fire(page, 'x/12');
+  await expect(page.locator('#fn-input')).toBeEnabled({ timeout: 25_000 });
+  await expect(page.locator('#fn-input')).toHaveValue('');
+  await page.getByRole('button', { name: /Paste your last function/ }).click();
+  await expect(page.locator('#fn-input')).toHaveValue('x/12');
+  await page.goto('/#/settings');
+  await page.getByRole('slider', { name: 'Interface size' }).fill('0.8');
+  await expect(page.locator('.ui-scale-value')).toHaveText('80%');
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--ui-scale').trim())).toBe('0.8');
+  await choose(page.getByRole('button', { name: 'Language' }), 'Español');
+  await expect(page.getByRole('heading', { name: 'Tamaño de la interfaz' })).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'es');
 });
 
 test('public player pages show missing players clearly', async ({ browser }) => {

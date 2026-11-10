@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import { currentQuests, profile } from '../store';
 import { ItemThumb } from './Meta';
 import { useProfile } from './Shared';
+import { t } from '../i18n';
 
 const KIND_LABEL: Record<string, string> = { hat: 'Hat', trail: 'Shot trail', title: 'Title', blast: 'Kill effect', obstacle: 'Obstacles' };
 
@@ -37,15 +38,15 @@ export function SeasonPass() {
           </p>
         </div>
         <div class="season-level" aria-label={`Season level ${lv.level} of ${SEASON.levels}`}>
-          <span>Level</span>
+          <span>{t('ui.level')}</span>
           <strong>{lv.level}</strong>
         </div>
       </div>
-      <div class="bar season-bar" role="progressbar" aria-valuenow={lv.into} aria-valuemax={lv.need} aria-label="Progress to the next season level">
+      <div class="bar season-bar" role="progressbar" aria-valuenow={lv.into} aria-valuemax={lv.need} aria-label={t('ui.progressToTheNextSeasonLevel')}>
         <i style={{ width: `${(lv.into / lv.need) * 100}%` }} />
       </div>
       <p class="muted small-note" style={{ margin: '4px 0 10px' }}>{lv.maxed ? 'Every level is unlocked. Well played!' : `${lv.into} of ${lv.need} XP to level ${lv.level + 1}.`}</p>
-      <div class="pass-track" ref={track} role="list" aria-label="Season rewards">
+      <div class="pass-track" ref={track} role="list" aria-label={t('ui.seasonRewards')}>
         {SEASON_REWARDS.map((r) => {
           const got = profile.seasonPaid.includes(r.level) || lv.level >= r.level;
           const next = r.level === lv.level + 1;
@@ -56,7 +57,7 @@ export function SeasonPass() {
               {item ? <ItemThumb item={item} /> : <div class="pass-sparks" aria-hidden="true">✦</div>}
               <strong>{item ? item.name : `${'sparks' in r ? r.sparks : 0} Sparks`}</strong>
               <small>{item ? KIND_LABEL[item.kind] : 'Currency'}</small>
-              {got && <span class="pass-check" aria-label="Unlocked">✓</span>}
+              {got && <span class="pass-check" aria-label={t('ui.unlocked')}>✓</span>}
             </div>
           );
         })}
@@ -93,13 +94,13 @@ export function QuestsPanel() {
   );
   return (
     <div class="sheet quests-sheet">
-      <h3>Quests</h3>
+      <h3>{t('ui.quests')}</h3>
       <div class="quest-group">
-        <h4>Today <small class="muted">New quests in {timeLeft(nextDay - now).replace(' left', '')}</small></h4>
+        <h4>{t('ui.today')} <small class="muted">New quests in {timeLeft(nextDay - now).replace(' left', '')}</small></h4>
         {list(group(false))}
       </div>
       <div class="quest-group">
-        <h4>This week <small class="muted">New quests in {timeLeft(nextWeek - now).replace(' left', '')}</small></h4>
+        <h4>{t('ui.thisWeek')} <small class="muted">New quests in {timeLeft(nextWeek - now).replace(' left', '')}</small></h4>
         {list(group(true))}
       </div>
     </div>

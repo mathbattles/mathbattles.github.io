@@ -8,22 +8,31 @@ import {
   chooseMove,
   compile,
   createMatch,
-  currentPlayer,
-  currentSoldier,
   eloDelta,
-  fire,
   levelFromXp,
   removePlayer,
   simulateShot,
-  skipTurn,
   validate,
+  ACHIEVEMENTS,
   COSMETICS,
   DEFAULT_ROOM_SETTINGS,
-  DEFAULT_SOLDIERS,
+  PALETTE,
+  allLocked,
+  applyAction,
+  assignColors,
   decodeReplay,
+  encodeReplay,
+  lastShotOf,
+  makeReplay,
   matchRecordFor,
-  shotMoment,
+  replayIsOld,
+  replayStart,
+  resolveRound,
+  roundMoment,
+  roundsOf,
+  setLocked,
   shotsOf,
+  waitingOn,
   type MatchConfig,
   type PlayerSetup,
 } from '../src';
@@ -186,12 +195,25 @@ function toPxApprox(gx: number) {
 }
 
 const cfg = (o: Partial<MatchConfig> = {}): MatchConfig => ({
-  kind: 'teams', mode: 'fn', soldiers: 2, seed: 42, ...o,
+  kind: 'teams', mode: 'fn', seed: 42, ...o,
 });
 const duel: PlayerSetup[] = [
   { id: 'a', name: 'A', team: 1 },
   { id: 'b', name: 'B', team: 2 },
 ];
+
+/** An empty board with soldiers where a test wants them. */
+function board(m: ReturnType<typeof createMatch>, spots: Record<string, [number, number]>) {
+  m.circles.length = 0;
+  for (const p of m.players) {
+    const at = spots[p.id];
+    if (at) {
+      m.soldiers[p.soldierId]!.x = at[0];
+      m.soldiers[p.soldierId]!.y = at[1];
+    }
+  }
+  return m;
+}
 
 describe('match rules', () => {
   it('builds the same map from the same seed', () => {
@@ -201,13 +223,13 @@ describe('match rules', () => {
     expect(a.soldiers).toEqual(b.soldiers);
     expect(createMatch(cfg({ seed: 43 }), duel).circles).not.toEqual(a.circles);
   });
-  it('spawns teams on their own half, clear of obstacles', () => {
+  it('gives every player exactly one soldier, on their own half, clear of obstacles', () => {
     for (let seed = 0; seed < 60; seed++) {
-      const m = createMatch(cfg({ seed, soldiers: 4 }), [
+      const m = createMatch(cfg({ seed }), [
         { id: 'a', name: 'A', team: 1 }, { id: 'c', name: 'C', team: 1 },
         { id: 'b', name: 'B', team: 2 }, { id: 'd', name: 'D', team: 2 },
       ]);
-      expect(m.soldiers.length).toBe(16);
+      expect(m.soldiers.length).toBe(4);
       for (const s of m.soldiers) {
         const team = m.players.find((p) => p.id === s.playerId)!.team;
         expect(team === 1 ? s.x < PLANE_W / 2 : s.x >= PLANE_W / 2).toBe(true);
@@ -217,67 +239,150 @@ describe('match rules', () => {
       }
     }
   });
-  it('alternates teams and rotates soldiers', () => {
-    const m = createMatch(cfg(), duel);
-    const first = currentPlayer(m).id;
-    const firstSoldier = currentSoldier(m)!.id;
-    skipTurn(m);
-    expect(currentPlayer(m).id).not.toBe(first);
-    skipTurn(m);
-    expect(currentPlayer(m).id).toBe(first);
-    expect(currentSoldier(m)!.id).not.toBe(firstSoldier);
+  it('colours go Blue, Red, Green, Yellow, then distinct random colours', () => {
+    const setups = Array.from({ length: 7 }, (_, i) => ({ id: `p${i}`, name: `P${i}`, team: 1 as const }));
+    const m = createMatch(cfg({ kind: 'ffa', seed: 7 }), setups);
+    const colorOf = (id: string) => m.players.find((p) => p.id === id)!.color;
+    expect(PALETTE.map((p) => p.hex)).toEqual([colorOf('p0'), colorOf('p1'), colorOf('p2'), colorOf('p3')]);
+    expect(new Set(m.players.map((p) => p.color)).size).toBe(7);
+    // A colour someone picked is kept when it's free.
+    expect(assignColors(['#8a3ff0', undefined, '#8a3ff0'], 1)).toEqual(['#8a3ff0', PALETTE[0].hex, PALETTE[1].hex]);
   });
-  it('rejects shots out of turn', () => {
+  it('waits for every living player to lock, and unlocking puts them back on the list', () => {
     const m = createMatch(cfg(), duel);
-    const other = m.players.find((p) => p.id !== currentPlayer(m).id)!.id;
-    expect(() => fire(m, other, { expr: '0' })).toThrow(/your turn/);
+    expect(waitingOn(m).map((p) => p.id).sort()).toEqual(['a', 'b']);
+    setLocked(m, 'a', true);
+    expect(allLocked(m)).toBe(false);
+    setLocked(m, 'b', true);
+    expect(allLocked(m)).toBe(true);
+    setLocked(m, 'a', false);
+    expect(waitingOn(m).map((p) => p.id)).toEqual(['a']);
+  });
+  it('fires every shot together, ends the round, and clears the locks', () => {
+    const m = board(createMatch(cfg(), duel), { a: [100, 100], b: [670, 350] });
+    setLocked(m, 'a', true);
+    const round = resolveRound(m, [{ playerId: 'a', expr: '0' }, { playerId: 'b', expr: '0' }]);
+    expect(round.n).toBe(1);
+    expect(round.shots.length).toBe(2);
+    expect(m.round).toBe(2);
+    expect(m.players.every((p) => !p.locked)).toBe(true);
+    expect(m.holes.length).toBe(2);
+    expect(m.over).toBe(false);
+  });
+  it('skips a broken function, so the timeout fires only valid ones', () => {
+    const m = board(createMatch(cfg(), duel), { a: [100, 100], b: [670, 350] });
+    const round = resolveRound(m, [{ playerId: 'a', expr: 'x/3' }, { playerId: 'b', expr: 'sin(' }]);
+    expect(round.shots.map((s) => s.playerId)).toEqual(['a']);
   });
   it('kills, including friendly fire, and ends the match', () => {
-    const m = createMatch(cfg({ soldiers: 1 }), duel);
-    m.circles.length = 0;
-    const me = currentPlayer(m);
-    const enemy = m.players.find((p) => p.id !== me.id)!;
-    const shooter = currentSoldier(m)!;
-    const target = m.soldiers[enemy.soldierIds[0]!]!;
-    target.x = me.team === 1 ? shooter.x + 200 : shooter.x - 200;
-    target.y = shooter.y;
-    const { record } = fire(m, me.id, { expr: '0' });
-    expect(record.hits.map((h) => h.id)).toEqual([target.id]);
-    expect(target.alive).toBe(false);
+    const m = board(createMatch(cfg(), duel), { a: [100, 225], b: [400, 225] });
+    const round = resolveRound(m, [{ playerId: 'a', expr: '0' }]);
+    expect(round.kills.map((k) => k.id)).toEqual([m.players.find((p) => p.id === 'b')!.soldierId]);
     expect(m.over).toBe(true);
-    expect(m.winner).toBe(me.team);
-    expect(me.kills).toBe(1);
+    expect(m.winner).toBe(1);
+    expect(m.players.find((p) => p.id === 'a')!.kills).toBe(1);
   });
   it('a shot that kills only a teammate gives no kill credit', () => {
-    const m = createMatch(cfg({ soldiers: 2 }), duel);
-    m.circles.length = 0;
-    const me = currentPlayer(m);
-    const shooter = currentSoldier(m)!;
-    const mate = m.soldiers[me.soldierIds.find((id) => id !== shooter.id)!]!;
-    mate.x = me.team === 1 ? shooter.x + 40 : shooter.x - 40;
-    mate.y = shooter.y;
-    for (const s of m.soldiers) {
-      if (s.playerId !== me.id) s.y = shooter.y > 225 ? 20 : 430;
+    const setups: PlayerSetup[] = [{ id: 'a', name: 'A', team: 1 }, { id: 'c', name: 'C', team: 1 }, { id: 'b', name: 'B', team: 2 }];
+    const m = board(createMatch(cfg(), setups), { a: [60, 225], c: [140, 225], b: [700, 40] });
+    resolveRound(m, [{ playerId: 'a', expr: '0' }]);
+    expect(m.soldiers[m.players.find((p) => p.id === 'c')!.soldierId]!.alive).toBe(false);
+    expect(m.players.find((p) => p.id === 'a')!.kills).toBe(0);
+  });
+  it('the earlier of two mutual hits wins, and the loser’s shot stops where it was', () => {
+    // A fires straight at B. B arcs high over to A: its steep ends take extra steps, so A lands first.
+    const m = board(createMatch(cfg({ kind: 'ffa' }), duel), { a: [323.4, 225], b: [446.6, 225] });
+    const round = resolveRound(m, [
+      { playerId: 'a', expr: '0', dir: 1 },
+      { playerId: 'b', expr: '(16-x^2)/1.5', dir: -1 },
+    ]);
+    const aSoldier = m.players.find((p) => p.id === 'a')!.soldierId;
+    const bSoldier = m.players.find((p) => p.id === 'b')!.soldierId;
+    expect(round.beams.length).toBe(0);
+    expect(round.kills.map((k) => k.id)).toEqual([bSoldier]);
+    expect(m.soldiers[aSoldier]!.alive).toBe(true);
+    expect(round.shots.find((s) => s.playerId === 'b')!.reason).toBe('killed');
+    expect(round.luck).toEqual([]);
+  });
+  it('an exact tie is settled by a seeded coin, and the survivor is marked lucky', () => {
+    // Point-symmetric arcs, one over and one under: each reaches the other soldier on the same step.
+    const winners = new Set<string>();
+    for (let seed = 1; seed <= 20; seed++) {
+      const play = () => {
+        const m = board(createMatch(cfg({ kind: 'ffa', seed }), duel), { a: [231, 225], b: [539, 225] });
+        return resolveRound(m, [
+          { playerId: 'a', expr: '10-x^2/10', dir: 1 },
+          { playerId: 'b', expr: 'x^2/10-10', dir: -1 },
+        ]);
+      };
+      const round = play();
+      expect(round.beams.length).toBe(0);
+      expect(round.kills.length).toBe(1);
+      expect(round.luck.length).toBe(1);
+      winners.add(round.luck[0]!);
+      // The same match and round always flip the same way.
+      expect(play().luck).toEqual(round.luck);
     }
-    fire(m, me.id, { expr: '0' });
-    expect(mate.alive).toBe(false);
-    expect(me.kills).toBe(0);
+    expect(winners.size).toBe(2);
   });
-  it('carves terrain at the end of a shot', () => {
-    const m = createMatch(cfg(), duel);
+  it('shot tips meeting head on make a beam that shoots up and down', () => {
+    const m = board(createMatch(cfg({ kind: 'ffa', seed: 3 }), [
+      { id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 1 }, { id: 'c', name: 'C', team: 1 }, { id: 'd', name: 'D', team: 1 },
+    ]), { a: [185, 225], b: [585, 225], c: [385, 40], d: [700, 420] });
+    const round = resolveRound(m, [
+      { playerId: 'a', expr: '0', dir: 1 },
+      { playerId: 'b', expr: '0', dir: -1 },
+    ]);
+    expect(round.beams.length).toBe(1);
+    const beam = round.beams[0]!;
+    expect(beam.dirs.length).toBe(2);
+    // Straight up and straight down.
+    expect(Math.abs(beam.dirs[0]!.x)).toBeLessThan(0.01);
+    expect(Math.abs(beam.dirs[0]!.y)).toBeCloseTo(1, 2);
+    expect(beam.dirs[0]!.y).toBeCloseTo(-beam.dirs[1]!.y, 5);
+    // C stands right above the meeting point, so the beam gets them.
+    const c = m.players.find((p) => p.id === 'c')!;
+    expect(m.soldiers[c.soldierId]!.alive).toBe(false);
+    expect(round.kills.find((k) => k.id === c.soldierId)?.beam).toBe(true);
+    expect(round.shots.every((s) => s.reason === 'collision')).toBe(true);
+  });
+  it('an angled meeting sends the beam along the two directions combined', () => {
+    // Two shots crossing at right angles, timed to meet: the beam goes along their sum.
+    const m = board(createMatch(cfg({ kind: 'ffa', seed: 5 }), duel), { a: [185, 425], b: [585, 425] });
+    const round = resolveRound(m, [
+      { playerId: 'a', expr: 'x', dir: 1 },
+      { playerId: 'b', expr: '-x', dir: -1 },
+    ]);
+    expect(round.beams.length).toBe(1);
+    const d = round.beams[0]!.dirs;
+    expect(d.length).toBe(1);
+    // Both shots climb, so the combined direction points straight up the screen.
+    expect(d[0]!.y).toBeLessThan(-0.99);
+  });
+  it('a beam tears through rock and kills teammates', () => {
+    const setups: PlayerSetup[] = [{ id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 2 }, { id: 'c', name: 'C', team: 1 }, { id: 'd', name: 'D', team: 2 }];
+    const m = board(createMatch(cfg({ kind: 'teams', seed: 9 }), setups), { a: [185, 225], b: [585, 225], c: [385, 60], d: [720, 420] });
+    m.circles.push({ x: 385, y: 140, r: 30 });
     const before = m.holes.length;
-    fire(m, currentPlayer(m).id, { expr: '0' });
-    expect(m.holes.length).toBe(before + 1);
-    expect(m.holes.at(-1)!.r).toBe(12);
+    const round = resolveRound(m, [
+      { playerId: 'a', expr: '0' },
+      { playerId: 'b', expr: '0' },
+    ]);
+    expect(round.beams.length).toBe(1);
+    // C, A's own teammate, is behind the rock above the meeting point and still dies.
+    expect(m.soldiers[m.players.find((p) => p.id === 'c')!.soldierId]!.alive).toBe(false);
+    // The beam carved a channel through the rock.
+    expect(m.holes.length - before).toBeGreaterThan(10);
+    expect(new Terrain(m.circles, m.holes).solidAt(385, 140)).toBe(false);
   });
-  it('a player leaving removes their soldiers and can end the match', () => {
+  it('a player leaving removes their soldier and can end the match', () => {
     const m = createMatch(cfg(), duel);
     removePlayer(m, 'a');
     expect(m.over).toBe(true);
     expect(m.winner).toBe(2);
   });
-  it('free-for-all ends with the last player standing and allows -x', () => {
-    const m = createMatch(cfg({ kind: 'ffa', soldiers: 1 }), [
+  it('free-for-all ends with the last player standing', () => {
+    const m = createMatch(cfg({ kind: 'ffa' }), [
       { id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 1 }, { id: 'c', name: 'C', team: 1 },
     ]);
     expect(m.over).toBe(false);
@@ -288,77 +393,100 @@ describe('match rules', () => {
     expect(m.over).toBe(true);
     expect(m.winner).toBe(survivor);
   });
+  it('remembers each player’s last function', () => {
+    const m = board(createMatch(cfg(), duel), { a: [100, 100], b: [670, 350] });
+    resolveRound(m, [{ playerId: 'a', expr: 'x/7' }]);
+    resolveRound(m, [{ playerId: 'b', expr: '0' }]);
+    expect(lastShotOf(m, 'a')?.expr).toBe('x/7');
+    expect(lastShotOf(m, 'b')?.expr).toBe('0');
+  });
 });
 
 describe('bots', () => {
   it('a strong bot usually finds a kill on open maps', () => {
     let hits = 0;
     for (let seed = 1; seed <= 6; seed++) {
-      const m = createMatch(cfg({ seed, soldiers: 1 }), [
-        { id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 2 },
-      ]);
+      const m = createMatch(cfg({ seed }), duel);
       m.circles.length = 0;
-      const move = chooseMove(m, { generations: 40, seed, budgetMs: 1500 });
-      const r = fire(m, currentPlayer(m).id, { expr: move.expr, angle: move.angle, dir: move.dir });
-      if (r.record.hits.length) hits++;
+      const move = chooseMove(m, { playerId: 'a', generations: 40, seed, budgetMs: 1500 });
+      const round = resolveRound(m, [{ playerId: 'a', expr: move.expr, angle: move.angle, dir: move.dir }]);
+      if (round.kills.length) hits++;
     }
     expect(hits).toBeGreaterThanOrEqual(4);
   });
-  it('produces valid moves in every mode', () => {
+  it('produces valid moves in every mode, for every bot at once', () => {
     for (const mode of ['fn', 'ode1', 'ode2'] as const) {
       const m = createMatch(cfg({ mode, seed: 9 }), duel);
-      const move = chooseMove(m, { generations: 3, seed: 1 });
-      expect(() => fire(m, currentPlayer(m).id, move)).not.toThrow();
+      const a = chooseMove(m, { playerId: 'a', generations: 3, seed: 1 });
+      const b = chooseMove(m, { playerId: 'b', generations: 3, seed: 2 });
+      expect(() => resolveRound(m, [{ playerId: 'a', ...a }, { playerId: 'b', ...b }])).not.toThrow();
     }
   });
 });
 
 describe('rewinding', () => {
-  it('rebuilds the board at any shot without changing the match', () => {
-    const m = createMatch(cfg({ soldiers: 2, seed: 8 }), duel);
+  it('rebuilds the board at any round without changing the match', () => {
+    const m = board(createMatch(cfg({ seed: 8 }), [...duel, { id: 'c', name: 'C', team: 2 }]), { a: [100, 225], b: [250, 225], c: [700, 30] });
     m.circles = [{ x: 385, y: 40, r: 20 }];
-    const start = m.soldiers.map((s) => ({ ...s }));
-    const me = currentPlayer(m);
-    const shooter = currentSoldier(m)!;
-    const enemy = m.players.find((p) => p.id !== me.id)!;
-    const target = m.soldiers[enemy.soldierIds[0]!]!;
-    target.x = me.team === 1 ? shooter.x + 150 : shooter.x - 150;
-    target.y = shooter.y;
-    fire(m, me.id, { expr: '0' });
-    expect(target.alive).toBe(false);
-    fire(m, currentPlayer(m).id, { expr: 'x/9' });
+    const bSoldier = m.players.find((p) => p.id === 'b')!.soldierId;
+    resolveRound(m, [{ playerId: 'a', expr: '0' }]);
+    expect(m.soldiers[bSoldier]!.alive).toBe(false);
+    resolveRound(m, [{ playerId: 'a', expr: 'x/9' }]);
     const snapshot = JSON.stringify(m);
 
+    expect(roundsOf(m).length).toBe(2);
     expect(shotsOf(m).length).toBe(2);
-    const first = shotMoment(m, 0)!;
-    expect(first.shot.expr).toBe('0');
+    const first = roundMoment(m, 0)!;
+    expect(first.round.shots[0]!.expr).toBe('0');
     expect(first.before.holes.length).toBe(0);
     expect(first.after.holes.length).toBe(1);
-    expect(first.before.soldiers[target.id]!.alive).toBe(true);
-    expect(first.after.soldiers[target.id]!.alive).toBe(false);
-    const second = shotMoment(m, 1)!;
-    expect(second.shot.expr).toBe('x/9');
+    expect(first.before.soldiers[bSoldier]!.alive).toBe(true);
+    expect(first.after.soldiers[bSoldier]!.alive).toBe(false);
+    const second = roundMoment(m, 1)!;
+    expect(second.round.shots[0]!.expr).toBe('x/9');
     expect(second.before.holes.length).toBe(1);
     expect(second.after.holes.length).toBe(2);
-    expect(shotMoment(m, 5)).toBeNull();
+    expect(roundMoment(m, 5)).toBeNull();
     expect(JSON.stringify(m)).toBe(snapshot);
-    void start;
   });
   it('undoes players leaving', () => {
     const setups: PlayerSetup[] = [{ id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 2 }, { id: 'c', name: 'C', team: 2 }];
-    const m = createMatch(cfg({ soldiers: 1, seed: 21 }), setups);
-    m.circles.length = 0;
-    fire(m, currentPlayer(m).id, { expr: 'x/20' });
-    const stays = m.players.find((p) => p.id !== currentPlayer(m).id && p.soldierIds.every((id) => m.soldiers[id]!.alive))!;
+    const m = board(createMatch(cfg({ seed: 21 }), setups), { a: [100, 100], b: [600, 400], c: [700, 300] });
+    resolveRound(m, [{ playerId: 'a', expr: 'x/20' }]);
+    const stays = m.players.find((p) => p.id === 'c')!;
     removePlayer(m, stays.id);
-    const moment = shotMoment(m, 0)!;
-    expect(moment.after.soldiers[stays.soldierIds[0]!]!.alive).toBe(true);
+    const moment = roundMoment(m, 0)!;
+    expect(moment.after.soldiers[stays.soldierId]!.alive).toBe(true);
+  });
+});
+
+describe('replays', () => {
+  it('round-trips a version 3 replay and rebuilds the same match', () => {
+    const setups: PlayerSetup[] = [{ id: 'a', name: 'Ann', team: 1 }, { id: 'b', name: 'Bo', team: 2, isBot: true, botLevel: 'hard' }];
+    const m = createMatch(cfg({ seed: 77 }), setups);
+    resolveRound(m, [{ playerId: 'a', expr: 'x/4' }, { playerId: 'b', expr: 'sin(x)' }]);
+    removePlayer(m, 'b');
+    const code = encodeReplay(makeReplay(m, setups));
+    const back = decodeReplay(code)!;
+    expect(back.v).toBe(3);
+    const again = replayStart(back);
+    for (const a of back.actions) if (!again.over) applyAction(again, a);
+    expect(again.soldiers.map((s) => s.alive)).toEqual(m.soldiers.map((s) => s.alive));
+    expect(again.holes).toEqual(m.holes);
+    expect(again.players.map((p) => p.color)).toEqual(m.players.map((p) => p.color));
+  });
+  it('older replay links are recognised and refused', () => {
+    const oldV1 = btoa(JSON.stringify({ v: 1, config: { kind: 'teams', mode: 'fn', soldiers: 1, seed: 1 }, setups: [], actions: [] }));
+    expect(decodeReplay(oldV1)).toBeNull();
+    expect(replayIsOld(oldV1)).toBe(true);
+    expect(replayIsOld('AgAA')).toBe(true);
+    expect(replayIsOld('not-a-replay')).toBe(false);
   });
 });
 
 describe('match records', () => {
   it('describes a match from each side, and can be watched', () => {
-    const m = createMatch(cfg({ soldiers: 1, seed: 4 }), duel);
+    const m = createMatch(cfg({ seed: 4 }), duel);
     removePlayer(m, 'b');
     const a = matchRecordFor(m, duel, 'a', { id: 'x', at: 5, kind: 'bots' });
     const b = matchRecordFor(m, duel, 'b', { id: 'x', at: 5, kind: 'bots', ratingDelta: -3 });
@@ -367,6 +495,9 @@ describe('match records', () => {
     expect(b.result).toBe('loss');
     expect(b.ratingDelta).toBe(-3);
     expect(decodeReplay(a.replay!)).not.toBeNull();
+    const short = matchRecordFor(m, duel, 'a', { id: 'x', at: 5, kind: 'bots', replayId: 'Ab3dEf9h' });
+    expect(short.replayId).toBe('Ab3dEf9h');
+    expect(short.replay).toBeUndefined();
     const nobody = matchRecordFor(m, duel, null, { id: 'y', at: 5, kind: 'shared' });
     expect(nobody.result).toBe('none');
     expect([...nobody.opponents].sort()).toEqual(['A', 'B']);
@@ -374,15 +505,18 @@ describe('match records', () => {
 });
 
 describe('defaults and shop items', () => {
-  it('matches default to one soldier each', () => {
-    expect(DEFAULT_SOLDIERS).toBe(1);
-    expect(DEFAULT_ROOM_SETTINGS.soldiers).toBe(1);
-    expect(createMatch({ ...cfg(), soldiers: 0 }, duel).soldiers.length).toBe(2);
+  it('room settings have no soldiers option', () => {
+    expect('soldiers' in DEFAULT_ROOM_SETTINGS).toBe(false);
+    expect(createMatch(cfg(), duel).soldiers.length).toBe(2);
   });
   it('every item has a unique id, and obstacles include a free default', () => {
     expect(new Set(COSMETICS.map((c) => c.id)).size).toBe(COSMETICS.length);
     expect(COSMETICS.filter((c) => c.kind === 'obstacle').length).toBeGreaterThanOrEqual(8);
     expect(COSMETICS.find((c) => c.id === 'obstacle-candy')!.cost).toBe(0);
+  });
+  it('the Survivor title comes from On The Brink of Death', () => {
+    expect(ACHIEVEMENTS.some((a) => a.id === 'brink-of-death' && a.name === 'On The Brink of Death')).toBe(true);
+    expect(COSMETICS.find((c) => c.id === 'title-survivor')?.earn).toBe('brink-of-death');
   });
 });
 
@@ -390,8 +524,8 @@ describe('big matches', () => {
   it('always places a full free-for-all', () => {
     const setups = Array.from({ length: 10 }, (_, i) => ({ id: `p${i}`, name: `P${i}`, team: 1 as const }));
     for (let seed = 0; seed < 40; seed++) {
-      const m = createMatch(cfg({ kind: 'ffa', soldiers: 4, seed }), setups);
-      expect(m.soldiers.length).toBe(40);
+      const m = createMatch(cfg({ kind: 'ffa', seed }), setups);
+      expect(m.soldiers.length).toBe(10);
     }
   });
 });
@@ -399,13 +533,8 @@ describe('big matches', () => {
 describe('bot work limit', () => {
   it('stops at its limit even if the clock never moves', () => {
     const m = createMatch(cfg({ seed: 3 }), duel);
-    let simulated = 0;
-    const realNow = () => {
-      simulated++;
-      return 0;
-    };
     const t0 = Date.now();
-    chooseMove(m, { generations: 400, seed: 1, maxEvals: 120, budgetMs: 1, now: realNow });
+    chooseMove(m, { playerId: 'a', generations: 400, seed: 1, maxEvals: 120, budgetMs: 1, now: () => 0 });
     expect(Date.now() - t0).toBeLessThan(3000);
   });
 });
@@ -414,16 +543,7 @@ describe('bot speed', () => {
   it('respects its time budget', () => {
     const m = createMatch(cfg({ seed: 5 }), duel);
     const t0 = Date.now();
-    chooseMove(m, { generations: 400, seed: 1, budgetMs: 500 });
+    chooseMove(m, { playerId: 'a', generations: 400, seed: 1, budgetMs: 500 });
     expect(Date.now() - t0).toBeLessThan(1500);
-  });
-});
-
-describe('progression', () => {
-  it('computes levels and elo', () => {
-    expect(levelFromXp(0).level).toBe(1);
-    expect(levelFromXp(125).level).toBe(2);
-    expect(eloDelta(1000, 1000)).toBe(16);
-    expect(eloDelta(1400, 1000)).toBeLessThan(5);
   });
 });

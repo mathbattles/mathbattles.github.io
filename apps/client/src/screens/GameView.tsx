@@ -2,35 +2,39 @@ import { FunctionPicker, MathKeys, useMathKeys } from './MathKeys';
 import {
   ParseError,
   RuleError,
-  shotMoment,
-  shotsOf,
+  ROUND_MS,
+  roundMoment,
+  roundsOf,
   Terrain,
-  currentPlayer,
-  currentSoldier,
   isMirrored,
   isOnWinningSide,
+  lastShotOf,
+  playerById,
   simulateShot,
+  soldierOf,
   validate,
+  waitingOn,
   type Dir,
   type MatchState,
+  type Player,
+  type RoundRecord,
   type ShotRecord,
 } from '@mathbattles/sim';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { GameSession } from '../game/session';
-import { Stage } from '../render/stage';
-import { cosmeticValue, look, noteKillExpression, profile } from '../store';
+import { roundPaths, type GameSession } from '../game/session';
+import { Stage, themedColor } from '../render/stage';
+import { cosmeticValue, gameTextScale, grantAchievement, look, noteKillExpression, profile } from '../store';
 import { exprToTex, modeLabel, sound } from '../util';
-
-const PREVIEW_FRACTION = 0.18;
+import { t, useLang } from '../i18n';
 
 export function winnerText(state: MatchState, viewer?: string): string {
-  if (state.winner === null) return 'Draw: nobody is left standing';
+  if (state.winner === null) return t('game.draw');
   if (viewer && state.players.some((p) => p.id === viewer)) {
-    return isOnWinningSide(state, viewer) ? 'You win' : 'You lose';
+    return isOnWinningSide(state, viewer) ? t('game.youWin') : t('game.youLose');
   }
-  if (state.config.kind === 'teams') return state.winner === 1 ? 'Blue team wins' : 'Red team wins';
-  return `${state.players.find((p) => p.id === state.winner)?.name ?? 'Someone'} wins`;
+  if (state.config.kind === 'teams') return state.winner === 1 ? t('game.blueWins') : t('game.redWins');
+  return t('game.nameWins', { name: state.players.find((p) => p.id === state.winner)?.name ?? t('game.someone') });
 }
 
 export function Tex({ expr, prefix }: { expr: string; prefix: string }) {
@@ -49,58 +53,97 @@ export function Tex({ expr, prefix }: { expr: string; prefix: string }) {
   return <div class="preview" ref={ref} aria-hidden="true" />;
 }
 
-/** Every shot so far. Choosing one shows the board at that moment, like a chess move list. */
-function ShotHistory(props: {
-  shots: ShotRecord[];
+/** A small dot in a player's colour. */
+function Swatch({ color }: { color: string }) {
+  return <i class="swatch" style={{ background: color }} aria-hidden="true" />;
+}
+
+/** Every round so far. Choosing one shows the board at that moment, like a chess move list. */
+function RoundHistory(props: {
+  rounds: RoundRecord[];
   state: MatchState;
   viewing: number | null;
   onView: (index: number | null) => void;
   canSee: (shot: ShotRecord) => boolean;
+  colorOf: (id: string) => string;
 }) {
-  const { shots, viewing } = props;
+  const { rounds, viewing } = props;
   const list = useRef<HTMLOListElement>(null);
   useEffect(() => {
     const el = list.current;
     if (!el) return;
     if (viewing === null) el.scrollTop = el.scrollHeight;
     else el.querySelector('.current')?.scrollIntoView({ block: 'nearest' });
-  }, [shots.length, viewing]);
+  }, [rounds.length, viewing]);
   const nameOf = (id: string) => props.state.players.find((p) => p.id === id);
-  const last = shots.length - 1;
+  const last = rounds.length - 1;
   const at = viewing ?? last;
   return (
     <div class="mini history">
-      <h3>Shot history</h3>
-      {shots.length === 0 ? (
-        <p class="muted small-note" style={{ margin: 0 }}>Shots appear here as they're fired.</p>
+      <h3>{t('game.roundHistory')}</h3>
+      {rounds.length === 0 ? (
+        <p class="muted small-note" style={{ margin: 0 }}>{t('game.roundsAppear')}</p>
       ) : (
         <>
-          <ol class="shots" ref={list} tabIndex={0} aria-label="Shots in this match">
-            {shots.map((shot, i) => {
-              const owner = nameOf(shot.playerId);
-              const hits = shot.hits.length;
-              return (
-                <li class={viewing === i ? 'current' : ''}>
-                  <button class="shot" aria-current={viewing === i ? 'true' : undefined} onClick={() => props.onView(i)}>
-                    <span class="num">{i + 1}.</span>
-                    <span class="body">
-                      <span class={`team-${owner?.team ?? 1} shooter`}>{owner?.name ?? 'Player'}</span>
-                      <code>{props.canSee(shot) ? shot.expr : 'Hidden until the match ends'}</code>
-                      {hits > 0 && <span class="hits">{hits === 1 ? '1 hit' : `${hits} hits`}</span>}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
+          <ol class="shots" ref={list} tabIndex={0} aria-label={t('game.roundsInMatch')}>
+            {rounds.map((round, i) => (
+              <li class={viewing === i ? 'current' : ''}>
+                <button class="shot round-entry" aria-current={viewing === i ? 'true' : undefined} onClick={() => props.onView(i)}>
+                  <span class="num">{t('game.roundN', { n: round.n })}</span>
+                  {round.shots.length === 0 && <span class="muted">{t('game.noShots')}</span>}
+                  {round.shots.map((shot) => {
+                    const owner = nameOf(shot.playerId);
+                    const hits = shot.hits.length;
+                    return (
+                      <span class="body">
+                        <span class="shooter" style={{ color: props.colorOf(shot.playerId) }}>{owner?.name ?? t('game.player')}</span>
+                        <code>{props.canSee(shot) ? shot.expr : t('game.hiddenUntilEnd')}</code>
+                        {hits > 0 && <span class="hits">{t('game.hits', { count: hits })}</span>}
+                      </span>
+                    );
+                  })}
+                  {round.beams.length > 0 && <span class="beam-note">{t('game.beamNote')}</span>}
+                  {round.luck.map((id) => <span class="luck-note">{t('game.luckNote', { name: nameOf(id)?.name ?? '' })}</span>)}
+                </button>
+              </li>
+            ))}
           </ol>
           <div class="row history-nav">
-            <button class="small" aria-label="Previous shot" disabled={at <= 0 && viewing !== null} onClick={() => props.onView(Math.max(0, at - (viewing === null ? 0 : 1)))}>Back</button>
-            <button class="small" aria-label="Next shot" disabled={viewing === null} onClick={() => props.onView(viewing !== null && viewing < last ? viewing + 1 : null)}>Next</button>
-            <button class={`small ${viewing === null ? 'on' : ''}`} disabled={viewing === null} onClick={() => props.onView(null)}>Live</button>
+            <button class="small" aria-label={t('game.prevRound')} disabled={at <= 0 && viewing !== null} onClick={() => props.onView(Math.max(0, at - (viewing === null ? 0 : 1)))}>{t('game.back')}</button>
+            <button class="small" aria-label={t('game.nextRound')} disabled={viewing === null} onClick={() => props.onView(viewing !== null && viewing < last ? viewing + 1 : null)}>{t('game.next')}</button>
+            <button class={`small ${viewing === null ? 'on' : ''}`} disabled={viewing === null} onClick={() => props.onView(null)}>{t('game.live')}</button>
           </div>
         </>
       )}
     </div>
+  );
+}
+
+/** Everyone's soldier, grouped by team in team matches. */
+function Scores({ state, colorOf }: { state: MatchState; colorOf: (id: string) => string }) {
+  const shown = state.players.filter((p) => !p.passive);
+  const row = (p: Player) => {
+    const alive = !!state.soldiers[p.soldierId]?.alive;
+    return (
+      <div class={`score-row ${alive ? '' : 'out'}`}>
+        <span><Swatch color={colorOf(p.id)} />{p.name}{p.connected ? '' : ` ${t('game.left')}`}</span>
+        <span>
+          {alive && p.locked && !state.over ? <span class="locked-mark" title={t('game.lockedIn')}>✓</span> : null}
+          {alive ? t('game.alive') : t('game.out')}
+        </span>
+      </div>
+    );
+  };
+  if (state.config.kind !== 'teams') return <>{shown.map(row)}</>;
+  return (
+    <>
+      {([1, 2] as const).map((team) => (
+        <div class={`team-group team-${team}`}>
+          <h4>{team === 1 ? t('game.blueTeam') : t('game.redTeam')}</h4>
+          {shown.filter((p) => p.team === team).map(row)}
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -120,6 +163,7 @@ export function GameView(props: {
   /** Watching someone else's match: no function box. */
   spectator?: boolean;
 }) {
+  useLang();
   const { session } = props;
   const canvas = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<Stage | null>(null);
@@ -130,31 +174,42 @@ export function GameView(props: {
   const [angle, setAngle] = useState(0);
   const [dir, setDir] = useState<Dir>(1);
   const [error, setError] = useState('');
-  const [chat, setChat] = useState('');
   const [knockout, setKnockout] = useState(false);
-  const [turnSlam, setTurnSlam] = useState(0);
+  const [roundSlam, setRoundSlam] = useState(0);
   const [celebrated, setCelebrated] = useState(false);
   const [viewing, setViewing] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
-  const chatBox = useRef<HTMLDivElement>(null);
-  const lastTurn = useRef(session.state.turnNumber);
+  const [award, setAward] = useState('');
+  const lastRound = useRef(session.state.round);
 
   const state = session.state;
-  const canAct = session.canAct();
+  const canAim = session.canAim();
+  const locked = session.isLocked();
+  const canType = canAim && !locked;
   const mode = state.config.mode;
   const viewer = session.viewerId();
+  const colorOf = (id: string) => themedColor(playerById(state, id)?.color ?? '#2b50e8', profile.theme);
 
   useEffect(() => {
     const stage = new Stage(canvas.current!);
     stage.themeId = profile.theme;
     stage.looks = { [viewer]: look(), me: look() };
     stage.setRockStyle(cosmeticValue('obstacle'));
+    stage.labelScale = gameTextScale();
     // The board gets the room during play, so the side tabs step aside.
     document.body.classList.add('in-game');
     stageRef.current = stage;
     stage.onExplode = () => sound('boom', profile.muted);
     stage.onKill = () => sound('kill', profile.muted);
     stage.onFinalKill = () => setKnockout(true);
+    stage.onBeam = () => sound('beam', profile.muted);
+    stage.onLuck = (id) => {
+      sound('luck', profile.muted);
+      // Surviving a coin flip earns an achievement and the Survivor title.
+      if (id === session.viewerId() && !('replay' in session) && grantAchievement('brink-of-death')) {
+        setAward(t('game.awardBrink'));
+      }
+    };
     session.attach(stage);
     stage.start();
     const onResize = () => {
@@ -162,18 +217,18 @@ export function GameView(props: {
     };
     window.addEventListener('resize', onResize);
     const unsub = session.subscribe(() => force((n) => n + 1));
-    session.onShot = (r) => {
-      // A new shot brings you back to live, so you don't miss it or your turn.
+    session.onRound = (r) => {
+      // A new round brings you back to live, so you don't miss it.
       stage.clearPast();
       setViewing(null);
-      sound('fire', profile.muted);
-      if (r.hits.length && r.playerId === viewer) noteKillExpression(r.expr);
+      if (r.shots.length) sound('fire', profile.muted);
+      for (const s of r.shots) if (s.hits.length && s.playerId === session.viewerId()) noteKillExpression(s.expr);
     };
-    const t = setInterval(() => setNow(Date.now()), 250);
+    const timer = setInterval(() => setNow(Date.now()), 250);
     force((n) => n + 1);
     return () => {
       unsub();
-      clearInterval(t);
+      clearInterval(timer);
       window.removeEventListener('resize', onResize);
       document.body.classList.remove('in-game');
       stage.stop();
@@ -182,7 +237,8 @@ export function GameView(props: {
     };
   }, [session]);
 
-  // Keep the display in step with whoever is acting.
+  // Keep the display in step with whoever is aiming.
+  const mySoldier = soldierOf(state, viewer);
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -193,20 +249,22 @@ export function GameView(props: {
       }
       stage.looks[viewer] = look();
     }
-    stage.activeSoldierId = state.over ? null : currentSoldier(state)?.id ?? null;
-    stage.aimAngle = mode === 'ode2' && canAct ? angle : null;
+    const watching = props.spectator || 'replay' in session;
+    stage.youId = watching || session.handoff ? null : viewer;
+    stage.activeSoldierId = state.over || !mySoldier?.alive ? null : mySoldier.id;
+    stage.aimAngle = mode === 'ode2' && canAim ? angle : null;
     stage.aimDir = dir;
-    stage.aiming = canAct;
-  }, [state, state.turnNumber, viewer, canAct, angle, dir, mode]);
+    stage.aiming = canAim;
+  }, [state, state.round, viewer, canAim, angle, dir, mode, session.handoff]);
 
-  const shots = shotsOf(state);
+  const rounds = roundsOf(state);
 
   // A restarted map has a new, shorter history.
   useEffect(() => {
-    if (viewing !== null && viewing >= shots.length) setViewing(null);
-  }, [shots.length, viewing]);
+    if (viewing !== null && viewing >= rounds.length) setViewing(null);
+  }, [rounds.length, viewing]);
 
-  // Rewinding: show the board just after the chosen shot, with its curve.
+  // Rewinding: show the board just after the chosen round, with all of its curves.
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -214,50 +272,39 @@ export function GameView(props: {
       stage.clearPast();
       return;
     }
-    const moment = shotMoment(state, viewing);
+    const moment = roundMoment(state, viewing);
     if (!moment) return;
-    const { shot } = moment;
-    const path = simulateShot({
-      mode: shot.mode,
-      expr: shot.expr,
-      from: shot.from,
-      angle: shot.angle,
-      dir: shot.dir,
-      mirrored: shot.mirrored,
-      terrain: new Terrain(state.circles, moment.before.holes),
-      targets: [],
-    });
+    const paths = roundPaths({ circles: state.circles, holes: moment.before.holes }, moment.round);
     stage.showPast({
       soldiers: moment.after.soldiers,
       holes: moment.after.holes,
-      shooterId: shot.soldierId,
-      shooterPlayer: shot.playerId,
-      path: { xs: path.xs, ys: path.ys, steps: Math.min(path.steps, shot.steps) },
+      paths: moment.round.shots.map((s, i) => ({ path: paths[i]!, playerId: s.playerId })),
+      beams: moment.round.beams,
     });
   }, [viewing, state]);
 
-  // Left and right arrows step through shots, unless you're typing.
+  // Left and right arrows step through rounds, unless you're typing.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || shots.length === 0) return;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || rounds.length === 0 || 'replay' in session) return;
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
-        setViewing((v) => (v === null ? shots.length - 1 : Math.max(0, v - 1)));
+        setViewing((v) => (v === null ? rounds.length - 1 : Math.max(0, v - 1)));
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
-        setViewing((v) => (v === null || v >= shots.length - 1 ? null : v + 1));
+        setViewing((v) => (v === null || v >= rounds.length - 1 ? null : v + 1));
       } else if (e.key === 'Escape') {
         setViewing(null);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [shots.length]);
+  }, [rounds.length]);
 
   const canSeeShot = (shot: ShotRecord) => !props.hideOthersShots || state.over || shot.playerId === viewer;
 
-  // Countdown before the first turn.
+  // Countdown before the first round.
   const countdown = session.startsAt !== null ? Math.ceil((session.startsAt - now) / 1000) : null;
   const counting = countdown !== null && countdown > 0 && countdown <= 5 && !state.over;
   const showGo = countdown !== null && countdown > -1 && countdown <= 0 && state.log.length === 0 && !state.over;
@@ -266,18 +313,25 @@ export function GameView(props: {
     else if (showGo) sound('go', profile.muted);
   }, [countdown]);
 
-  // A big "your turn" callout whenever control comes to this screen in a timed match.
+  // Each new round gets a callout and a sound, once aiming opens.
   useEffect(() => {
-    if (canAct && session.showTimer) {
+    if (canAim && session.showTimer && roundSlam !== state.round) {
       sound('turn', profile.muted);
-      setTurnSlam(state.turnNumber);
+      setRoundSlam(state.round);
     }
-  }, [canAct, state.turnNumber]);
+  }, [canAim, state.round]);
 
-  // Celebrate after the last shot has finished playing.
+  const secs = session.deadline && !session.busy ? Math.min(ROUND_MS / 1000, Math.max(0, Math.ceil((session.deadline - now) / 1000))) : null;
+  // The last ten seconds tick, while you haven't locked in.
+  useEffect(() => {
+    if (secs !== null && secs <= 10 && secs > 0 && canType && session.showTimer) sound('tick', profile.muted);
+  }, [secs]);
+
+  // Celebrate after the last round has finished playing.
   useEffect(() => {
     if (!state.over || session.busy || celebrated) return;
     setCelebrated(true);
+    if ('replay' in session) return;
     if (state.winner !== null && isOnWinningSide(state, viewer)) {
       sound('win', profile.muted);
       stageRef.current?.celebrate();
@@ -286,45 +340,74 @@ export function GameView(props: {
     }
   }, [state.over, session.busy]);
 
+  // A new round, or the device changing hands, starts with a clear box (or the saved draft).
   useEffect(() => {
-    if (canAct) {
-      // Only a new turn clears the box. Opening the screen must not erase what's being typed.
-      if (lastTurn.current !== state.turnNumber) {
-        lastTurn.current = state.turnNumber;
-        setExpr('');
-        setError('');
-      }
-      input.current?.focus({ preventScroll: true });
+    if (lastRound.current !== state.round) {
+      lastRound.current = state.round;
+      setExpr('');
+      setError('');
     }
-  }, [canAct, state.turnNumber]);
-
+  }, [state.round]);
   useEffect(() => {
-    if (chatBox.current) chatBox.current.scrollTop = chatBox.current.scrollHeight;
-  }, [session.chat.length]);
+    const d = session.restoreDraft;
+    if (d) {
+      session.restoreDraft = null;
+      setExpr(d.expr);
+      if (d.angle !== undefined) setAngle(d.angle);
+      if (d.dir) setDir(d.dir);
+    } else if (session.handoff) {
+      setExpr('');
+    }
+  }, [session.restoreDraft, viewer, session.handoff]);
+  useEffect(() => {
+    if (canType) input.current?.focus({ preventScroll: true });
+  }, [canType, state.round, viewer]);
 
-  // Live error text and, in every mode, the first stretch of the curve.
+  // Whatever is typed is kept, so a timeout can still fire it.
+  useEffect(() => {
+    if (canType) session.setDraft({ expr, angle: mode === 'ode2' ? angle : undefined, dir });
+  }, [expr, angle, dir]);
+
+  // Live error text and the whole curve, dotted, in your colour.
   const check = useMemo(() => (expr.trim() ? validate(expr, mode) : null), [expr, mode]);
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
     stage.previewPath = null;
-    const s = currentSoldier(state);
-    if (!canAct || !expr.trim() || check || !s) return;
+    if (!canAim || session.handoff || !expr.trim() || check || !mySoldier?.alive) return;
     const path = simulateShot({
-      mode, expr, angle, dir, from: { x: s.x, y: s.y }, mirrored: isMirrored(state, currentPlayer(state).id),
+      mode, expr, angle, dir, from: { x: mySoldier.x, y: mySoldier.y }, mirrored: isMirrored(state, viewer),
       terrain: new Terrain(state.circles, state.holes), targets: [],
     });
-    stage.previewPath = { xs: path.xs, ys: path.ys, steps: Math.max(2, Math.ceil(path.steps * PREVIEW_FRACTION)) };
-  }, [expr, angle, dir, check, canAct, state.turnNumber]);
+    stage.previewPath = { xs: path.xs, ys: path.ys, steps: path.steps };
+  }, [expr, angle, dir, check, canAim, state.round, viewer, session.handoff]);
 
-  const doFire = () => {
-    if (!canAct) return;
-    if (!expr.trim()) {
-      setError('Type a function first');
+  const last = lastShotOf(state, viewer);
+  const recall = () => {
+    if (!last || !canType) return;
+    setExpr(last.expr);
+    if (mode === 'ode2') setAngle(last.angle);
+    setDir(last.dir);
+    setError('');
+    sound('click', profile.muted);
+    input.current?.focus({ preventScroll: true });
+  };
+
+  const toggleLock = () => {
+    if (!canAim) return;
+    if (locked) {
+      session.unlock();
+      sound('unlock', profile.muted);
       return;
     }
+    if (!expr.trim()) {
+      setError(t('game.typeFirst'));
+      return;
+    }
+    if (check) return;
     try {
-      session.fire({ expr, angle: mode === 'ode2' ? angle : undefined, dir });
+      session.lock({ expr, angle: mode === 'ode2' ? angle : undefined, dir });
+      sound('lock', profile.muted);
       setError('');
     } catch (e) {
       if (e instanceof ParseError || e instanceof RuleError) setError(e.message);
@@ -332,23 +415,43 @@ export function GameView(props: {
     }
   };
 
-  const cur = currentPlayer(state);
-  const secs = session.deadline && !session.busy ? Math.min(60, Math.max(0, Math.ceil((session.deadline - now) / 1000))) : null;
-  const me = state.players.find((p) => p.id === viewer);
-  const lastShot = shots[shots.length - 1];
+  const waiting = waitingOn(state);
+  const waitingStarting = 'waitingToStart' in session && (session as { waitingToStart: boolean }).waitingToStart;
+  // The clock shows only while aiming is open, not during the countdown or while shots fly.
+  const timed = session.showTimer && secs !== null && !state.over && !session.handoff && !session.busy && !counting && !waitingStarting;
+  const status = state.over
+    ? null
+    : session.busy
+      ? t('game.firing')
+      : session.handoff
+        ? t('game.passing')
+        : waitingStarting || counting
+          ? t('game.getReady')
+          : waiting.length === 0
+            ? t('game.allLocked')
+            : waiting.map((p) => p.name).join(', ');
+  const me = playerById(state, viewer);
+  const lastRec = rounds[rounds.length - 1];
+  const othersWaiting = waiting.filter((p) => p.id !== viewer).length;
+  const canHandBack = !!session.handoff && session.canHandBack();
 
   return (
     <div class="game">
       <div class="field">
         <div class="status">
           {props.header}
-          {!state.over && (
-            <span class={`who team-${cur.team}`}>
-              {canAct ? (state.players.filter((p) => !p.isBot).length > 1 && session.showTimer && !('you' in session) ? `${cur.name}, your turn` : 'Your turn') : session.busy ? 'Shot in the air' : 'waitingToStart' in session && session.waitingToStart ? 'Get ready' : `${cur.name} is aiming`}
+          {status !== null && (
+            <span class="who round-status" role="status">
+              {timed && <span class={`timer ${secs! <= 10 ? 'low' : ''}`} role="timer">{secs}s</span>}
+              {timed && ' - '}
+              {!session.busy && !session.handoff && !waitingStarting && !counting && waiting.length > 0 ? (
+                waiting.map((p, i) => (
+                  <span>{i ? ', ' : ''}<span style={{ color: colorOf(p.id) }}>{p.name}</span></span>
+                ))
+              ) : status}
             </span>
           )}
           {props.soloInfo && <span class="muted">{props.soloInfo}</span>}
-          {session.showTimer && secs !== null && !state.over && <span class={`timer ${secs <= 10 ? 'low' : ''}`} role="timer">{secs}s</span>}
         </div>
         {props.coach && <div class="coach">{props.coach}</div>}
         <div class="fieldwrap">
@@ -357,26 +460,45 @@ export function GameView(props: {
             width={770}
             height={450}
             role="img"
-            aria-label={`Graph battlefield. ${state.soldiers.filter((s) => s.alive).length} soldiers standing.`}
+            aria-label={t('game.fieldLabel', { count: state.soldiers.filter((s) => s.alive).length })}
           />
           {counting && <div class="slam" key={countdown}><span>{countdown}</span></div>}
-          {showGo && <div class="slam"><span>Go!</span></div>}
-          {!counting && !showGo && turnSlam === state.turnNumber && canAct && <div class="slam turn" key={turnSlam}><span>Your turn!</span></div>}
-          {knockout && viewing === null && <div class="slam knockout"><span>Final knockout!</span></div>}
+          {showGo && <div class="slam"><span>{t('game.go')}</span></div>}
+          {!counting && !showGo && roundSlam === state.round && canAim && !session.handoff && state.round > 1 && (
+            <div class="slam turn" key={roundSlam}><span>{t('game.roundN', { n: state.round })}</span></div>
+          )}
+          {knockout && viewing === null && <div class="slam knockout"><span>{t('game.finalKnockout')}</span></div>}
+          {session.handoff && !state.over && (
+            <div class="handoff" role="dialog" aria-label={t('game.passTo', { name: session.handoff })}>
+              <div class="handoff-card sheet">
+                <p class="handoff-title">{t('game.passTo', { name: session.handoff })}</p>
+                <p class="muted">{t('game.passHint')}</p>
+                <button class="primary" autoFocus onClick={() => { session.acceptHandoff(); sound('open', profile.muted); }}>
+                  {t('game.imName', { name: session.handoff })}
+                </button>
+                {canHandBack && (
+                  <button class="plain small" onClick={() => { if (session.handBack()) sound('unlock', profile.muted); }}>{t('game.handBack')}</button>
+                )}
+              </div>
+            </div>
+          )}
           {viewing !== null && (
             <div class="past-banner" role="status">
-              <span>Looking back at shot {viewing + 1} of {shots.length}</span>
-              <button class="small" onClick={() => setViewing(null)}>Back to live</button>
+              <span>{t('game.lookingBack', { n: viewing + 1, total: rounds.length })}</span>
+              <button class="small" onClick={() => setViewing(null)}>{t('game.backToLive')}</button>
             </div>
           )}
         </div>
         {props.notice && <p class="error" role="alert" style={{ marginTop: 8 }}>{props.notice}</p>}
+        {award && <p class="ok award" role="status">{award}</p>}
         {props.result}
-        {props.spectator && !state.over && !props.result && <p class="watching" role="status">You're watching this match. Functions show when each shot is fired{props.hideOthersShots ? ', once the match ends' : ''}.</p>}
-        {!props.spectator && !state.over && !props.result && (
-          <div class="shotbar">
+        {props.spectator && !state.over && !props.result && (
+          <p class="watching" role="status">{props.hideOthersShots ? t('game.watchingHidden') : t('game.watching')}</p>
+        )}
+        {!props.spectator && !('replay' in session) && !state.over && !props.result && (
+          <div class={`shotbar ${locked ? 'is-locked' : ''}`}>
             <div class="shotrow">
-              <label for="fn-input">{modeLabel(mode)}</label>
+              <label for="fn-input" style={me ? { color: colorOf(me.id) } : undefined}>{modeLabel(mode)}</label>
               <input
                 id="fn-input"
                 ref={input}
@@ -387,17 +509,23 @@ export function GameView(props: {
                 autocapitalize="off"
                 spellcheck={false}
                 inputMode={keys.on && !keys.typing ? 'none' : 'text'}
-                placeholder={canAct ? 'x/3 + 2*sin(x)' : 'Wait for your turn'}
-                disabled={!canAct}
+                placeholder={canAim ? 'x/3 + 2*sin(x)' : me && !state.soldiers[me.soldierId]?.alive ? t('game.knockedOut') : t('game.waitForRound')}
+                disabled={!canType}
+                readOnly={locked}
                 onInput={(e) => {
                   setExpr((e.target as HTMLInputElement).value);
                   setError('');
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') doFire();
+                  if (e.key === 'Enter') toggleLock();
+                  if (mode !== 'ode2' && e.key === 'ArrowUp' && !expr) {
+                    e.preventDefault();
+                    recall();
+                  }
                   if (mode === 'ode2' && e.key === 'ArrowUp') {
                     e.preventDefault();
-                    setAngle((a) => Math.min(1.55, a + (e.shiftKey ? 0.1 : 0.02)));
+                    if (!expr) recall();
+                    else setAngle((a) => Math.min(1.55, a + (e.shiftKey ? 0.1 : 0.02)));
                   }
                   if (mode === 'ode2' && e.key === 'ArrowDown') {
                     e.preventDefault();
@@ -405,11 +533,25 @@ export function GameView(props: {
                   }
                 }}
               />
-              <button class="primary fire" data-sfx="none" onClick={doFire} disabled={!canAct || !!check}>Fire</button>
+              <button
+                class="recall"
+                aria-label={last ? t('game.recallWith', { expr: last.expr }) : t('game.recall')}
+                title={last ? t('game.recallWith', { expr: last.expr }) : t('game.recallNone')}
+                disabled={!last || !canType}
+                onClick={recall}
+              >↑</button>
+              <button class={`primary fire lock ${locked ? 'locked' : ''}`} data-sfx="none" onClick={toggleLock} disabled={!canAim || (!locked && !!check)} aria-pressed={locked}>
+                {locked ? t('game.unlock') : session.instantFire ? t('game.fire') : t('game.lockIn')}
+              </button>
             </div>
-            <FunctionPicker input={input} value={expr} disabled={!canAct} onChange={(v) => { setExpr(v); setError(''); }} />
+            {locked && canAim && (
+              <p class="lock-note" role="status">
+                {othersWaiting > 0 ? t('game.waitingForPlayers', { count: othersWaiting }) : t('game.firingSoon')}
+              </p>
+            )}
+            <FunctionPicker input={input} value={expr} disabled={!canType} onChange={(v) => { setExpr(v); setError(''); }} />
             {keys.on && (
-              <MathKeys input={input} mode={mode} value={expr} disabled={!canAct} typing={keys.typing} setTyping={keys.setTyping}
+              <MathKeys input={input} mode={mode} value={expr} disabled={!canType} typing={keys.typing} setTyping={keys.setTyping}
                 onChange={(v) => { setExpr(v); setError(''); }} />
             )}
             {expr.trim() && !check && <Tex expr={expr} prefix={modeLabel(mode)} />}
@@ -417,15 +559,15 @@ export function GameView(props: {
             <div class="controls2">
               {mode === 'ode2' && (
                 <>
-                  <span>Angle {((angle * 180) / Math.PI).toFixed(1)}°</span>
-                  <button class="small" aria-label="Lower angle" disabled={!canAct} onClick={() => setAngle((a) => Math.max(-1.55, a - 0.02))}>Down</button>
-                  <button class="small" aria-label="Raise angle" disabled={!canAct} onClick={() => setAngle((a) => Math.min(1.55, a + 0.02))}>Up</button>
+                  <span>{t('game.angle', { deg: ((angle * 180) / Math.PI).toFixed(1) })}</span>
+                  <button class="small" aria-label={t('game.lowerAngle')} disabled={!canType} onClick={() => setAngle((a) => Math.max(-1.55, a - 0.02))}>{t('game.down')}</button>
+                  <button class="small" aria-label={t('game.raiseAngle')} disabled={!canType} onClick={() => setAngle((a) => Math.min(1.55, a + 0.02))}>{t('game.up')}</button>
                 </>
               )}
               {state.config.kind === 'ffa' && (
-                <span class="row" role="group" aria-label="Shot direction">
-                  <button class="small dir-plus" disabled={!canAct} onClick={() => setDir(1)} aria-pressed={dir === 1}>Fire toward +x</button>
-                  <button class="small dir-minus" disabled={!canAct} onClick={() => setDir(-1)} aria-pressed={dir === -1}>Fire toward −x</button>
+                <span class="row" role="group" aria-label={t('game.direction')}>
+                  <button class="small dir-plus" disabled={!canType} onClick={() => setDir(1)} aria-pressed={dir === 1}>{t('game.firePlus')}</button>
+                  <button class="small dir-minus" disabled={!canType} onClick={() => setDir(-1)} aria-pressed={dir === -1}>{t('game.fireMinus')}</button>
                 </span>
               )}
             </div>
@@ -434,24 +576,18 @@ export function GameView(props: {
       </div>
       <aside>
         <div class="mini scores">
-          <h3>Soldiers</h3>
-          {state.players.filter((p) => p.soldierIds.length).map((p) => {
-            const alive = p.soldierIds.filter((id) => state.soldiers[id]?.alive).length;
-            return (
-              <div class={`team-${p.team} ${alive ? '' : 'out'}`}>
-                <span>{p.name}{p.connected ? '' : ' (left)'}</span>
-                <span>{alive}/{p.soldierIds.length}</span>
-              </div>
-            );
-          })}
+          <h3>{t('game.players')}</h3>
+          <Scores state={state} colorOf={colorOf} />
         </div>
-        {lastShot && (
+        {lastRec && lastRec.shots.length > 0 && (
           <div class="mini last-shot">
-            <h3>Last shot</h3>
-            <code>{canSeeShot(lastShot) ? lastShot.expr : 'Hidden until the match ends'}</code>
+            <h3>{t('game.lastRound')}</h3>
+            {lastRec.shots.map((s) => (
+              <code style={{ '--who': colorOf(s.playerId) }}>{canSeeShot(s) ? s.expr : t('game.hiddenUntilEnd')}</code>
+            ))}
           </div>
         )}
-        <ShotHistory shots={shots} state={state} viewing={viewing} onView={setViewing} canSee={canSeeShot} />
+        <RoundHistory rounds={rounds} state={state} viewing={viewing} onView={setViewing} canSee={canSeeShot} colorOf={colorOf} />
         {props.extraSide}
       </aside>
     </div>

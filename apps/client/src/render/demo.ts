@@ -1,4 +1,4 @@
-import { PLANE_H, Terrain, simulateShot, toPxX, toPxY, type Circle, type MatchState, type ShotRecord } from '@mathbattles/sim';
+import { PALETTE, PLANE_H, Terrain, simulateShot, toPxX, toPxY, type Circle, type MatchState, type ShotRecord } from '@mathbattles/sim';
 import type { Stage } from './stage';
 
 export const DEMOS = [
@@ -77,20 +77,20 @@ export function buildDemo(index: number, rocks: number): DemoShot {
     }
   }
   const state = {
-    config: { kind: 'teams', mode: 'fn', soldiers: 1, seed: 0 },
+    config: { kind: 'teams', mode: 'fn', seed: 0 },
     players: [
-      { id: 'a', name: '', team: 1, soldierIds: [0], nextSoldier: 0, connected: true, kills: 0, deaths: 0, shots: 0, bestCombo: 0 },
-      { id: 'b', name: '', team: 2, soldierIds: [1, 2], nextSoldier: 0, connected: true, kills: 0, deaths: 0, shots: 0, bestCombo: 0 },
+      { id: 'a', name: '', team: 1, soldierId: 0, color: PALETTE[0].hex, connected: true, locked: false, kills: 0, deaths: 0, shots: 0, bestCombo: 0 },
+      { id: 'b', name: '', team: 2, soldierId: 1, color: PALETTE[1].hex, connected: true, locked: false, kills: 0, deaths: 0, shots: 0, bestCombo: 0 },
+      { id: 'c', name: '', team: 2, soldierId: 2, color: PALETTE[2].hex, connected: true, locked: false, kills: 0, deaths: 0, shots: 0, bestCombo: 0 },
     ],
     soldiers: [
       { id: 0, playerId: 'a', x: from.x, y: from.y, alive: true, angle: 0 },
       { id: 1, playerId: 'b', x: a.x, y: a.y, alive: true, angle: 0 },
-      { id: 2, playerId: 'b', x: b.x, y: b.y, alive: true, angle: 0 },
+      { id: 2, playerId: 'c', x: b.x, y: b.y, alive: true, angle: 0 },
     ],
     circles,
     holes: [],
-    turn: 0,
-    turnNumber: 1,
+    round: 1,
     over: false,
     winner: null,
     log: [],

@@ -2,15 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { BARS_PER_CHORD, TRACKS, composeBar, layerLevels } from '../src/audio/compose';
 
 describe('background music', () => {
-  it('has three tracks at a calm focus tempo', () => {
-    expect(TRACKS).toHaveLength(3);
+  it('has six tracks at a calm focus tempo', () => {
+    expect(TRACKS).toHaveLength(6);
     for (const t of TRACKS) {
-      expect(t.bpm).toBeGreaterThanOrEqual(72);
+      expect(t.bpm).toBeGreaterThanOrEqual(70);
       expect(t.bpm).toBeLessThanOrEqual(78);
       expect(t.chords.length).toBe(t.bass.length);
       expect(t.chords.length).toBe(t.melody.length);
     }
-    expect(new Set(TRACKS.map((t) => t.name)).size).toBe(3);
+    expect(new Set(TRACKS.map((t) => t.name)).size).toBe(6);
   });
 
   it('only plays notes from each track’s key', () => {

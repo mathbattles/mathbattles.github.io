@@ -4,6 +4,7 @@ import { Stage } from '../render/stage';
 import { cosmeticValue, profile } from '../store';
 import { QuestsPanel } from './Season';
 import { TopBar } from './Shared';
+import { t } from '../i18n';
 
 /** The hero is the game itself: a real shot traced by the real simulation. */
 function HeroDemo() {
@@ -27,8 +28,8 @@ function HeroDemo() {
   return (
     <div class="hero">
       <canvas ref={ref} width={770} height={450} aria-hidden="true" />
-      <h1><span>MathBattles.io</span></h1>
-      <p class="tag" ref={caption}>Type a function. Your shot follows its graph.</p>
+      <h1><span>{t('ui.mathbattlesIo')}</span></h1>
+      <p class="tag" ref={caption}>{t('ui.typeAFunctionYourShotFollows')}</p>
     </div>
   );
 }
@@ -53,13 +54,13 @@ export function Menu() {
       <div class="menu-main">
         {newPlayer ? (
           <>
-            <a class="btn primary" href="#/level/0-1">Learn to play in 3 shots</a>
-            <a class="btn" href="#/online">Play online</a>
+            <a class="btn primary" href="#/level/0-1">{t('ui.learnToPlayIn3Shots')}</a>
+            <a class="btn" href="#/online">{t('ui.playOnline')}</a>
           </>
         ) : (
-          <a class="btn primary" href="#/online">Play online</a>
+          <a class="btn primary" href="#/online">{t('ui.playOnline')}</a>
         )}
-        <a class="btn" href="#/local">Play bots or friends here</a>
+        <a class="btn" href="#/local">{t('ui.playBotsOrFriendsHere')}</a>
       </div>
       <div class="menu-list">
         {MODES.map((m) => (
@@ -68,7 +69,7 @@ export function Menu() {
       </div>
       <QuestsPanel />
       <p class="muted" style={{ marginTop: 16 }}>
-        <span class="phone-only"><a href="#/settings">Settings</a>{' '}<a href="#/leaderboard">Leaderboard</a>{' '}</span><a href="#/privacy">Privacy</a>{' '}Inspired by Graphwar and Math Wars. Not affiliated with either.
+        <span class="phone-only"><a href="#/settings">{t('ui.settings')}</a>{' '}<a href="#/leaderboard">{t('ui.leaderboard')}</a>{' '}</span><a href="#/privacy">{t('ui.privacy')}</a>{' '}Inspired by Graphwar and Math Wars. Not affiliated with either.
       </p>
     </div>
   );

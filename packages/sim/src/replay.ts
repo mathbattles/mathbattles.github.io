@@ -1,55 +1,61 @@
 import type { MatchConfig, MatchEvent, MatchState, PlayerSetup } from './rules';
 import { cleanMap } from './maps';
-import { createMatch, currentPlayer, fire, removePlayer, skipTurn } from './rules';
+import { createMatch, removePlayer } from './rules';
+import { resolveRound } from './round';
+import { isHexColor } from './colors';
 
 /**
- * A replay is the match's seed, setup, and actions. It rebuilds the whole match through
- * the normal rules, so it stays small enough to share as a link.
+ * A replay is the match's seed, setup, and each round's shots. It rebuilds the whole match
+ * through the normal rules, so it stays small enough to store and share.
  */
 export interface Replay {
-  v: 1;
+  v: 3;
   config: MatchConfig;
   setups: PlayerSetup[];
   actions: ReplayAction[];
 }
 
+export interface ReplayShot {
+  p: string;
+  e: string;
+  g?: number;
+  d?: 1 | -1;
+}
+
 export type ReplayAction =
-  | { a: 'f'; p: string; e: string; g?: number; d?: 1 | -1 }
-  | { a: 's' }
+  | { a: 'r'; shots: ReplayShot[] }
   | { a: 'l'; p: string };
 
 export function makeReplay(state: MatchState, setups: PlayerSetup[]): Replay {
-  return { v: 1, config: state.config, setups, actions: state.log.map(toAction) };
+  // Store each player's final colour, so the replay looks exactly like the match did.
+  const colors = new Map(state.players.map((p) => [p.id, p.color]));
+  return {
+    v: 3,
+    config: state.config,
+    setups: setups.map((s) => ({ ...s, ...(colors.has(s.id) ? { color: colors.get(s.id) } : {}) })),
+    actions: state.log.map(toAction),
+  };
 }
 
 function toAction(e: MatchEvent): ReplayAction {
-  switch (e.type) {
-    case 'shot':
-      return {
-        a: 'f',
-        p: e.shot.playerId,
-        e: e.shot.expr,
-        ...(e.shot.mode === 'ode2' ? { g: e.shot.angle } : {}),
-        ...(e.shot.dir === -1 ? { d: -1 as const } : {}),
-      };
-    case 'timeout':
-      return { a: 's' };
-    case 'leave':
-      return { a: 'l', p: e.playerId };
-  }
+  if (e.type === 'leave') return { a: 'l', p: e.playerId };
+  return {
+    a: 'r',
+    shots: e.round.shots.map((s) => ({
+      p: s.playerId,
+      e: s.expr,
+      ...(s.mode === 'ode2' ? { g: s.angle } : {}),
+      ...(s.dir === -1 ? { d: -1 as const } : {}),
+    })),
+  };
 }
 
 export function applyAction(state: MatchState, action: ReplayAction): void {
-  switch (action.a) {
-    case 'f':
-      fire(state, action.p, { expr: action.e, angle: action.g, dir: action.d });
-      return;
-    case 's':
-      skipTurn(state);
-      return;
-    case 'l':
-      removePlayer(state, action.p);
+  if (action.a === 'l') {
+    removePlayer(state, action.p);
+    return;
   }
+  resolveRound(state, action.shots.map((s) => ({ playerId: s.p, expr: s.e, angle: s.g, dir: s.d })));
 }
 
 export function replayStart(replay: Replay): MatchState {
@@ -57,13 +63,13 @@ export function replayStart(replay: Replay): MatchState {
 }
 
 /*
- * Link format, version 2. Everything is packed into bytes, then written in URL-safe base64:
- *   2, flags (kind, mode, soldiers), seed, player count,
- *   each player: flags (team, bot, bot level), name length, name,
- *   action count, each action: a tag, then its data.
- * Player ids are left out (players are numbered instead), and so is who fired each shot,
- * because the rules already know whose turn it is. Common pieces of math, such as "sin(",
- * take one byte each. Links from the first version, which were plain JSON, still open.
+ * Replay format, version 3. Everything is packed into bytes, then written in URL-safe base64:
+ *   3, flags (kind, mode, custom map), seed, the map if there is one, player count,
+ *   each player: flags (team, bot, bot level, has colour), name, colour (3 bytes),
+ *   action count, each action: a tag, then its data. A round lists its shots, each with
+ *   the player's number (and a bit for shooting left), the angle in y'' mode, and the math.
+ * Common pieces of math, such as "sin(", take one byte each.
+ * Versions 1 and 2 were for turn-based matches, which can't be rebuilt any more.
  */
 
 const KINDS = ['teams', 'ffa'] as const;
@@ -75,9 +81,8 @@ const TOKEN_ORDER = TOKENS.map((t, i) => [t, i] as const).sort((a, b) => b[0].le
 const TOKEN_BASE = 0x80;
 const END = 0x00;
 const WIDE = 0x01;
-const TAG_SHOT = 0;
-const TAG_SHOT_LEFT = 1;
-const TAG_SKIP = 2;
+const TAG_ROUND = 0;
+const LEFT_BIT = 0x80;
 const TAG_LEAVE = 3;
 
 class Writer {
@@ -186,13 +191,13 @@ function fromBase64Url(text: string): Uint8Array {
 export function encodeReplay(replay: Replay): string {
   const { config, setups } = replay;
   const w = new Writer();
-  w.byte(2);
+  w.byte(3);
   const map = config.map ? cleanMap(config.map) : null;
-  w.byte(KINDS.indexOf(config.kind) | (MODES.indexOf(config.mode) << 1) | ((config.soldiers - 1) << 3) | (map ? 0x20 : 0));
+  w.byte(KINDS.indexOf(config.kind) | (MODES.indexOf(config.mode) << 1) | (map ? 0x20 : 0));
   // Seeds are whole numbers. Store the sign separately so negative seeds work too.
   const seed = Math.trunc(config.seed);
   w.uint(Math.abs(seed) * 2 + (seed < 0 ? 1 : 0));
-  // A custom map travels inside the link, so anyone can watch without having the map.
+  // A custom map travels inside the replay, so anyone can watch without having the map.
   if (map) {
     w.text(map.name);
     w.uint(map.circles.length);
@@ -211,18 +216,27 @@ export function encodeReplay(replay: Replay): string {
   w.byte(setups.length);
   for (const s of setups) {
     const level = s.isBot ? Math.max(0, BOT_LEVEL_CODES.indexOf(s.botLevel ?? '')) : 0;
-    w.byte((s.team === 2 ? 1 : 0) | (s.isBot ? 2 : 0) | (level << 2));
+    const color = isHexColor(s.color) ? s.color : null;
+    w.byte((s.team === 2 ? 1 : 0) | (s.isBot ? 2 : 0) | (level << 2) | (color ? 0x40 : 0));
     w.text(s.name);
+    if (color) {
+      const n = parseInt(color.slice(1), 16);
+      w.byte(n >> 16);
+      w.byte(n >> 8);
+      w.byte(n);
+    }
   }
   const index = new Map(setups.map((s, i) => [s.id, i]));
   w.uint(replay.actions.length);
   for (const a of replay.actions) {
-    if (a.a === 'f') {
-      w.byte(a.d === -1 ? TAG_SHOT_LEFT : TAG_SHOT);
-      if (config.mode === 'ode2') w.float(a.g ?? 0);
-      w.expr(a.e);
-    } else if (a.a === 's') {
-      w.byte(TAG_SKIP);
+    if (a.a === 'r') {
+      w.byte(TAG_ROUND);
+      w.byte(a.shots.length);
+      for (const shot of a.shots) {
+        w.byte((index.get(shot.p) ?? 0) | (shot.d === -1 ? LEFT_BIT : 0));
+        if (config.mode === 'ode2') w.float(shot.g ?? 0);
+        w.expr(shot.e);
+      }
     } else {
       w.byte(TAG_LEAVE);
       w.byte(index.get(a.p) ?? 0);
@@ -231,14 +245,13 @@ export function encodeReplay(replay: Replay): string {
   return toBase64Url(w.bytes);
 }
 
-function decodeV2(bytes: Uint8Array): Replay {
+function decodeV3(bytes: Uint8Array): Replay {
   const r = new Reader(bytes);
   r.byte();
   const flags = r.byte();
   const kind = KINDS[flags & 1]!;
   const mode = MODES[(flags >> 1) & 3];
   if (!mode) throw new Error('Unknown mode');
-  const soldiers = ((flags >> 3) & 3) + 1;
   const rawSeed = r.uint();
   const seed = rawSeed % 2 === 1 ? -(rawSeed - 1) / 2 : rawSeed / 2;
   let map: MatchConfig['map'];
@@ -255,60 +268,79 @@ function decodeV2(bytes: Uint8Array): Replay {
   for (let i = 0; i < count; i++) {
     const f = r.byte();
     const isBot = !!(f & 2);
+    const name = r.text();
+    let color: string | undefined;
+    if (f & 0x40) color = '#' + [r.byte(), r.byte(), r.byte()].map((b) => b.toString(16).padStart(2, '0')).join('');
     setups.push({
       id: `p${i}`,
-      name: r.text(),
+      name,
       team: f & 1 ? 2 : 1,
       ...(isBot ? { isBot: true, botLevel: BOT_LEVEL_CODES[(f >> 2) & 3] } : {}),
+      ...(color ? { color } : {}),
     });
   }
-  const config: MatchConfig = { kind, mode, soldiers, seed, ...(map ? { map } : {}) };
+  const config: MatchConfig = { kind, mode, seed, ...(map ? { map } : {}) };
   const total = r.uint();
   if (total > MAX_REPLAY_ACTIONS) throw new Error('Too many actions');
   const actions: ReplayAction[] = [];
-  // Shots don't store who fired, so play the match forward to know whose turn each one was.
-  const state = createMatch(config, setups);
   for (let k = 0; k < total; k++) {
     const tag = r.byte();
-    let action: ReplayAction;
-    if (tag === TAG_SHOT || tag === TAG_SHOT_LEFT) {
-      const g = mode === 'ode2' ? r.float() : undefined;
-      const e = r.expr();
-      action = { a: 'f', p: currentPlayer(state).id, e, ...(g !== undefined ? { g } : {}), ...(tag === TAG_SHOT_LEFT ? { d: -1 as const } : {}) };
-    } else if (tag === TAG_SKIP) {
-      action = { a: 's' };
+    if (tag === TAG_ROUND) {
+      const n = r.byte();
+      if (n > count) throw new Error('Too many shots');
+      const shots: ReplayShot[] = [];
+      for (let j = 0; j < n; j++) {
+        const b = r.byte();
+        const who = setups[b & 0x7f];
+        if (!who) throw new Error('Unknown player');
+        const g = mode === 'ode2' ? r.float() : undefined;
+        const e = r.expr();
+        shots.push({ p: who.id, e, ...(g !== undefined ? { g } : {}), ...(b & LEFT_BIT ? { d: -1 as const } : {}) });
+      }
+      actions.push({ a: 'r', shots });
     } else if (tag === TAG_LEAVE) {
       const who = setups[r.byte()];
       if (!who) throw new Error('Unknown player');
-      action = { a: 'l', p: who.id };
+      actions.push({ a: 'l', p: who.id });
     } else {
       throw new Error('Unknown action');
     }
-    actions.push(action);
-    if (!state.over) applyAction(state, action);
   }
-  return { v: 1, config, setups, actions };
+  return { v: 3, config, setups, actions };
 }
 
 export function decodeReplay(text: string): Replay | null {
   try {
     const bytes = fromBase64Url(text);
-    const r = bytes[0] === 2 ? decodeV2(bytes) : (JSON.parse(new TextDecoder().decode(bytes)) as Replay);
+    if (bytes[0] !== 3) return null;
+    const r = decodeV3(bytes);
     return replayIsSane(r) ? r : null;
   } catch {
     return null;
   }
 }
 
+/** True for links from before simultaneous rounds, which can't be rebuilt any more. */
+export function replayIsOld(text: string): boolean {
+  try {
+    const bytes = fromBase64Url(text);
+    if (bytes[0] === 2) return true;
+    const json = JSON.parse(new TextDecoder().decode(bytes)) as { v?: unknown };
+    return json?.v === 1;
+  } catch {
+    return false;
+  }
+}
+
 const MAX_REPLAY_ACTIONS = 5000;
 
-/** Replay links can be edited by hand, so check the shape before building a match from one. */
+/** Replays can be edited by hand, so check the shape before building a match from one. */
 function replayIsSane(r: Replay): boolean {
-  if (!r || r.v !== 1 || !r.config || !Array.isArray(r.setups) || !Array.isArray(r.actions)) return false;
-  const { kind, mode, soldiers, seed } = r.config;
+  if (!r || r.v !== 3 || !r.config || !Array.isArray(r.setups) || !Array.isArray(r.actions)) return false;
+  const { kind, mode, seed } = r.config;
   if (kind !== 'teams' && kind !== 'ffa') return false;
   if (mode !== 'fn' && mode !== 'ode1' && mode !== 'ode2') return false;
-  if (!Number.isInteger(soldiers) || soldiers < 1 || soldiers > 4 || !Number.isFinite(seed)) return false;
+  if (!Number.isFinite(seed)) return false;
   if (r.setups.length < 2 || r.setups.length > 10 || r.actions.length > MAX_REPLAY_ACTIONS) return false;
   const ids = new Set<string>();
   for (const s of r.setups) {
@@ -316,6 +348,5 @@ function replayIsSane(r: Replay): boolean {
     ids.add(s.id);
   }
   if (ids.size !== r.setups.length) return false;
-  // Old links can hold abilities, which no longer exist, so those matches can't be rebuilt.
-  return r.actions.every((a) => !!a && typeof a === 'object' && (a.a === 'f' || a.a === 's' || a.a === 'l'));
+  return r.actions.every((a) => !!a && typeof a === 'object' && (a.a === 'r' || a.a === 'l'));
 }

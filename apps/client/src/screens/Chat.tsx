@@ -4,6 +4,7 @@ import { fetchMessages, reportMessage, sendMessage, type DirectMessage } from '.
 import { refreshSocial } from '../social';
 import { profile } from '../store';
 import { sound } from '../util';
+import { t } from '../i18n';
 
 const MAX = 300;
 const POLL_MS = 4000;
@@ -158,11 +159,11 @@ export function ChatWindow({ chat, online }: { chat: OpenChat; online: boolean }
               stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
             }}
           >
-            {loading ? <p class="muted small-note">Loading messages.</p> : messages.length === 0 ? (
-              <p class="muted small-note chat-empty">No messages yet. Say hi! Messages are kept for 30 days.</p>
+            {loading ? <p class="muted small-note">{t('ui.loadingMessages')}</p> : messages.length === 0 ? (
+              <p class="muted small-note chat-empty">{t('ui.noMessagesYetSayHiMessages')}</p>
             ) : (
               <>
-                {more && <button class="small plain chat-older" onClick={() => void loadOlder()}>Show older messages</button>}
+                {more && <button class="small plain chat-older" onClick={() => void loadOlder()}>{t('ui.showOlderMessages')}</button>}
                 {messages.map((m) => {
                   const day = dayText(m.at);
                   const showDay = day !== lastDay;
@@ -177,7 +178,7 @@ export function ChatWindow({ chat, online }: { chat: OpenChat; online: boolean }
                           {m.mine && m.id === lastMine?.id && m.seen && ' · Seen'}
                           {!m.mine && (reported.has(m.id)
                             ? ' · Reported'
-                            : <> · <button class="plain chat-report" onClick={() => void report(m)}>Report</button></>)}
+                            : <> · <button class="plain chat-report" onClick={() => void report(m)}>{t('ui.report')}</button></>)}
                         </small>
                       </div>
                     </>
@@ -197,7 +198,7 @@ export function ChatWindow({ chat, online }: { chat: OpenChat; online: boolean }
               autocomplete="off"
               onInput={(e) => setText((e.target as HTMLInputElement).value)}
             />
-            <button class="small primary" type="submit" disabled={sending || !text.trim()}>Send</button>
+            <button class="small primary" type="submit" disabled={sending || !text.trim()}>{t('ui.send')}</button>
           </form>
           <p class="chat-foot">
             <span class={error ? 'error' : 'muted'}>{error || note || ' '}</span>

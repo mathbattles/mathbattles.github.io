@@ -1,7 +1,6 @@
 import type { ShotMode } from './constants';
-import { generateCircles, placeSoldiers } from './map';
-import { Rng, hashSeed } from './rng';
-import { currentPlayer, fire, skipTurn, type MatchState, type Player } from './rules';
+import { PALETTE } from './colors';
+import type { MatchState, Player } from './rules';
 import type { Circle } from './terrain';
 
 /** Solo play uses the normal rules with players who never act: targets and allies. */
@@ -18,10 +17,10 @@ export interface SoloDef {
   name?: string;
 }
 
-function makePlayer(id: string, name: string, team: 1 | 2, ids: number[]): Player {
+function makePlayer(id: string, name: string, team: 1 | 2, soldierId: number, color: string, passive: boolean): Player {
   return {
-    id, name, team, soldierIds: ids, nextSoldier: 0,
-    connected: true, kills: 0, deaths: 0, shots: 0, bestCombo: 0,
+    id, name, team, soldierId, color, ...(passive ? { passive: true } : {}),
+    connected: true, locked: false, kills: 0, deaths: 0, shots: 0, bestCombo: 0,
   };
 }
 
@@ -31,34 +30,37 @@ export function createSolo(def: SoloDef): MatchState {
     soldiers.push({ id: soldiers.length, playerId, x: p.x, y: p.y, alive: true, angle: 0 });
     return soldiers.length - 1;
   };
-  const meIds = [add(ME, def.shooter)];
-  const enemyIds = def.enemies.map((e) => add(TARGETS, e));
-  const allyIds = (def.allies ?? []).map((a) => add(ALLIES, a));
-  const players = [makePlayer(ME, def.name ?? 'You', 1, meIds), makePlayer(TARGETS, 'Targets', 2, enemyIds)];
-  if (allyIds.length) players.push(makePlayer(ALLIES, 'Friends', 1, allyIds));
+  // Targets and friends are many soldiers that never act. Each gets a silent owner, so the
+  // one-soldier-per-player rule holds while the practice board stays the same.
+  const players: Player[] = [makePlayer(ME, def.name ?? 'You', 1, add(ME, def.shooter), PALETTE[0].hex, false)];
+  def.enemies.forEach((e, i) => {
+    const id = i === 0 ? TARGETS : `${TARGETS}-${i}`;
+    players.push(makePlayer(id, 'Target', 2, add(id, e), PALETTE[1].hex, true));
+  });
+  (def.allies ?? []).forEach((a, i) => {
+    const id = i === 0 ? ALLIES : `${ALLIES}-${i}`;
+    players.push(makePlayer(id, 'Friend', 1, add(id, a), PALETTE[2].hex, true));
+  });
   return {
-    config: { kind: 'teams', mode: def.mode, soldiers: 1, seed: 0 },
+    config: { kind: 'teams', mode: def.mode, seed: 0 },
     players,
     soldiers,
     circles: def.circles.map((c) => ({ ...c })),
     holes: [],
-    turn: 0,
-    turnNumber: 1,
+    round: 1,
     over: false,
     winner: null,
     log: [],
   };
 }
 
-/** Skips the players who never act, so it's the solo player's turn again. */
-export function soloNext(state: MatchState): void {
-  while (!state.over && currentPlayer(state).id !== ME) skipTurn(state);
-}
+export const isTarget = (playerId: string) => playerId === TARGETS || playerId.startsWith(`${TARGETS}-`);
+export const isAlly = (playerId: string) => playerId === ALLIES || playerId.startsWith(`${ALLIES}-`);
 
 export function soloCleared(state: MatchState): boolean {
-  return state.soldiers.every((s) => s.playerId !== TARGETS || !s.alive);
+  return state.soldiers.every((s) => !isTarget(s.playerId) || !s.alive);
 }
 
 export function soloHitFriend(state: MatchState): boolean {
-  return state.soldiers.some((s) => s.playerId === ALLIES && !s.alive);
+  return state.soldiers.some((s) => isAlly(s.playerId) && !s.alive);
 }

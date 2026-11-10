@@ -1,4 +1,4 @@
-import { ME, createSolo, soloNext, toPxX, toPxY, type MatchState, type ShotMode, type SoloDef } from '@mathbattles/sim';
+import { ME, createSolo, toPxX, toPxY, type MatchState, type ShotMode, type SoloDef } from '@mathbattles/sim';
 import { buildLevel, type LevelShape } from './campaign';
 
 /** Text may use `backticks` for math. */
@@ -500,7 +500,6 @@ export function freeBoard(mode: ShotMode, from: [number, number], targets: [numb
     enemies: targets.map(([x, y]) => ({ x: toPxX(x), y: toPxY(y) })),
     circles: rocks.map(([x, y, r]) => ({ x: toPxX(x), y: toPxY(y), r: r * 15.4 })),
   });
-  soloNext(state);
   return state;
 }
 

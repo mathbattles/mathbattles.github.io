@@ -11,17 +11,14 @@ import {
   seasonLevel,
   decodeReplay,
   encodeReplay,
-  fire,
   createMatch,
   makeReplay,
+  replayIsOld,
   replayStart,
+  resolveRound,
   applyAction,
-  skipTurn,
   soloCleared,
   soloHitFriend,
-  soloNext,
-  currentPlayer,
-  currentSoldier,
   COSMETICS,
   terrainOf,
   validate,
@@ -55,7 +52,7 @@ describe('campaign', () => {
         expect(a.y).toBeLessThan(PLANE_H);
       }
       const state = createSolo(def);
-      fire(state, ME, { expr: level.solution, angle: level.angle });
+      resolveRound(state, [{ playerId: ME, expr: level.solution, angle: level.angle }]);
       expect(soloCleared(state)).toBe(true);
       expect(soloHitFriend(state)).toBe(false);
     });
@@ -136,19 +133,17 @@ describe('custom maps', () => {
   };
   const setups = [{ id: 'a', name: 'Ana', team: 1 as const }, { id: 'b', name: 'Bo', team: 2 as const }];
   it('use the map’s rocks and starting spots', () => {
-    const m = createMatch({ kind: 'teams', mode: 'fn', soldiers: 2, seed: 9, map }, setups);
+    const m = createMatch({ kind: 'teams', mode: 'fn', seed: 9, map }, setups);
     expect(m.circles).toEqual(map.circles);
     const a = m.players.find((p) => p.id === 'a')!;
     const b = m.players.find((p) => p.id === 'b')!;
-    // Each team's first soldier stands on its spot. The rest are placed at random on their side.
-    expect(a.soldierIds.map((id) => m.soldiers[id]!).some((s) => s.x === 60 && s.y === 60)).toBe(true);
-    expect(b.soldierIds.map((id) => m.soldiers[id]!).some((s) => s.x === 700 && s.y === 380)).toBe(true);
-    for (const id of a.soldierIds) expect(m.soldiers[id]!.x).toBeLessThan(385);
+    // Each player's one soldier stands on their team's spot.
+    expect(m.soldiers[a.soldierId]).toMatchObject({ x: 60, y: 60 });
+    expect(m.soldiers[b.soldierId]).toMatchObject({ x: 700, y: 380 });
   });
-  it('travel inside replay links and rebuild the same match', () => {
-    const m = createMatch({ kind: 'teams', mode: 'fn', soldiers: 1, seed: 4, map }, setups);
-    fire(m, currentPlayer(m).id, { expr: 'x/9' });
-    fire(m, currentPlayer(m).id, { expr: '-x/5' });
+  it('travel inside replays and rebuild the same match', () => {
+    const m = createMatch({ kind: 'teams', mode: 'fn', seed: 4, map }, setups);
+    resolveRound(m, [{ playerId: 'a', expr: 'x/9' }, { playerId: 'b', expr: '-x/5' }]);
     const back = decodeReplay(encodeReplay(makeReplay(m, setups)))!;
     expect(back.config.map).toEqual(map);
     const again = replayStart(back);
@@ -175,10 +170,10 @@ describe('replays', () => {
       { id: 'a', name: 'Ana', team: 1 as const },
       { id: 'b', name: 'Bo', team: 2 as const },
     ];
-    const m = createMatch({ kind: 'teams', mode: 'fn', soldiers: 2, seed: 77 }, setups);
+    const m = createMatch({ kind: 'teams', mode: 'fn', seed: 77 }, setups);
     for (let i = 0; i < 6 && !m.over; i++) {
-      if (i % 3 === 2) skipTurn(m);
-      else fire(m, currentPlayer(m).id, { expr: i % 2 ? 'x/4' : 'sin(x)' });
+      if (i % 3 === 2) resolveRound(m, []);
+      else resolveRound(m, [{ playerId: 'a', expr: i % 2 ? 'x/4' : 'sin(x)' }, { playerId: 'b', expr: 'x/7' }]);
     }
     const link = encodeReplay(makeReplay(m, setups));
     expect(link).toMatch(/^[\w-]+$/);
@@ -187,24 +182,24 @@ describe('replays', () => {
     for (const a of back.actions) applyAction(again, a);
     expect(board(again.soldiers)).toEqual(board(m.soldiers));
     expect(again.holes).toEqual(m.holes);
-    expect(again.turnNumber).toBe(m.turnNumber);
+    expect(again.round).toBe(m.round);
     expect(decodeReplay('not-valid!!')).toBeNull();
   });
 });
 
 describe('replay contents', () => {
-  it('rebuilds shots, timeouts, and players leaving', () => {
+  it('rebuilds rounds, empty rounds, and players leaving', () => {
     const setups = [
       { id: 'a', name: 'Ana', team: 1 as const },
       { id: 'b', name: 'Bo', team: 2 as const },
       { id: 'c', name: 'Cy', team: 1 as const },
     ];
-    const play = createMatch({ kind: 'teams', mode: 'fn', soldiers: 1, seed: 11 }, setups);
-    fire(play, currentPlayer(play).id, { expr: 'x/9' });
-    skipTurn(play);
-    removePlayer(play, play.players.find((p) => p.id !== currentPlayer(play).id)!.id);
+    const play = createMatch({ kind: 'teams', mode: 'fn', seed: 11 }, setups);
+    resolveRound(play, [{ playerId: 'a', expr: 'x/9' }]);
+    resolveRound(play, []);
+    removePlayer(play, 'c');
     const replay = decodeReplay(encodeReplay(makeReplay(play, setups)))!;
-    expect(replay.actions.map((a) => a.a)).toEqual(['f', 's', 'l']);
+    expect(replay.actions.map((a) => a.a)).toEqual(['r', 'r', 'l']);
     const again = replayStart(replay);
     for (const a of replay.actions) applyAction(again, a);
     expect(board(again.soldiers)).toEqual(board(play.soldiers));
@@ -222,18 +217,14 @@ describe('replay contents', () => {
         { id: `b7:hard`, name: 'Gauss', team: 2 as const, isBot: true, botLevel: 'hard' },
         ...(seed % 2 ? [{ id: `uid-${seed}-cccccccccccccccccccccccc`, name: 'Cy', team: 2 as const }] : []),
       ];
-      const match = createMatch({ kind, mode, soldiers: 1 + (seed % 2), seed: seed % 5 === 0 ? -seed * 1000 : seed * 99991 }, setups);
+      const match = createMatch({ kind, mode, seed: seed % 5 === 0 ? -seed * 1000 : seed * 99991 }, setups);
       for (let k = 0; k < 14 && !match.over; k++) {
-        const pick = exprs[(seed + k) % exprs.length]!;
-        const expr = mode === 'fn' ? pick.replace("y'", 'x') : mode === 'ode1' ? pick.replace("y'", 'y') : pick;
-        if (k % 5 === 4) skipTurn(match);
-        else {
-          try {
-            fire(match, currentPlayer(match).id, { expr, angle: 0.137 * k - 0.4, dir: k % 2 ? -1 : 1 });
-          } catch {
-            skipTurn(match);
-          }
-        }
+        const shots = match.players.filter((p) => match.soldiers[p.soldierId]!.alive).map((p, j) => {
+          const pick = exprs[(seed + k + j) % exprs.length]!;
+          const expr = mode === 'fn' ? pick.replace("y'", 'x') : mode === 'ode1' ? pick.replace("y'", 'y') : pick;
+          return { playerId: p.id, expr, angle: 0.137 * k - 0.4, dir: (k + j) % 2 ? -1 as const : 1 as const };
+        });
+        resolveRound(match, k % 5 === 4 ? [] : shots);
       }
       const replay = makeReplay(match, setups);
       const link = encodeReplay(replay);
@@ -249,30 +240,20 @@ describe('replay contents', () => {
       expect(again.holes).toEqual(match.holes);
       expect(again.over).toBe(match.over);
     }
-    // Links are at least 3 times shorter on average.
+    // Packed replays are at least 3 times shorter than plain JSON on average.
     expect(newTotal * 3).toBeLessThan(oldTotal);
   });
-  it('still opens links made before the short format', () => {
-    const setups = [{ id: 'a', name: 'Ana', team: 1 as const }, { id: 'b', name: 'Bo', team: 2 as const }];
-    const match = createMatch({ kind: 'teams', mode: 'fn', soldiers: 1, seed: 3 }, setups);
-    fire(match, currentPlayer(match).id, { expr: 'x/4' });
-    const replay = makeReplay(match, setups);
-    const oldLink = btoa(JSON.stringify(replay)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
-    expect(decodeReplay(oldLink)).toEqual(replay);
-    // Old links that used abilities can't be rebuilt any more, so they're refused cleanly.
-    const withAbility = { ...replay, actions: [{ a: 'm', p: 'a' }, ...replay.actions] };
-    expect(decodeReplay(btoa(JSON.stringify(withAbility)))).toBeNull();
-  });
-  it('refuses links describing impossible matches', () => {
+  it('retires links from the turn-based versions with a clear message', () => {
     const encode = (o: unknown) => btoa(JSON.stringify(o)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
-    const config = { kind: 'teams', mode: 'fn', soldiers: 1, seed: 1 };
-    const setups = [{ id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 2 }];
-    expect(decodeReplay(encode({ v: 1, config, setups, actions: [] }))).not.toBeNull();
-    expect(decodeReplay(encode({ v: 1, config, setups: [], actions: [] }))).toBeNull();
-    const crowd = Array.from({ length: 400 }, (_, i) => ({ id: `p${i}`, name: 'x', team: 1 }));
-    expect(decodeReplay(encode({ v: 1, config, setups: crowd, actions: [] }))).toBeNull();
-    expect(decodeReplay(encode({ v: 1, config: { ...config, soldiers: 99 }, setups, actions: [] }))).toBeNull();
-    expect(decodeReplay(encode({ v: 1, config, setups: [setups[0], setups[0]], actions: [] }))).toBeNull();
+    const v1 = encode({ v: 1, config: { kind: 'teams', mode: 'fn', soldiers: 1, seed: 1 }, setups: [{ id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 2 }], actions: [] });
+    expect(decodeReplay(v1)).toBeNull();
+    expect(replayIsOld(v1)).toBe(true);
+    expect(replayIsOld('AgEC')).toBe(true);
+  });
+  it('refuses replays describing impossible matches', () => {
+    expect(decodeReplay('AwA')).toBeNull();
+    expect(decodeReplay('')).toBeNull();
+    expect(decodeReplay('not-valid!!')).toBeNull();
   });
 });
 
@@ -325,8 +306,7 @@ describe('the Learn course', () => {
       const terrain = terrainOf(start);
       let shots = 0;
       while (!soloCleared(start) && shots < (c.shots ?? 1)) {
-        fire(start, ME, { expr: c.solution, angle: c.angle, dir: c.dir }, terrain);
-        soloNext(start);
+        resolveRound(start, [{ playerId: ME, expr: c.solution, angle: c.angle, dir: c.dir }], terrain);
         shots++;
       }
       expect(soloCleared(start), 'targets cleared').toBe(true);
@@ -341,7 +321,7 @@ describe('the Learn course', () => {
         const me = state.soldiers[0]!;
         const t = state.soldiers.find((s) => s.playerId === 'targets')!;
         const slope = (me.y - t.y) / (t.x - me.x);
-        fire(state, ME, { expr: slope < 0 ? `(${slope})*x` : `${slope}*x` }, terrainOf(state));
+        resolveRound(state, [{ playerId: ME, expr: slope < 0 ? `(${slope})*x` : `${slope}*x` }], terrainOf(state));
         expect(soloCleared(state)).toBe(false);
       });
     }
@@ -385,5 +365,4 @@ describe('formula preview', () => {
   });
 });
 
-void soloNext;
-void currentSoldier;
+

@@ -1,4 +1,4 @@
-import { MAP_LIMITS, PLANE_H, PLANE_W, Rng, SOLDIER_R, cleanMap, generateCircles, spawnBlocked, type Circle, type MapDef, type MapSpawn, type MatchState } from '@mathbattles/sim';
+import { MAP_LIMITS, PLANE_H, PLANE_W, Rng, SOLDIER_R, TEAM_RING, cleanMap, generateCircles, spawnBlocked, type Circle, type MapDef, type MapSpawn, type MatchState } from '@mathbattles/sim';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useAuth } from '../auth';
 import { deleteMap, getMap, newMapId, playMapNext, saveMap, savedMaps, type SavedMap } from '../maps';
@@ -8,6 +8,7 @@ import { Stage, THEMES } from '../render/stage';
 import { cosmeticValue, profile } from '../store';
 import { go, sound } from '../util';
 import { TopBar, useProfile } from './Shared';
+import { t } from '../i18n';
 
 /** A small picture of a map, drawn in the player's own obstacle design. */
 export function MapPreview({ map }: { map: MapDef }) {
@@ -45,17 +46,15 @@ const blankMap = (): MapDef => ({ name: 'My map', circles: [], spawns: [] });
 
 /** Builds a pretend match so the editor can draw the map exactly as a real match would. */
 function boardFor(map: MapDef): MatchState {
-  const players = [
-    { id: 'blue', name: '', team: 1 as const, soldierIds: [] as number[], nextSoldier: 0, connected: true, kills: 0, deaths: 0, shots: 0, bestCombo: 0 },
-    { id: 'red', name: '', team: 2 as const, soldierIds: [] as number[], nextSoldier: 0, connected: true, kills: 0, deaths: 0, shots: 0, bestCombo: 0 },
-  ];
-  const soldiers = map.spawns.map((s, id) => {
-    players[s.team - 1]!.soldierIds.push(id);
-    return { id, playerId: s.team === 1 ? 'blue' : 'red', x: s.x, y: s.y, alive: true, angle: 0 };
-  });
+  // Each spawn is one player's soldier: blue spawns in blue, red in red.
+  const players = map.spawns.map((sp, id) => ({
+    id: `spawn-${id}`, name: '', team: sp.team, soldierId: id, color: sp.team === 2 ? TEAM_RING[2] : TEAM_RING[1],
+    connected: true, locked: false, kills: 0, deaths: 0, shots: 0, bestCombo: 0,
+  }));
+  const soldiers = map.spawns.map((s, id) => ({ id, playerId: `spawn-${id}`, x: s.x, y: s.y, alive: true, angle: 0 }));
   return {
-    config: { kind: 'teams', mode: 'fn', soldiers: 1, seed: 0 },
-    players, soldiers, circles: map.circles, holes: [], turn: 0, turnNumber: 1, over: false, winner: null, log: [],
+    config: { kind: 'teams', mode: 'fn', seed: 0 },
+    players, soldiers, circles: map.circles, holes: [], round: 1, over: false, winner: null, log: [],
   } as unknown as MatchState;
 }
 
@@ -270,7 +269,7 @@ export function MapEditor({ id }: { id?: string }) {
   const red = map.spawns.filter((s) => s.team === 2).length;
   return (
     <div class="page">
-      <TopBar title="Map editor" />
+      <TopBar title={t('ui.mapEditor')} />
       <div class="editor-layout">
         <div class="sheet editor-field">
           <div class="editor-canvas">
@@ -298,7 +297,7 @@ export function MapEditor({ id }: { id?: string }) {
           <label class="stack-label">Name
             <input type="text" maxLength={MAP_LIMITS.name} value={map.name} onInput={(e) => change({ ...map, name: (e.target as HTMLInputElement).value }, false)} />
           </label>
-          <div class="row" role="group" aria-label="Tool">
+          <div class="row" role="group" aria-label={t('ui.tool')}>
             {(['rock', 'blue', 'red', 'erase'] as Tool[]).map((t) => (
               <button class={`small ${tool === t ? 'on' : ''}`} aria-pressed={tool === t} onClick={() => { setTool(t); if (t !== 'rock') setPicked(null); }}>
                 {t === 'rock' ? 'Rocks' : t === 'blue' ? 'Blue start' : t === 'red' ? 'Red start' : 'Erase'}
@@ -310,22 +309,22 @@ export function MapEditor({ id }: { id?: string }) {
               onInput={(e) => setPickedSize(Number((e.target as HTMLInputElement).value))} />
           </label>
           <div class="row">
-            {sel && <button class="small" onClick={() => { change({ ...map, circles: map.circles.filter((_, i) => i !== picked) }); setPicked(null); }}>Delete rock</button>}
-            <button class="small" disabled={!undo.length} onClick={() => { setEntry((e) => ({ ...e, map: undo[undo.length - 1]! })); setUndo((u) => u.slice(0, -1)); setPicked(null); }}>Undo</button>
-            <button class="small" onClick={randomRocks}>Random rocks</button>
-            <button class="small" onClick={mirror}>Mirror left to right</button>
-            <button class="small" onClick={() => { change(blankMap()); setPicked(null); }}>Clear</button>
+            {sel && <button class="small" onClick={() => { change({ ...map, circles: map.circles.filter((_, i) => i !== picked) }); setPicked(null); }}>{t('ui.deleteRock')}</button>}
+            <button class="small" disabled={!undo.length} onClick={() => { setEntry((e) => ({ ...e, map: undo[undo.length - 1]! })); setUndo((u) => u.slice(0, -1)); setPicked(null); }}>{t('ui.undo')}</button>
+            <button class="small" onClick={randomRocks}>{t('ui.randomRocks')}</button>
+            <button class="small" onClick={mirror}>{t('ui.mirrorLeftToRight')}</button>
+            <button class="small" onClick={() => { change(blankMap()); setPicked(null); }}>{t('ui.clear')}</button>
           </div>
           <p class="muted small-note">{map.circles.length}/{MAP_LIMITS.circles} rocks. Starting spots: {blue} blue, {red} red.{map.spawns.some((s) => spawnBlocked(s, map.circles)) ? ' A crossed-out spot is inside a rock, so that soldier would be stuck.' : ''}</p>
           <div class="row editor-actions">
-            <button class="primary" onClick={play}>Play it</button>
-            <button onClick={() => save()}>Save</button>
+            <button class="primary" onClick={play}>{t('ui.playIt')}</button>
+            <button onClick={() => save()}>{t('ui.save')}</button>
             <button disabled={busy || !auth.user} onClick={() => void share()}>{entry.code ? 'Share again' : 'Share'}</button>
           </div>
-          {!auth.user && <p class="muted small-note">Sign in to share maps with everyone.</p>}
-          {entry.code && <p class="small-note">Code: <strong>{entry.code}</strong></p>}
+          {!auth.user && <p class="muted small-note">{t('ui.signInToShareMapsWith')}</p>}
+          {entry.code && <p class="small-note">{t('ui.code')} <strong>{entry.code}</strong></p>}
           {note && <p class="ok small-note" role="status">{note}</p>}
-          <a class="btn small" href="#/maps">Back to maps</a>
+          <a class="btn small" href="#/maps">{t('ui.backToMaps')}</a>
         </div>
       </div>
     </div>
@@ -358,19 +357,19 @@ export function MapsPage() {
   };
   return (
     <div class="page">
-      <TopBar title="Custom maps" />
-      <p>Draw your own battlefield, then play it against bots, with friends here, or in an online room. Share it and anyone can play it.</p>
+      <TopBar title={t('ui.customMaps')} />
+      <p>{t('ui.drawYourOwnBattlefieldThenPlay')}</p>
       <div class="row" style={{ marginBottom: 14 }}>
-        <a class="btn primary" href={`#/maps/edit/${newMapId()}`}>Make a new map</a>
+        <a class="btn primary" href={`#/maps/edit/${newMapId()}`}>{t('ui.makeANewMap')}</a>
         <form class="row" onSubmit={(e) => { e.preventDefault(); if (code.trim()) go(`/map/${code.trim().toUpperCase()}`); }}>
-          <input type="text" placeholder="Map code, like M-ABCDE" value={code} maxLength={16} onInput={(e) => setCode((e.target as HTMLInputElement).value)} aria-label="Map code" />
-          <button type="submit">Open</button>
+          <input type="text" placeholder={t('ui.mapCodeLikeMAbcde')} value={code} maxLength={16} onInput={(e) => setCode((e.target as HTMLInputElement).value)} aria-label={t('ui.mapCode')} />
+          <button type="submit">{t('ui.open')}</button>
         </form>
       </div>
       {note && <p class="ok" role="status">{note}</p>}
       <div class="sheet">
-        <h3>Your maps</h3>
-        {mine.length === 0 ? <p class="muted">You haven't made a map yet.</p> : (
+        <h3>{t('ui.yourMaps')}</h3>
+        {mine.length === 0 ? <p class="muted">{t('ui.youHavenTMadeAMap')}</p> : (
           <div class="map-grid">
             {mine.map((m) => (
               <div class="map-card">
@@ -378,14 +377,14 @@ export function MapsPage() {
                 <strong>{m.map.name}</strong>
                 <small class="muted">{m.map.circles.length} rocks{m.code ? `, shared as ${m.code}` : ''}</small>
                 <div class="row">
-                  <button class="small primary" onClick={() => { playMapNext(m.map); go('/local'); }}>Play</button>
-                  <a class="btn small" href={`#/maps/edit/${m.id}`}>Edit</a>
+                  <button class="small primary" onClick={() => { playMapNext(m.map); go('/local'); }}>{t('ui.play')}</button>
+                  <a class="btn small" href={`#/maps/edit/${m.id}`}>{t('ui.edit')}</a>
                   <button class="small" onClick={() => {
                     deleteMap(m.id);
                     if (m.code) void deleteSharedMap(m.code);
                     setMine(savedMaps());
                     setNote(`Deleted ${m.map.name}.`);
-                  }}>Delete</button>
+                  }}>{t('ui.delete')}</button>
                 </div>
               </div>
             ))}
@@ -394,13 +393,13 @@ export function MapsPage() {
       </div>
       <div class="sheet">
         <div class="row" style={{ justifyContent: 'space-between' }}>
-          <h3 style={{ margin: 0 }}>Shared maps</h3>
-          <div class="row" role="group" aria-label="Sort shared maps">
-            <button class={`small ${sort === 'popular' ? 'on' : ''}`} aria-pressed={sort === 'popular'} onClick={() => setSort('popular')}>Most played</button>
-            <button class={`small ${sort === 'new' ? 'on' : ''}`} aria-pressed={sort === 'new'} onClick={() => setSort('new')}>Newest</button>
+          <h3 style={{ margin: 0 }}>{t('ui.sharedMaps')}</h3>
+          <div class="row" role="group" aria-label={t('ui.sortSharedMaps')}>
+            <button class={`small ${sort === 'popular' ? 'on' : ''}`} aria-pressed={sort === 'popular'} onClick={() => setSort('popular')}>{t('ui.mostPlayed')}</button>
+            <button class={`small ${sort === 'new' ? 'on' : ''}`} aria-pressed={sort === 'new'} onClick={() => setSort('new')}>{t('ui.newest')}</button>
           </div>
         </div>
-        {shared === 'loading' ? <p>Loading maps.</p> : shared === null ? <p class="muted">Shared maps are offline right now.</p> : shared.length === 0 ? <p class="muted">No shared maps yet. Make one and share it!</p> : (
+        {shared === 'loading' ? <p>{t('ui.loadingMaps')}</p> : shared === null ? <p class="muted">{t('ui.sharedMapsAreOfflineRightNow')}</p> : shared.length === 0 ? <p class="muted">{t('ui.noSharedMapsYetMakeOne')}</p> : (
           <div class="map-grid" style={{ marginTop: 10 }}>
             {shared.map((m) => (
               <div class="map-card">
@@ -408,15 +407,15 @@ export function MapsPage() {
                 <strong>{m.name}</strong>
                 <small class="muted">By {m.author}, played {m.plays} {m.plays === 1 ? 'time' : 'times'}</small>
                 <div class="row">
-                  <button class="small primary" onClick={() => playShared(m)}>Play</button>
-                  <button class="small" onClick={() => copyToMine(m)}>Edit a copy</button>
-                  <a class="btn small" href={`#/map/${m.code}`}>Share</a>
+                  <button class="small primary" onClick={() => playShared(m)}>{t('ui.play')}</button>
+                  <button class="small" onClick={() => copyToMine(m)}>{t('ui.editACopy')}</button>
+                  <a class="btn small" href={`#/map/${m.code}`}>{t('ui.share')}</a>
                 </div>
               </div>
             ))}
           </div>
         )}
-        {!auth.user && <p class="muted small-note" style={{ marginTop: 10 }}>Sign in to share your own maps.</p>}
+        {!auth.user && <p class="muted small-note" style={{ marginTop: 10 }}>{t('ui.signInToShareYourOwn')}</p>}
       </div>
     </div>
   );
@@ -429,20 +428,20 @@ export function SharedMapScreen({ code }: { code: string }) {
   useEffect(() => {
     void fetchMap(code).then(setM);
   }, [code]);
-  if (m === 'loading') return <div class="page"><TopBar title="Map" /><p>Loading the map.</p></div>;
-  if (!m) return <div class="page"><TopBar title="Map" /><div class="sheet"><h3>That map wasn't found</h3><p>Check the code and try again.</p><a class="btn" href="#/maps">All maps</a></div></div>;
+  if (m === 'loading') return <div class="page"><TopBar title={t('ui.map')} /><p>{t('ui.loadingTheMap')}</p></div>;
+  if (!m) return <div class="page"><TopBar title={t('ui.map')} /><div class="sheet"><h3>{t('ui.thatMapWasnTFound')}</h3><p>{t('ui.checkTheCodeAndTryAgain')}</p><a class="btn" href="#/maps">{t('ui.allMaps')}</a></div></div>;
   const link = `${location.origin}${location.pathname}#/map/${m.code}`;
   return (
     <div class="page">
       <TopBar title={m.name} />
       <div class="sheet shared-map">
         <MapPreview map={m.map} />
-        <p>By <strong>{m.author}</strong>. Played {m.plays} {m.plays === 1 ? 'time' : 'times'}. Code <strong>{m.code}</strong>.</p>
+        <p>{t('ui.by')} <strong>{m.author}</strong>. Played {m.plays} {m.plays === 1 ? 'time' : 'times'}. Code <strong>{m.code}</strong>.</p>
         <div class="row">
-          <button class="primary" onClick={() => { void countMapPlay(m.code); playMapNext(m.map); go('/local'); }}>Play it</button>
+          <button class="primary" onClick={() => { void countMapPlay(m.code); playMapNext(m.map); go('/local'); }}>{t('ui.playIt')}</button>
           <button onClick={() => { void navigator.clipboard?.writeText(link).then(() => setCopied(true)).catch(() => {}); }}>{copied ? 'Link copied' : 'Copy link'}</button>
-          <button onClick={() => { const entry: SavedMap = { id: newMapId(), map: m.map, updatedAt: Date.now() }; saveMap(entry); go(`/maps/edit/${entry.id}`); }}>Edit a copy</button>
-          <a class="btn" href="#/maps">All maps</a>
+          <button onClick={() => { const entry: SavedMap = { id: newMapId(), map: m.map, updatedAt: Date.now() }; saveMap(entry); go(`/maps/edit/${entry.id}`); }}>{t('ui.editACopy')}</button>
+          <a class="btn" href="#/maps">{t('ui.allMaps')}</a>
         </div>
       </div>
     </div>

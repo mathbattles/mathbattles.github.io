@@ -1,11 +1,13 @@
-import { ACHIEVEMENTS, decodeReplay, type Replay } from '@mathbattles/sim';
+import { ACHIEVEMENTS } from '@mathbattles/sim';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { CHAPTERS, LEVELS, buildLevel, levelUnlocked, parFor, starsFor } from '../content/campaign';
-import { ReplaySession, SoloSession } from '../game/session';
+import { SoloSession } from '../game/session';
+export { ReplayScreen, ShortReplay } from './Replay';
 import { grantAchievement, profile, saveProfile, setStars } from '../store';
 import { go, modeName } from '../util';
 import { GameView } from './GameView';
 import { TopBar, useProfile } from './Shared';
+import { t } from '../i18n';
 
 function Stars({ n }: { n: number }) {
   return <span class="stars" aria-label={`${n} of 3 stars`}>{'★'.repeat(n)}{'☆'.repeat(3 - n)}</span>;
@@ -16,7 +18,7 @@ export function Campaign() {
   const total = LEVELS.reduce((a, l) => a + (profile.stars[l.id] ?? 0), 0);
   return (
     <div class="page">
-      <TopBar title="Campaign" />
+      <TopBar title={t('ui.campaign')} />
       <p>{total} of {LEVELS.length * 3} stars. Each level teaches one idea. You earn a star for clearing it, one for clearing it in a single shot, and one for a short function.</p>
       {CHAPTERS.map((ch, c) => (
         <div class="sheet">
@@ -61,7 +63,7 @@ export function LevelScreen({ id }: { id: string }) {
   }, [session]);
 
   if (!level || !session) {
-    return <div class="page"><TopBar /><p>That level doesn't exist. <a href="#/campaign">Open the campaign</a>.</p></div>;
+    return <div class="page"><TopBar /><p>{t('ui.thatLevelDoesnTExist')} <a href="#/campaign">{t('ui.openTheCampaign')}</a>.</p></div>;
   }
   const idx = LEVELS.indexOf(level);
   const next = LEVELS[idx + 1];
@@ -70,13 +72,13 @@ export function LevelScreen({ id }: { id: string }) {
       key={`${id}-${attempt}`}
       session={session}
       coach={level.coach?.[0] ?? level.tip}
-      header={<span class="row"><a class="btn small" href="#/campaign">Levels</a><strong>{level.title}</strong></span>}
+      header={<span class="row"><a class="btn small" href="#/campaign">{t('ui.levels')}</a><strong>{level.title}</strong></span>}
       soloInfo={`${modeName(level.mode)}. Up to 5 shots. Short function: ${parFor(level)} characters or fewer.`}
       result={result && (
         <div class="sheet result-card">
           {result.cleared ? (
             <>
-              <h2>Level cleared <Stars n={result.stars} /></h2>
+              <h2>{t('ui.levelCleared')} <Stars n={result.stars} /></h2>
               {result.gained > 0 && <p>You earned {result.gained * 15} Sparks.</p>}
             </>
           ) : (
@@ -86,35 +88,12 @@ export function LevelScreen({ id }: { id: string }) {
             </>
           )}
           <div class="row">
-            {result.cleared && next && <button class="primary" onClick={() => go(`/level/${next.id}`)}>Next level</button>}
-            <button class={result.cleared ? '' : 'primary'} onClick={() => setAttempt(attempt + 1)}>Retry</button>
-            <a class="btn" href="#/campaign">All levels</a>
+            {result.cleared && next && <button class="primary" onClick={() => go(`/level/${next.id}`)}>{t('ui.nextLevel')}</button>}
+            <button class={result.cleared ? '' : 'primary'} onClick={() => setAttempt(attempt + 1)}>{t('ui.retry')}</button>
+            <a class="btn" href="#/campaign">{t('ui.allLevels')}</a>
           </div>
         </div>
       )}
-    />
-  );
-}
-
-export function ReplayScreen({ data }: { data: string }) {
-  const replay = useMemo<Replay | null>(() => decodeReplay(data), [data]);
-  const [key, setKey] = useState(1);
-  const session = useMemo(() => {
-    if (!replay) return null;
-    try {
-      return new ReplaySession(replay);
-    } catch {
-      return null; // A hand-edited link can describe a match that can't exist.
-    }
-  }, [replay, key]);
-  if (!session) {
-    return <div class="page"><TopBar /><h2>This replay link is broken</h2><p>Ask for the link again, or <a href="#/">go back to the menu</a>.</p></div>;
-  }
-  return (
-    <GameView
-      key={key}
-      session={session}
-      header={<span class="row"><a class="btn small" href="#/profile">Back</a><strong>Replay</strong><button class="small" onClick={() => setKey(key + 1)}>Watch again</button></span>}
     />
   );
 }

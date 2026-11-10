@@ -4,6 +4,7 @@ import type { ShotMode } from '@mathbattles/sim';
 import { profile } from '../store';
 import { sound } from '../util';
 import { useProfile } from './Shared';
+import { t } from '../i18n';
 
 const touchQuery = globalThis.matchMedia?.('(pointer: coarse)');
 
@@ -39,10 +40,10 @@ interface Key {
 const fn = (name: string, label = name): Key => ({ label, insert: `${name}()`, back: 1, kind: 'fn', aria: name });
 
 function varKeys(mode: ShotMode): Key[] {
-  const x: Key = { label: 'x', insert: 'x', kind: 'var' };
-  if (mode === 'fn') return [x, { label: 'x²', insert: 'x^2', kind: 'var', aria: 'x squared' }, { label: 'e', insert: 'e', kind: 'var' }];
-  if (mode === 'ode1') return [x, { label: 'y', insert: 'y', kind: 'var' }, { label: 'e', insert: 'e', kind: 'var' }];
-  return [x, { label: 'y', insert: 'y', kind: 'var' }, { label: 'y′', insert: "y'", kind: 'var', aria: 'y prime' }];
+  const x: Key = { label: t('ui.x'), insert: 'x', kind: 'var' };
+  if (mode === 'fn') return [x, { label: t('ui.x2'), insert: 'x^2', kind: 'var', aria: 'x squared' }, { label: t('ui.e'), insert: 'e', kind: 'var' }];
+  if (mode === 'ode1') return [x, { label: t('ui.y'), insert: 'y', kind: 'var' }, { label: t('ui.e'), insert: 'e', kind: 'var' }];
+  return [x, { label: t('ui.y'), insert: 'y', kind: 'var' }, { label: t('ui.y2'), insert: "y'", kind: 'var', aria: 'y prime' }];
 }
 
 function layout(mode: ShotMode): Key[][] {
@@ -53,7 +54,7 @@ function layout(mode: ShotMode): Key[][] {
     [num('4'), num('5'), num('6'), { label: '×', insert: '*', kind: 'op', aria: 'times' }, fn('tan'), fn('sqrt', '√')],
     [num('1'), num('2'), num('3'), { label: '−', insert: '-', kind: 'op', aria: 'minus' }, fn('abs'), fn('exp')],
     [num('0'), { label: '.', insert: '.', kind: 'num', aria: 'point' }, { label: 'π', insert: 'pi', kind: 'var', aria: 'pi' }, { label: '+', insert: '+', kind: 'op', aria: 'plus' }, fn('ln'), { label: '⌫', action: 'delete', kind: 'ctl', aria: 'Delete' }],
-    [{ label: '◀', action: 'left', kind: 'ctl', aria: 'Move left' }, { label: '▶', action: 'right', kind: 'ctl', aria: 'Move right' }, { label: 'ABC', action: 'abc', kind: 'ctl', wide: true, aria: 'Use the phone keyboard' }, { label: 'Clear', action: 'clear', kind: 'ctl', wide: true }],
+    [{ label: '◀', action: 'left', kind: 'ctl', aria: 'Move left' }, { label: '▶', action: 'right', kind: 'ctl', aria: 'Move right' }, { label: t('ui.abc'), action: 'abc', kind: 'ctl', wide: true, aria: 'Use the phone keyboard' }, { label: t('ui.clear'), action: 'clear', kind: 'ctl', wide: true }],
   ];
 }
 
@@ -162,7 +163,7 @@ export function MathKeys(props: {
   }
 
   return (
-    <div class={`mathkeys ${disabled ? 'off' : ''}`} role="group" aria-label="Math keys">
+    <div class={`mathkeys ${disabled ? 'off' : ''}`} role="group" aria-label={t('ui.mathKeys')}>
       {layout(mode).flat().map((key) => (
         <button
           type="button"
@@ -196,35 +197,35 @@ const FUNCTION_LIST: { title: string; items: FnEntry[] }[] = [
   {
     title: 'Functions',
     items: [
-      { label: 'sin(x)', insert: 'sin(x)', note: 'A wave between -1 and 1' },
-      { label: 'cos(x)', insert: 'cos(x)', note: 'A wave that starts at its top' },
-      { label: 'tan(x)', insert: 'tan(x)', note: 'Climbs and breaks, over and over' },
-      { label: 'sqrt(x)', insert: 'sqrt(x)', note: 'Square root. Only works for x of 0 or more' },
-      { label: 'abs(x)', insert: 'abs(x)', note: 'Distance from 0, which makes a V' },
-      { label: 'exp(x)', insert: 'exp(x)', note: 'e to the power x. Grows very fast' },
-      { label: 'ln(x)', insert: 'ln(x)', note: 'Natural log. Only for x above 0' },
-      { label: 'log(x)', insert: 'log(x)', note: 'Log base 10. Only for x above 0' },
+      { label: t('ui.sinX'), insert: 'sin(x)', note: 'A wave between -1 and 1' },
+      { label: t('ui.cosX'), insert: 'cos(x)', note: 'A wave that starts at its top' },
+      { label: t('ui.tanX'), insert: 'tan(x)', note: 'Climbs and breaks, over and over' },
+      { label: t('ui.sqrtX'), insert: 'sqrt(x)', note: 'Square root. Only works for x of 0 or more' },
+      { label: t('ui.absX'), insert: 'abs(x)', note: 'Distance from 0, which makes a V' },
+      { label: t('ui.expX'), insert: 'exp(x)', note: 'e to the power x. Grows very fast' },
+      { label: t('ui.lnX'), insert: 'ln(x)', note: 'Natural log. Only for x above 0' },
+      { label: t('ui.logX'), insert: 'log(x)', note: 'Log base 10. Only for x above 0' },
     ],
   },
   {
     title: 'Numbers and powers',
     items: [
-      { label: 'pi', insert: 'pi', note: '3.14159…' },
-      { label: 'e', insert: 'e', note: '2.71828…' },
-      { label: 'x^2', insert: 'x^2', note: 'x squared' },
-      { label: 'x^3', insert: 'x^3', note: 'x cubed' },
+      { label: t('ui.pi'), insert: 'pi', note: '3.14159…' },
+      { label: t('ui.e'), insert: 'e', note: '2.71828…' },
+      { label: t('ui.x22'), insert: 'x^2', note: 'x squared' },
+      { label: t('ui.x3'), insert: 'x^3', note: 'x cubed' },
     ],
   },
   {
     title: 'Shapes to start from',
     items: [
-      { label: 'x/3', insert: 'x/3', note: 'A straight line. Change 3 to aim' },
-      { label: '-x^2/40', insert: '-x^2/40', note: 'An arc, to go over things' },
-      { label: '5*sin(x/3)', insert: '5*sin(x/3)', note: 'A tall, wide wave' },
-      { label: 'x/4+2*sin(x)', insert: 'x/4+2*sin(x)', note: 'A wave that climbs' },
-      { label: 'abs(x)/2', insert: 'abs(x)/2', note: 'A sharp V turn' },
-      { label: '8/(1+exp(-3*x))', insert: '8/(1+exp(-3*x))', note: 'A smooth step up' },
-      { label: 'sqrt(abs(x))', insert: 'sqrt(abs(x))', note: 'A root that works on both sides' },
+      { label: t('ui.x32'), insert: 'x/3', note: 'A straight line. Change 3 to aim' },
+      { label: t('ui.x240'), insert: '-x^2/40', note: 'An arc, to go over things' },
+      { label: t('ui.5SinX3'), insert: '5*sin(x/3)', note: 'A tall, wide wave' },
+      { label: t('ui.x42SinX'), insert: 'x/4+2*sin(x)', note: 'A wave that climbs' },
+      { label: t('ui.absX2'), insert: 'abs(x)/2', note: 'A sharp V turn' },
+      { label: t('ui.81Exp3X'), insert: '8/(1+exp(-3*x))', note: 'A smooth step up' },
+      { label: t('ui.sqrtAbsX'), insert: 'sqrt(abs(x))', note: 'A root that works on both sides' },
     ],
   },
 ];
@@ -278,7 +279,7 @@ export function FunctionPicker(props: { input: RefObject<HTMLInputElement>; valu
         <span aria-hidden="true">ƒ</span> Functions
       </button>
       {open && (
-        <div class={`fn-panel ${up ? 'up' : ''}`} role="dialog" aria-label="Functions you can use">
+        <div class={`fn-panel ${up ? 'up' : ''}`} role="dialog" aria-label={t('ui.functionsYouCanUse')}>
           {FUNCTION_LIST.map((group) => (
             <div class="fn-group">
               <h4>{group.title}</h4>
@@ -292,7 +293,7 @@ export function FunctionPicker(props: { input: RefObject<HTMLInputElement>; valu
               </div>
             </div>
           ))}
-          <p class="muted small-note fn-tip">It goes where your cursor is. Change the numbers to aim.</p>
+          <p class="muted small-note fn-tip">{t('ui.itGoesWhereYourCursorIs')}</p>
         </div>
       )}
     </div>

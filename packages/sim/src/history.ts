@@ -1,11 +1,11 @@
 import { encodeReplay, makeReplay } from './replay';
-import type { MatchState, PlayerSetup, ShotRecord, Soldier } from './rules';
+import type { MatchState, PlayerSetup, RoundRecord, ShotRecord, Soldier } from './rules';
 import type { Circle } from './terrain';
 
-/** All shots so far, in order. */
+/** All shots so far, round by round. */
 export function shotsOf(state: MatchState): ShotRecord[] {
   const out: ShotRecord[] = [];
-  for (const e of state.log) if (e.type === 'shot') out.push(e.shot);
+  for (const e of state.log) if (e.type === 'round') out.push(...e.round.shots);
   return out;
 }
 
@@ -14,32 +14,32 @@ export interface BoardMoment {
   holes: Circle[];
 }
 
-export interface ShotMoment {
-  shot: ShotRecord;
-  /** The board as this shot was fired. */
+export interface RoundMoment {
+  round: RoundRecord;
+  /** The board as the round fired. */
   before: BoardMoment;
-  /** The board once it landed. */
+  /** The board once every shot landed. */
   after: BoardMoment;
 }
 
 /**
- * Rewinds a match to one shot by undoing everything after it, working backward through the
+ * Rewinds a match to one round by undoing everything after it, working backward through the
  * log. Reads the match but never changes it, so looking back can't affect play.
  */
-export function shotMoment(state: MatchState, shotIndex: number): ShotMoment | null {
+export function roundMoment(state: MatchState, roundIndex: number): RoundMoment | null {
   const soldiers = state.soldiers.map((s) => ({ ...s }));
-  const holes = [...state.holes];
-  let index = shotsOf(state).length;
+  let holes = [...state.holes];
+  let index = state.log.filter((e) => e.type === 'round').length;
   for (let i = state.log.length - 1; i >= 0; i--) {
     const e = state.log[i]!;
     if (e.type === 'leave') {
       for (const id of e.removed ?? []) if (soldiers[id]) soldiers[id]!.alive = true;
-    } else if (e.type === 'shot') {
+    } else {
       index--;
-      const after: BoardMoment | null = index === shotIndex ? { soldiers: soldiers.map((s) => ({ ...s })), holes: [...holes] } : null;
-      holes.pop();
-      for (const h of e.shot.hits) if (soldiers[h.id]) soldiers[h.id]!.alive = true;
-      if (after) return { shot: e.shot, before: { soldiers, holes }, after };
+      const after: BoardMoment | null = index === roundIndex ? { soldiers: soldiers.map((s) => ({ ...s })), holes: [...holes] } : null;
+      holes = holes.slice(0, holes.length - e.round.holes);
+      for (const k of e.round.kills) if (soldiers[k.id]) soldiers[k.id]!.alive = true;
+      if (after) return { round: e.round, before: { soldiers, holes }, after };
     }
   }
   return null;
@@ -59,7 +59,9 @@ export interface MatchRecord {
   kills: number;
   shots: number;
   ratingDelta?: number;
-  /** A replay link's data, used to watch the match. Very long matches may not keep one. */
+  /** A short replay id from the server, used to watch the match. */
+  replayId?: string;
+  /** A replay link's data, kept when there's no short id. Very long matches may not keep one. */
   replay?: string;
 }
 
@@ -71,7 +73,7 @@ export function matchRecordFor(
   state: MatchState,
   setups: PlayerSetup[],
   playerId: string | null,
-  meta: { id: string; at: number; kind: MatchKindLabel; ratingDelta?: number },
+  meta: { id: string; at: number; kind: MatchKindLabel; ratingDelta?: number; replayId?: string },
 ): MatchRecord {
   const me = playerId ? state.players.find((p) => p.id === playerId) : undefined;
   const teams = state.config.kind === 'teams';
@@ -83,7 +85,7 @@ export function matchRecordFor(
   const opponents = state.players
     .filter((p) => (me ? (teams ? p.team !== me.team : p.id !== me.id) : true))
     .map((p) => p.name);
-  const replay = encodeReplay(makeReplay(state, setups));
+  const replay = meta.replayId ? '' : encodeReplay(makeReplay(state, setups));
   return {
     id: meta.id,
     at: meta.at,
@@ -94,6 +96,6 @@ export function matchRecordFor(
     kills: me?.kills ?? 0,
     shots: shotsOf(state).length,
     ...(meta.ratingDelta !== undefined ? { ratingDelta: meta.ratingDelta } : {}),
-    ...(replay.length <= MAX_STORED_REPLAY ? { replay } : {}),
+    ...(meta.replayId ? { replayId: meta.replayId } : replay.length <= MAX_STORED_REPLAY ? { replay } : {}),
   };
 }

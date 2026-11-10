@@ -235,3 +235,12 @@ export const fetchMessages = (name: string, before?: number) =>
   authed<{ friend: string; more: boolean; messages: DirectMessage[] }>(`/api/messages/${encodeURIComponent(name)}${before ? `?before=${before}` : ''}`);
 export const sendMessage = (to: string, text: string) => post<DirectMessage>('/api/messages', { to, text });
 export const reportMessage = (id: string) => post<{ ok: boolean; message?: string }>('/api/messages/report', { id });
+
+/** Stores a replay on the server and returns its short id. */
+export function saveReplay(code: string) {
+  return call<{ id: string }>('/api/replays', { method: 'POST', body: JSON.stringify({ code }) });
+}
+/** The replay behind a short id. */
+export function fetchReplay(id: string) {
+  return call<{ code: string }>(`/api/replays/${encodeURIComponent(id)}`);
+}

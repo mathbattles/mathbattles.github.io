@@ -2,6 +2,7 @@ import type { ComponentChildren } from 'preact';
 import { useAuth } from '../auth';
 import { isAdminName } from './Admin';
 import { useSocial } from './Friends';
+import { t } from '../i18n';
 
 interface Tab {
   path: string;
@@ -38,39 +39,43 @@ function GearIcon() {
   );
 }
 
-const SECTIONS: { name: string; icon: () => ComponentChildren; tone: string; tabs: Tab[] }[] = [
+/** Built when drawn, so the labels follow the chosen language. */
+const sectionList = (): { id: string; name: string; icon: () => ComponentChildren; tone: string; tabs: Tab[] }[] => [
   {
-    name: 'Play',
+    id: 'play',
+    name: t('nav.play'),
     icon: PlayIcon,
     tone: 'var(--green)',
     tabs: [
-      { path: '/online', label: 'Play Online' },
-      { path: '/ranked', label: 'Ranked' },
-      { path: '/local', label: 'Bots and Friends' },
-      { path: '/friends', label: 'Friends' },
+      { path: '/online', label: t('ui.playOnline2') },
+      { path: '/ranked', label: t('ui.ranked') },
+      { path: '/local', label: t('ui.botsAndFriends') },
+      { path: '/friends', label: t('ui.friends') },
     ],
   },
   {
-    name: 'Practice',
+    id: 'practice',
+    name: t('nav.practice'),
     icon: GraphIcon,
     tone: 'var(--blue)',
     tabs: [
-      { path: '/practice', label: 'Free Play' },
-      { path: '/learn', label: 'Learn' },
-      { path: '/campaign', label: 'Campaign' },
-      { path: '/maps', label: 'Custom Maps' },
+      { path: '/practice', label: t('ui.freePlay') },
+      { path: '/learn', label: t('ui.learn') },
+      { path: '/campaign', label: t('ui.campaign') },
+      { path: '/maps', label: t('ui.customMaps2') },
     ],
   },
   {
-    name: 'Misc',
+    id: 'misc',
+    name: t('nav.misc'),
     icon: GearIcon,
     tone: 'var(--violet)',
     tabs: [
-      { path: '/shop', label: 'Shop' },
-      { path: '/inventory', label: 'Inventory' },
-      { path: '/leaderboard', label: 'Leaderboard' },
-      { path: '/profile', label: 'Profile' },
-      { path: '/settings', label: 'Settings' },
+      { path: '/shop', label: t('ui.shop') },
+      { path: '/inventory', label: t('ui.inventory') },
+      { path: '/leaderboard', label: t('ui.leaderboard') },
+      { path: '/profile', label: t('ui.profile') },
+      { path: '/settings', label: t('ui.settings') },
     ],
   },
 ];
@@ -90,13 +95,14 @@ export function SideNav({ path }: { path: string }) {
   const social = useSocial();
   const waiting = Object.values(social.state?.unread ?? {}).reduce((a, b) => a + b, 0) + (social.state?.incoming.length ?? 0);
   // The admin page shows up only for the game's owner.
+  const all = sectionList();
   const sections = isAdminName(auth.username)
-    ? SECTIONS.map((s) => (s.name === 'Misc' ? { ...s, tabs: [...s.tabs, { path: '/admin', label: 'Admin' }] } : s))
-    : SECTIONS;
+    ? all.map((s) => (s.id === 'misc' ? { ...s, tabs: [...s.tabs, { path: '/admin', label: t('ui.admin') }] } : s))
+    : all;
   return (
-    <nav class="sidenav" aria-label="Main">
-      <a class="brand" href="#/">MathBattles.io</a>
-      <a class={`tab home ${path === '/' ? 'active' : ''}`} href="#/" aria-current={path === '/' ? 'page' : undefined}>Home</a>
+    <nav class="sidenav" aria-label={t('ui.main')}>
+      <a class="brand" href="#/">{t('ui.mathbattlesIo')}</a>
+      <a class={`tab home ${path === '/' ? 'active' : ''}`} href="#/" aria-current={path === '/' ? 'page' : undefined}>{t('ui.home')}</a>
       {sections.map((s) => {
         const open = s.tabs.some((t) => isActive(t.path, path));
         const Icon = s.icon;

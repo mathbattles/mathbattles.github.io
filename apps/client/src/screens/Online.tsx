@@ -1,6 +1,7 @@
 import { savedMaps } from '../maps';
 import { Dropdown } from './Dropdown';
-import { BOT_LEVELS, MAX_PLAYERS, encodeReplay, isOnWinningSide, makeReplay, matchRecordFor, type BotLevel, type MatchKind, type MatchState, type ShotMode } from '@mathbattles/sim';
+import { BOT_LEVELS, MAX_PLAYERS, isOnWinningSide, matchRecordFor, type BotLevel, type MatchKind, type MatchState, type ShotMode } from '@mathbattles/sim';
+import { replayCode } from '../replayLinks';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { authState, useAuth } from '../auth';
 import { NetSession } from '../game/session';
@@ -12,6 +13,7 @@ import { GameView } from './GameView';
 import { ResultCard } from './Local';
 import { TopBar, useProfile } from './Shared';
 import { RankedInfo } from './RankedInfo';
+import { t } from '../i18n';
 
 const UNAVAILABLE = "Online play isn't reachable right now. Bots, the campaign, and Free Play still work.";
 
@@ -45,30 +47,30 @@ export function OnlineMenu() {
 
   return (
     <div class="page">
-      <TopBar title="Play online" />
+      <TopBar title={t('ui.playOnline')} />
       {online === false && <p class="error" role="alert">{UNAVAILABLE}</p>}
       {error && <p class="error" role="alert">{error}</p>}
       <div class="grid-2">
         <div class="sheet">
-          <h3>Start a room</h3>
+          <h3>{t('ui.startARoom')}</h3>
           <div class="row">
-            <button class="primary" disabled={!online} onClick={() => void make(true)}>Create public room</button>
-            <button disabled={!online} onClick={() => void make(false)}>Create private room</button>
+            <button class="primary" disabled={!online} onClick={() => void make(true)}>{t('ui.createPublicRoom')}</button>
+            <button disabled={!online} onClick={() => void make(false)}>{t('ui.createPrivateRoom')}</button>
           </div>
-          <h3 style={{ marginTop: 16 }}>Join with a code</h3>
+          <h3 style={{ marginTop: 16 }}>{t('ui.joinWithACode')}</h3>
           <form class="row" onSubmit={(e) => { e.preventDefault(); if (code.trim()) go(`/room/${code.trim().toUpperCase()}`); }}>
-            <input aria-label="Room code" value={code} maxLength={8} placeholder="ABCD" onInput={(e) => setCode((e.target as HTMLInputElement).value)} />
-            <button disabled={!online || !code.trim()}>Join</button>
+            <input aria-label={t('ui.roomCode')} value={code} maxLength={8} placeholder={t('ui.abcd')} onInput={(e) => setCode((e.target as HTMLInputElement).value)} />
+            <button disabled={!online || !code.trim()}>{t('ui.join')}</button>
           </form>
         </div>
         <div class="sheet">
-          <h3>Public rooms</h3>
-          {online === null ? <p>Looking for rooms.</p> : !rooms?.length ? <p class="muted">No rooms right now. Create one and others can join.</p> : rooms.map((r) => (
+          <h3>{t('ui.publicRooms')}</h3>
+          {online === null ? <p>{t('ui.lookingForRooms')}</p> : !rooms?.length ? <p class="muted">{t('ui.noRoomsRightNowCreateOne')}</p> : rooms.map((r) => (
             <div class="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
               <span>{r.kind === 'ffa' ? 'Free-for-all' : 'Teams'}, {r.players}/{MAX_PLAYERS}{r.inLobby === 0 ? ', match in progress' : ''}</span>
               <span class="row">
-                {r.inLobby !== 0 && <a class="btn small" href={`#/room/${r.code}`}>Join</a>}
-                <a class="btn small" href={`#/watch/${r.code}`}>Watch</a>
+                {r.inLobby !== 0 && <a class="btn small" href={`#/room/${r.code}`}>{t('ui.join')}</a>}
+                <a class="btn small" href={`#/watch/${r.code}`}>{t('ui.watch')}</a>
               </span>
             </div>
           ))}
@@ -82,7 +84,7 @@ export function OnlineMenu() {
 export function Room(props: { code: string; ranked?: boolean; watch?: boolean }) {
   const auth = useAuth();
   if (props.ranked && !auth.ready) {
-    return <div class="page"><TopBar title="Ranked match" /><p>Checking your account.</p></div>;
+    return <div class="page"><TopBar title={t('ui.rankedMatch')} /><p>{t('ui.checkingYourAccount')}</p></div>;
   }
   return <RoomInner {...props} />;
 }
@@ -114,7 +116,7 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
       // Signed-in players' matches are saved by the server. Guests keep theirs on this device.
       if (!authState.user && !watch) {
         void recordMatchHistory(
-          matchRecordFor(state, session.setups, me?.id ?? null, { id: `${code.toUpperCase()}-${state.config.seed}`, at: Date.now(), kind: 'online' }),
+          matchRecordFor(state, session.setups, me?.id ?? null, { id: `${code.toUpperCase()}-${state.config.seed}`, at: Date.now(), kind: 'online', ...(session.replayId ? { replayId: session.replayId } : {}) }),
           null,
         );
       }
@@ -139,10 +141,10 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
   };
 
   const chatPanel = profile.ageBand === 'child' ? (
-    <div class="mini"><h3>Chat</h3><p class="muted small-note" style={{ margin: 0 }}>Chat is off for players under 13. You'll still see when people join, leave, and win.</p></div>
+    <div class="mini"><h3>{t('ui.chat')}</h3><p class="muted small-note" style={{ margin: 0 }}>{t('ui.chatIsOffForPlayersUnder')}</p></div>
   ) : profile.chatOff || watch ? null : (
     <div class="mini">
-      <h3>Chat</h3>
+      <h3>{t('ui.chat')}</h3>
       <div class="chatlog" ref={chatRef} aria-live="polite">
         {session.chat.filter((l) => !l.fromId || !session.muted.has(l.fromId)).map((l) => (
           <div class={l.system ? 'sys' : ''}>
@@ -150,19 +152,19 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
             {!l.system && l.fromId !== session.you && (
               <>
                 {' '}
-                <button class="plain small" onClick={() => { if (l.fromId) session.muted.add(l.fromId); force((n) => n + 1); }}>Mute</button>
-                <button class="plain small" onClick={() => { void reportChat(session.code, l.from, l.text); setReported(true); }}>Report</button>
+                <button class="plain small" onClick={() => { if (l.fromId) session.muted.add(l.fromId); force((n) => n + 1); }}>{t('ui.mute')}</button>
+                <button class="plain small" onClick={() => { void reportChat(session.code, l.from, l.text); setReported(true); }}>{t('ui.report')}</button>
               </>
             )}
           </div>
         ))}
       </div>
-      {reported && <p class="ok">Report sent.</p>}
+      {reported && <p class="ok">{t('ui.reportSent')}</p>}
       <form class="row" onSubmit={sendChat} style={{ marginTop: 6 }}>
-        <input aria-label="Chat message" style={{ flex: 1, width: 80 }} value={chatText} maxLength={140} onInput={(e) => setChatText((e.target as HTMLInputElement).value)} />
-        <button class="small">Send</button>
+        <input aria-label={t('ui.chatMessage')} style={{ flex: 1, width: 80 }} value={chatText} maxLength={140} onInput={(e) => setChatText((e.target as HTMLInputElement).value)} />
+        <button class="small">{t('ui.send')}</button>
       </form>
-      <p class="muted" style={{ margin: '6px 0 0', fontSize: '.85rem' }}>Type -skip to vote for a new map.</p>
+      <p class="muted" style={{ margin: '6px 0 0', fontSize: '.85rem' }}>{t('ui.typeSkipToVoteForA')}</p>
     </div>
   );
 
@@ -182,18 +184,18 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
   if (session.status === 'playing' && session.state) {
     // A result from the previous match in this room must not show during the next one.
     const over = session.state.over ? finished : null;
-    const replay = over ? `${location.origin}${location.pathname}#/replay/${encodeReplay(makeReplay(over, session.setups))}` : undefined;
+    const replay = over && !session.replayId ? replayCode(over, session.setups) : undefined;
     return (
       <GameView
         session={session}
         keepSession
         notice={session.error}
-        header={<span class="row"><a class="btn small" href={ranked ? '#/ranked' : '#/online'}>Leave</a>{watch && <span class="watch-tag">Watching</span>}{session.spectators > 0 && <span class="muted small-note">{session.spectators} watching</span>}</span>}
+        header={<span class="row"><a class="btn small" href={ranked ? '#/ranked' : '#/online'}>{t('ui.leave')}</a>{watch && <span class="watch-tag">{t('ui.watching')}</span>}{session.spectators > 0 && <span class="muted small-note">{session.spectators} watching</span>}</span>}
         hideOthersShots={!(session.settings?.showFunctions ?? false)}
         spectator={watch}
         extraSide={chatPanel}
         result={over ? (
-          <ResultCard state={over} viewer={session.you} rewards={rewards} replay={replay}>
+          <ResultCard state={over} viewer={session.you} rewards={rewards} replay={replay} replayId={session.replayId}>
             {session.ratingDelta !== undefined && <p>Rating {session.ratingDelta >= 0 ? '+' : ''}{session.ratingDelta}</p>}
             <p class="muted">{ranked ? 'Queue again from the Ranked screen.' : 'The room returns to the lobby in a moment.'}</p>
           </ResultCard>
@@ -210,21 +212,21 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
   return (
     <div class="page">
       <TopBar title={session.ranked ? 'Ranked match' : `Room ${session.code || code}`} />
-      {watch && <p class="watching" role="status">You're watching this room. The match shows here when it starts. <a href={`#/room/${code}`}>Join instead</a></p>}
-      {session.status === 'connecting' && <p>Connecting.</p>}
+      {watch && <p class="watching" role="status">{t('ui.youReWatchingThisRoomThe')} <a href={`#/room/${code}`}>{t('ui.joinInstead')}</a></p>}
+      {session.status === 'connecting' && <p>{t('ui.connecting')}</p>}
       {session.error && <p class="error" role="alert">{session.error}</p>}
       {st && (
         <div class="grid-2">
           <div class="sheet">
-            <h3>Players</h3>
+            <h3>{t('ui.players')}</h3>
             {session.seats.map((s) => (
               <div class="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
                 <span class={`team-${s.team}`}>
                   <strong>{s.name}</strong>{s.isBot ? ' (bot)' : ''}{s.id === session.host ? ', host' : ''}{!s.connected ? ', reconnecting' : ''}
                 </span>
                 <span class="row">
-                  {s.ready || s.isBot ? <span class="ok">Ready</span> : <span class="muted">Not ready</span>}
-                  {isHost && s.id !== session.you && <button class="small" onClick={() => session.send({ t: 'removeSeat', id: s.id })}>Remove</button>}
+                  {s.ready || s.isBot ? <span class="ok">{t('ui.ready')}</span> : <span class="muted">{t('ui.notReady')}</span>}
+                  {isHost && s.id !== session.you && <button class="small" onClick={() => session.send({ t: 'removeSeat', id: s.id })}>{t('ui.remove')}</button>}
                 </span>
               </div>
             ))}
@@ -239,16 +241,16 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
                 {isHost && (
                   <div class="row" style={{ marginTop: 10 }}>
                     <span class="dd-field">Add bot{' '}
-                      <Dropdown label="Bot level" value={null} placeholder="Choose level" onChange={(level) => session.send({ t: 'addBot', level })} options={(Object.keys(BOT_LEVELS) as BotLevel[]).map((l) => ({ value: l, label: BOT_LEVELS[l].label }))} />
+                      <Dropdown label={t('ui.botLevel')} value={null} placeholder={t('ui.chooseLevel')} onChange={(level) => session.send({ t: 'addBot', level })} options={(Object.keys(BOT_LEVELS) as BotLevel[]).map((l) => ({ value: l, label: BOT_LEVELS[l].label }))} />
                     </span>
-                    <button class="primary" onClick={() => session.send({ t: 'start' })}>Start match</button>
+                    <button class="primary" onClick={() => session.send({ t: 'start' })}>{t('ui.startMatch')}</button>
                   </div>
                 )}
-                {!isHost && <p class="muted" style={{ marginTop: 10 }}>The host starts the match.</p>}
-                <p class="muted" style={{ marginTop: 10 }}>Share this code to invite people: <strong>{session.code}</strong></p>
+                {!isHost && <p class="muted" style={{ marginTop: 10 }}>{t('ui.theHostStartsTheMatch')}</p>}
+                <p class="muted" style={{ marginTop: 10 }}>{t('ui.shareThisCodeToInvitePeople')} <strong>{session.code}</strong></p>
               </>
             )}
-            {session.ranked && <p class="muted">The match starts when both players connect.</p>}
+            {session.ranked && <p class="muted">{t('ui.theMatchStartsWhenBothPlayers')}</p>}
           </div>
           {!session.ranked && (
             <div class="sheet">
@@ -259,24 +261,21 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
                 ))}
               </div>
               <div class="row">
-                <span class="dd-field">Soldiers each{' '}
-                  <Dropdown label="Soldiers each" disabled={!isHost} value={st.soldiers} onChange={(n) => set({ soldiers: n })} options={[1, 2, 3, 4].map((n) => ({ value: n, label: String(n) }))} />
-                </span>
                 <span class="dd-field">Map{' '}
                   {isHost ? (
                     <Dropdown
-                      label="Map"
+                      label={t('ui.map')}
                       value={st.map ? (savedMaps().find((m) => m.map.name === st.map!.name)?.id ?? 'chosen') : 'random'}
                       onChange={(v) => set({ map: v === 'random' ? null : v === 'chosen' ? st.map : savedMaps().find((m) => m.id === v)?.map ?? null })}
                       options={[
-                        { value: 'random', label: 'Random map' },
+                        { value: 'random', label: t('ui.randomMap') },
                         ...(st.map && !savedMaps().some((m) => m.map.name === st.map!.name) ? [{ value: 'chosen', label: st.map.name }] : []),
                         ...savedMaps().map((m) => ({ value: m.id, label: m.map.name })),
                       ]}
                     />
                   ) : <strong>{st.map?.name ?? 'Random map'}</strong>}
                 </span>
-                <label class="check"><input type="checkbox" disabled={!isHost} checked={st.showFunctions} onChange={(e) => set({ showFunctions: (e.target as HTMLInputElement).checked })} /> Show everyone's functions</label>
+                <label class="check"><input type="checkbox" disabled={!isHost} checked={st.showFunctions} onChange={(e) => set({ showFunctions: (e.target as HTMLInputElement).checked })} /> {t('ui.showEveryoneSFunctions')}</label>
               </div>
             </div>
           )}
@@ -339,23 +338,23 @@ export function Ranked() {
 
   return (
     <div class="page">
-      <TopBar title="Ranked" />
+      <TopBar title={t('ui.ranked')} />
       <div class="sheet">
-        <p>One on one, one soldier each. Win to climb the ranks. Your rating changes after every match and partly resets each season.</p>
+        <p>{t('ui.oneOnOneOneSoldierEach')}</p>
         {!auth.ready ? (
-          <p>Checking your account.</p>
+          <p>{t('ui.checkingYourAccount')}</p>
         ) : !auth.user ? (
           <>
-            <p>Make a free account so your rating follows you.</p>
-            <a class="btn primary" href="#/signin">Sign in or create an account</a>
+            <p>{t('ui.makeAFreeAccountSoYour')}</p>
+            <a class="btn primary" href="#/signin">{t('ui.signInOrCreateAnAccount')}</a>
           </>
         ) : searching ? (
           <div class="row">
             <span>Looking for an opponent ({waited}s)</span>
-            <button onClick={cancel}>Cancel</button>
+            <button onClick={cancel}>{t('ui.cancel2')}</button>
           </div>
         ) : (
-          <button class="primary" onClick={queue}>Find a match</button>
+          <button class="primary" onClick={queue}>{t('ui.findAMatch')}</button>
         )}
         {error && <p class="error" role="alert">{error}</p>}
       </div>

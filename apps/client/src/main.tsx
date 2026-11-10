@@ -2,11 +2,12 @@ import { Component, render, type ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import './styles.css';
 import { initAuth, setAnalyticsConsent } from './auth';
-import { profile, subscribeProfile } from './store';
+import { applyUiScale, profile, setUiScale, subscribeProfile } from './store';
+import { browserLang, currentLang, isLang, setLanguage, useLang, t } from './i18n';
 import { useProfile } from './screens/Shared';
 import { Menu } from './screens/Menu';
 import { LocalSetup, Practice } from './screens/Local';
-import { Campaign, LevelScreen, ReplayScreen } from './screens/Solo';
+import { Campaign, LevelScreen, ReplayScreen, ShortReplay } from './screens/Solo';
 import { Leaderboard, Privacy, ProfileScreen, Settings, Shop } from './screens/Meta';
 import { OnlineMenu, Ranked, Room } from './screens/Online';
 import { SignIn } from './screens/Account';
@@ -29,6 +30,25 @@ if (window.top !== window.self) {
   }
 }
 
+// Interface size and language apply before anything is drawn, and follow later changes,
+// such as signing in on a device with a different saved language.
+applyUiScale();
+const wantedLang = () => (isLang(profile.language) ? profile.language : browserLang());
+void setLanguage(wantedLang());
+subscribeProfile(() => {
+  applyUiScale();
+  if (wantedLang() !== currentLang()) void setLanguage(wantedLang());
+});
+// In a match, Ctrl with minus, plus or 0 changes the interface size instead of the page zoom.
+window.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || !document.body.classList.contains('in-game')) return;
+  if (e.key === '-' || e.key === '_') setUiScale(profile.uiScale - 0.05);
+  else if (e.key === '=' || e.key === '+') setUiScale(profile.uiScale + 0.05);
+  else if (e.key === '0') setUiScale(1);
+  else return;
+  e.preventDefault();
+});
+
 function route(): string {
   return location.hash.replace(/^#/, '') || '/';
 }
@@ -49,7 +69,9 @@ function Router({ path }: { path: string }) {
     case 'practice': return <Practice />;
     case 'campaign': return <Campaign />;
     case 'level': return <LevelScreen id={parts[1] ?? ''} />;
-    case 'replay': return <ReplayScreen data={parts[1] ?? ''} />;
+    case 'replay': return <ReplayScreen key={parts[1]} data={parts[1] ?? ''} />;
+    // Short replay links: the server keeps the replay, the link holds an 8-character id.
+    case 'r': return <ShortReplay key={parts[1]} id={parts[1] ?? ''} />;
     case 'online': return <OnlineMenu />;
     // Whether a room is ranked depends only on its code, however the link was written.
     case 'room':
@@ -73,7 +95,7 @@ function Router({ path }: { path: string }) {
     case 'leaderboard': return <Leaderboard />;
     case 'privacy': return <Privacy />;
     default:
-      return <div class="page"><h2>That page doesn't exist</h2><a class="btn" href="#/">Go to the menu</a></div>;
+      return <div class="page"><h2>{t('ui.thatPageDoesnTExist')}</h2><a class="btn" href="#/">{t('ui.goToTheMenu')}</a></div>;
   }
 }
 
@@ -89,9 +111,9 @@ class ErrorBoundary extends Component<{ children: ComponentChildren }, { failed:
       return (
         <div class="page">
           <div class="sheet">
-            <h2>Something went wrong on this page</h2>
-            <p>Your progress is safe. Go back to the menu and try again.</p>
-            <a class="btn primary" href="#/">Back to menu</a>
+            <h2>{t('ui.somethingWentWrongOnThisPage')}</h2>
+            <p>{t('ui.yourProgressIsSafeGoBack')}</p>
+            <a class="btn primary" href="#/">{t('ui.backToMenu')}</a>
           </div>
         </div>
       );
@@ -104,11 +126,11 @@ function Consent() {
   useProfile();
   if (profile.analytics !== 'unset' || profile.ageBand === 'child') return null;
   return (
-    <div class="sheet consent" role="dialog" aria-label="Analytics choice">
-      <p>Allow anonymous usage stats? They help improve the game. You can change this in Settings.</p>
+    <div class="sheet consent" role="dialog" aria-label={t('ui.analyticsChoice')}>
+      <p>{t('ui.allowAnonymousUsageStatsTheyHelp')}</p>
       <div class="row">
-        <button onClick={() => setAnalyticsConsent(false)}>Don't allow</button>
-        <button onClick={() => setAnalyticsConsent(true)}>Allow</button>
+        <button onClick={() => setAnalyticsConsent(false)}>{t('ui.donTAllow')}</button>
+        <button onClick={() => setAnalyticsConsent(true)}>{t('ui.allow')}</button>
       </div>
     </div>
   );
@@ -117,6 +139,8 @@ function Consent() {
 const FADE_OUT_MS = 130;
 
 function App() {
+  // Every screen re-renders in the new language at once.
+  useLang();
   const [path, setPath] = useState(route());
   const [leaving, setLeaving] = useState(false);
   const timer = useRef(0);

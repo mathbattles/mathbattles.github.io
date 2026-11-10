@@ -2,6 +2,7 @@ import { levelFromXp } from '@mathbattles/sim';
 import { useEffect, useState } from 'preact/hooks';
 import { useAuth } from '../auth';
 import { profile, subscribeProfile } from '../store';
+import { t } from '../i18n';
 
 export function useProfile(): void {
   const [, force] = useState(0);
@@ -14,10 +15,10 @@ export function TopBar({ title, home }: { title?: string; home?: boolean }) {
   const lv = levelFromXp(profile.xp);
   return (
     <div class="topbar">
-      {!home && <a class="btn small menu-link" href="#/">Menu</a>}
+      {!home && <a class="btn small menu-link" href="#/">{t('ui.menu')}</a>}
       {title && <h2 style={{ margin: 0 }}>{title}</h2>}
       <span class="spacer" />
-      {auth.ready && !auth.user && <a class="btn small" href="#/signin">Sign in</a>}
+      {auth.ready && !auth.user && <a class="btn small" href="#/signin">{t('ui.signIn')}</a>}
       <a class="user-chip" href="#/profile">
         <svg class="face" viewBox="0 0 24 24" aria-hidden="true">
           <circle class="head" cx="12" cy="12" r="9.5" />

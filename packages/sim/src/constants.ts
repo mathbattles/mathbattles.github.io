@@ -4,14 +4,14 @@ export const PLANE_H = 450;
 export const GAME_W = 50;
 export const PX_PER_UNIT = PLANE_W / GAME_W;
 
-export const TURN_MS = 60_000;
+/** Everyone aims at once during a round, then all shots fire together. */
+export const ROUND_MS = 45_000;
 export const START_DELAY_MS = 5_000;
-export const NEXT_TURN_DELAY_MS = 3_000;
+/** Pause after a round's shots finish drawing, before the next round starts. */
+export const NEXT_ROUND_DELAY_MS = 3_000;
 export const RECONNECT_GRACE_MS = 30_000;
 
 export const MAX_PLAYERS = 10;
-export const MAX_SOLDIERS = 4;
-export const DEFAULT_SOLDIERS = 1;
 
 export const SOLDIER_R = 7;
 export const SPAWN_CLEARANCE = 15;
@@ -28,6 +28,19 @@ export const MAX_STEPS = 20_000;
 export const MAX_STEP_DIST_SQ = 0.001;
 export const MIN_X_STEP = 0.00001;
 export const DRAW_STEPS_PER_SEC = 1500;
+
+/** Two moving shot tips closer than this, on the same step, collide and make a beam. */
+export const HEAD_HIT_RADIUS = 4;
+/** A beam is twice as wide as a shot and moves 1.5 times as fast. */
+export const BEAM_WIDTH_MULT = 2;
+export const BEAM_SPEED_MULT = 1.5;
+/** A typical shot covers about this many pixels per step (a 45 degree line). */
+export const SHOT_PX_PER_STEP = STEP * PX_PER_UNIT * Math.SQRT2;
+export const BEAM_PX_PER_STEP = SHOT_PX_PER_STEP * BEAM_SPEED_MULT;
+/** Soldiers this close to a beam's centre line die. */
+export const BEAM_HIT_R = SOLDIER_R + 3;
+/** Radius of the channel a beam tears through rock. */
+export const BEAM_CARVE_R = 6;
 
 export const MAX_FUNCTION_CHARS = 200;
 
