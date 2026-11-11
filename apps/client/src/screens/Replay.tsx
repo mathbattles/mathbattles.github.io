@@ -10,6 +10,7 @@ import { sound } from '../util';
 import { Dropdown } from './Dropdown';
 import { GameView, winnerText } from './GameView';
 import { TopBar } from './Shared';
+import { Icon } from './Icons';
 
 const SPEEDS = [0.5, 1, 2, 4];
 
@@ -19,17 +20,19 @@ function useSession(session: ReplaySession): void {
   useEffect(() => session.subscribe(() => force((n) => n + 1)), [session]);
 }
 
-/** Splits "abc?r=5" into the data and the round to open at. */
-export function splitRound(text: string): { data: string; round: number } {
+/** Splits "abc?r=5&k=900" into the data, the round to open at, and a knockout step to jump to. */
+export function splitRound(text: string): { data: string; round: number; kill?: number } {
   const [data = '', query = ''] = text.split('?');
-  const r = Number(new URLSearchParams(query).get('r'));
-  return { data, round: Number.isInteger(r) && r > 0 ? r : 1 };
+  const q = new URLSearchParams(query);
+  const r = Number(q.get('r'));
+  const k = Number(q.get('k'));
+  return { data, round: Number.isInteger(r) && r > 0 ? r : 1, ...(Number.isInteger(k) && k > 0 ? { kill: k } : {}) };
 }
 
 /** Opens a short replay link: fetches the replay behind the id, then plays it. */
 export function ShortReplay({ id: raw }: { id: string }) {
   useLang();
-  const { data: id, round } = splitRound(raw);
+  const { data: id, round, kill } = splitRound(raw);
   const [code, setCode] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     let live = true;
@@ -54,20 +57,21 @@ export function ShortReplay({ id: raw }: { id: string }) {
       </div>
     );
   }
-  return <ReplayScreen data={code} id={id} startRound={round} />;
+  return <ReplayScreen data={code} id={id} startRound={round} startKill={kill} />;
 }
 
-export function ReplayScreen({ data: raw, id, startRound }: { data: string; id?: string; startRound?: number }) {
+export function ReplayScreen({ data: raw, id, startRound, startKill }: { data: string; id?: string; startRound?: number; startKill?: number }) {
   useLang();
   const split = splitRound(raw);
   const data = split.data;
   const start = startRound ?? split.round;
+  const killAt = startKill ?? split.kill;
   const replay = useMemo<Replay | null>(() => decodeReplay(data), [data]);
   const [key, setKey] = useState(1);
   const session = useMemo(() => {
     if (!replay) return null;
     try {
-      return new ReplaySession(replay, key === 1 ? start : 1);
+      return new ReplaySession(replay, key === 1 && !killAt ? start : 1);
     } catch {
       return null; // A hand-edited replay can describe a match that can't exist.
     }
@@ -90,30 +94,40 @@ export function ReplayScreen({ data: raw, id, startRound }: { data: string; id?:
       key={key}
       session={session}
       header={<span class="row"><a class="btn small" href="#/profile">{t('game.back')}</a><strong>{t('replay.title')}</strong></span>}
-      result={<ReplayControls session={session} code={data} id={id} onAgain={() => setKey(key + 1)} />}
+      result={<ReplayControls session={session} code={data} id={id} onAgain={() => setKey(key + 1)} startKill={key === 1 && killAt ? { round: start, step: killAt } : undefined} />}
       extraSide={<ReplayRounds session={session} />}
     />
   );
 }
 
 /** Play, pause, speed, round jumps, frame steps, follow, share, and download. */
-function ReplayControls({ session, code, id, onAgain }: { session: ReplaySession; code: string; id?: string; onAgain: () => void }) {
+function ReplayControls({ session, code, id, onAgain, startKill }: { session: ReplaySession; code: string; id?: string; onAgain: () => void; startKill?: { round: number; step: number } }) {
   useSession(session);
   const [note, setNote] = useState('');
+  const [lastKill, setLastKill] = useState<{ round: number; step: number } | null>(null);
   const total = session.totalRounds;
   const shown = session.roundShown;
   const state = session.state;
 
-  // Kill ticks on the scrubber: which rounds had knockouts.
-  const killRounds = useMemo(() => {
+  // Kill ticks on the scrubber: every knockout, by round and step.
+  const kills = useMemo(() => {
     try {
       const st = replayStart(session.replay);
       for (const a of session.replay.actions) if (!st.over) applyAction(st, a);
-      return roundsOf(st).map((r, i) => (r.kills.length ? i + 1 : 0)).filter(Boolean);
+      return roundsOf(st).flatMap((r, i) => r.kills.map((k) => ({ round: i + 1, step: k.step, steps: Math.max(1, r.steps) })));
     } catch {
-      return [] as number[];
+      return [] as { round: number; step: number; steps: number }[];
     }
   }, [session]);
+  const jump = (k: { round: number; step: number }) => {
+    session.jumpToKill(k.round, k.step);
+    setLastKill(k);
+    sound('click', profile.muted);
+  };
+  // A shared link can open right at a knockout.
+  useEffect(() => {
+    if (startKill) setTimeout(() => jump(startKill), 950);
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -154,6 +168,15 @@ function ReplayControls({ session, code, id, onAgain }: { session: ReplaySession
     setNote(ok ? (sid ? t('replay.shareCopied', { n: shown }) : t('result.copiedLong')) : t('result.copyFailed'));
     sound(ok ? 'toggle' : 'error', profile.muted);
   };
+  const shareKill = async (k: { round: number; step: number }) => {
+    setNote(t('result.makingLink'));
+    const sid = id ?? (await replayId(code));
+    const tail = `?r=${k.round}&k=${k.step}`;
+    const url = sid ? `${shortReplayUrl(sid)}${tail}` : `${longReplayUrl(code)}${tail}`;
+    const ok = await copyText(url);
+    setNote(ok ? t('replay.shareKillCopied', { n: k.round }) : t('result.copyFailed'));
+    sound(ok ? 'toggle' : 'error', profile.muted);
+  };
   const download = () => {
     const blob = new Blob([code], { type: 'text/plain' });
     const a = document.createElement('a');
@@ -168,20 +191,28 @@ function ReplayControls({ session, code, id, onAgain }: { session: ReplaySession
   return (
     <div class="sheet replay-controls">
       <div class="replay-transport row" role="group" aria-label={t('replay.controls')}>
-        <button class="small" onClick={() => session.seekRound(0)} aria-label={t('replay.start')} title={t('replay.start')}>⏮</button>
-        <button class="small" onClick={() => session.prevRound()} aria-label={t('replay.prev')} title={t('replay.prev')}>◀</button>
-        <button class="small" onClick={() => session.stepFrame(-1)} disabled={!session.busy} aria-label={t('replay.frameBack')} title={t('replay.frameBack')}>‹</button>
+        <button class="small" onClick={() => session.seekRound(0)} aria-label={t('replay.start')} title={t('replay.start')}><Icon name="first" /></button>
+        <button class="small" onClick={() => session.prevRound()} aria-label={t('replay.prev')} title={t('replay.prev')}><Icon name="prev" /></button>
+        <button class="small" onClick={() => session.stepFrame(-1)} disabled={!session.busy} aria-label={t('replay.frameBack')} title={t('replay.frameBack')}><Icon name="frameBack" /></button>
         <button class="primary small play" onClick={() => session.setPlaying(!session.playing)} aria-label={session.playing ? t('replay.pause') : t('replay.play')}>
-          {session.playing ? t('replay.pause') : t('replay.play')}
+          <Icon name={session.playing ? 'pause' : 'play'} /> {session.playing ? t('replay.pause') : t('replay.play')}
         </button>
-        <button class="small" onClick={() => session.stepFrame(1)} disabled={!session.busy} aria-label={t('replay.frameNext')} title={t('replay.frameNext')}>›</button>
-        <button class="small" onClick={() => session.nextRound()} aria-label={t('replay.next')} title={t('replay.next')}>▶</button>
-        <button class="small" onClick={() => session.seekRound(total)} aria-label={t('replay.end')} title={t('replay.end')}>⏭</button>
+        <button class="small" onClick={() => session.stepFrame(1)} disabled={!session.busy} aria-label={t('replay.frameNext')} title={t('replay.frameNext')}><Icon name="frameNext" /></button>
+        <button class="small" onClick={() => session.nextRound()} aria-label={t('replay.next')} title={t('replay.next')}><Icon name="next" /></button>
+        <button class="small" onClick={() => session.seekRound(total)} aria-label={t('replay.end')} title={t('replay.end')}><Icon name="last" /></button>
         <span class="replay-progress" aria-live="polite">{t('replay.roundOf', { n: shown, total })}</span>
       </div>
       <div class="replay-scrub">
         <div class="ticks" aria-hidden="true">
-          {killRounds.map((n) => <i style={{ left: `${total > 1 ? ((n - 1) / total) * 100 : 0}%` }} title={t('game.roundN', { n })} />)}
+          {kills.map((k) => (
+            <button
+              class="tick"
+              style={{ left: `${total > 0 ? ((k.round - 1 + Math.min(0.95, k.step / k.steps)) / total) * 100 : 0}%` }}
+              aria-label={t('replay.jumpKill', { n: k.round })}
+              title={t('replay.jumpKill', { n: k.round })}
+              onClick={() => jump(k)}
+            />
+          ))}
         </div>
         <input
           type="range"
@@ -196,7 +227,7 @@ function ReplayControls({ session, code, id, onAgain }: { session: ReplaySession
       <div class="row replay-options">
         <span class="row" role="group" aria-label={t('replay.speed')}>
           {SPEEDS.map((s) => (
-            <button class={`small ${session.speed === s ? 'on' : ''}`} aria-pressed={session.speed === s} onClick={() => session.setSpeed(s)}>{s}×</button>
+            <button class={`small ${session.speed === s ? 'on' : ''}`} aria-pressed={session.speed === s} onClick={() => session.setSpeed(s)}>{s}x</button>
           ))}
         </span>
         <span class="dd-field">{t('replay.follow')}{' '}
@@ -209,8 +240,9 @@ function ReplayControls({ session, code, id, onAgain }: { session: ReplaySession
         </span>
       </div>
       <div class="row">
-        <button class="small" onClick={() => void share()}>{t('replay.share')}</button>
-        <button class="small" onClick={download}>{t('replay.download')}</button>
+        <button class="small" onClick={() => void share()}><Icon name="share" /> {t('replay.share')}</button>
+        {lastKill && <button class="small" onClick={() => void shareKill(lastKill)}><Icon name="skull" /> {t('replay.shareKill')}</button>}
+        <button class="small" onClick={download}><Icon name="download" /> {t('replay.download')}</button>
       </div>
       {note && <p class="muted small-note" role="status">{note}</p>}
       <p class="muted small-note keys-help">{t('replay.keys')}</p>

@@ -2,18 +2,23 @@ import { savedMaps } from '../maps';
 import { Dropdown } from './Dropdown';
 import { BOT_LEVELS, MAX_PLAYERS, isOnWinningSide, matchRecordFor, type BotLevel, type MatchKind, type MatchState, type ShotMode } from '@mathbattles/sim';
 import { replayCode } from '../replayLinks';
+import { ROUND_SECONDS } from '@mathbattles/sim';
+import { Icon } from './Icons';
+import { MapCodeBox } from './MapCode';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { authState, useAuth } from '../auth';
 import { NetSession } from '../game/session';
 import { recordMatchHistory } from '../history';
 import { WS_URL, createRoom, listRooms, reportChat, serverReachable, type RoomInfo } from '../net/api';
-import { cosmeticValue, profile, recordMatch } from '../store';
+import { cosmeticValue, profile, recordMatch, ownedAbilities } from '../store';
 import { go, modeName } from '../util';
 import { GameView } from './GameView';
 import { ResultCard } from './Local';
 import { TopBar, useProfile } from './Shared';
-import { RankedInfo } from './RankedInfo';
+import { RankLadder, RankedInfo } from './RankedInfo';
+import { RankChange } from './RankChange';
 import { t } from '../i18n';
+import { FadeText } from './Notices';
 
 const UNAVAILABLE = "Online play isn't reachable right now. Bots, the campaign, and Free Play still work.";
 
@@ -49,7 +54,7 @@ export function OnlineMenu() {
     <div class="page">
       <TopBar title={t('ui.playOnline')} />
       {online === false && <p class="error" role="alert">{UNAVAILABLE}</p>}
-      {error && <p class="error" role="alert">{error}</p>}
+      <FadeText text={error} />
       <div class="grid-2">
         <div class="sheet">
           <h3>{t('ui.startARoom')}</h3>
@@ -97,6 +102,7 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
     token: profile.guestToken,
     idToken: authState.token,
     hat: cosmeticValue('hat'),
+    abilities: ownedAbilities(),
     ...(watch ? { spectate: true } : {}),
   }), [code, watch]);
   const [, force] = useState(0);
@@ -143,7 +149,7 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
   const chatPanel = profile.ageBand === 'child' ? (
     <div class="mini"><h3>{t('ui.chat')}</h3><p class="muted small-note" style={{ margin: 0 }}>{t('ui.chatIsOffForPlayersUnder')}</p></div>
   ) : profile.chatOff || watch ? null : (
-    <div class="mini">
+    <div class="mini chat-panel">
       <h3>{t('ui.chat')}</h3>
       <div class="chatlog" ref={chatRef} aria-live="polite">
         {session.chat.filter((l) => !l.fromId || !session.muted.has(l.fromId)).map((l) => (
@@ -160,11 +166,11 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
         ))}
       </div>
       {reported && <p class="ok">{t('ui.reportSent')}</p>}
+      <p class="muted chat-hint" style={{ margin: '6px 0 0', fontSize: '.85rem' }}>{t('ui.typeSkipToVoteForA')}</p>
       <form class="row" onSubmit={sendChat} style={{ marginTop: 6 }}>
         <input aria-label={t('ui.chatMessage')} style={{ flex: 1, width: 80 }} value={chatText} maxLength={140} onInput={(e) => setChatText((e.target as HTMLInputElement).value)} />
         <button class="small">{t('ui.send')}</button>
       </form>
-      <p class="muted" style={{ margin: '6px 0 0', fontSize: '.85rem' }}>{t('ui.typeSkipToVoteForA')}</p>
     </div>
   );
 
@@ -196,7 +202,15 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
         extraSide={chatPanel}
         result={over ? (
           <ResultCard state={over} viewer={session.you} rewards={rewards} replay={replay} replayId={session.replayId}>
-            {session.ratingDelta !== undefined && <p>Rating {session.ratingDelta >= 0 ? '+' : ''}{session.ratingDelta}</p>}
+            {session.ratings?.[session.you] ? <RankChange change={session.ratings[session.you]!} /> : session.ratingDelta !== undefined && <p>Rating {session.ratingDelta >= 0 ? '+' : ''}{session.ratingDelta}</p>}
+            {!ranked && !watch && (
+              <p class="row rematch-row">
+                <button class={session.rematchVotes.includes(session.you) ? 'on' : 'primary'} disabled={session.rematchVotes.includes(session.you)} onClick={() => session.rematch()}>
+                  <Icon name="replay" /> {t('rematch.button')}
+                </button>
+                <small class="muted">{t('rematch.votes', { n: session.rematchVotes.length, total: session.seats.filter((s) => !s.isBot && s.connected).length })}</small>
+              </p>
+            )}
             <p class="muted">{ranked ? 'Queue again from the Ranked screen.' : 'The room returns to the lobby in a moment.'}</p>
           </ResultCard>
         ) : null}
@@ -214,7 +228,7 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
       <TopBar title={session.ranked ? 'Ranked match' : `Room ${session.code || code}`} />
       {watch && <p class="watching" role="status">{t('ui.youReWatchingThisRoomThe')} <a href={`#/room/${code}`}>{t('ui.joinInstead')}</a></p>}
       {session.status === 'connecting' && <p>{t('ui.connecting')}</p>}
-      {session.error && <p class="error" role="alert">{session.error}</p>}
+      <FadeText text={session.error} />
       {st && (
         <div class="grid-2">
           <div class="sheet">
@@ -240,9 +254,6 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
                 </div>
                 {isHost && (
                   <div class="row" style={{ marginTop: 10 }}>
-                    <span class="dd-field">Add bot{' '}
-                      <Dropdown label={t('ui.botLevel')} value={null} placeholder={t('ui.chooseLevel')} onChange={(level) => session.send({ t: 'addBot', level })} options={(Object.keys(BOT_LEVELS) as BotLevel[]).map((l) => ({ value: l, label: BOT_LEVELS[l].label }))} />
-                    </span>
                     <button class="primary" onClick={() => session.send({ t: 'start' })}>{t('ui.startMatch')}</button>
                   </div>
                 )}
@@ -275,8 +286,28 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
                     />
                   ) : <strong>{st.map?.name ?? 'Random map'}</strong>}
                 </span>
+                <span class="dd-field">{t('timer.label')}{' '}
+                  <Dropdown
+                    label={t('timer.label')}
+                    disabled={!isHost}
+                    value={st.roundSeconds ?? 45}
+                    onChange={(v) => set({ roundSeconds: v })}
+                    options={ROUND_SECONDS.map((n) => ({ value: n, label: t('timer.seconds', { n }) }))}
+                  />
+                </span>
+                {!st.map && (
+                  <span class="dd-field">{t('rocks.label')}{' '}
+                    <Dropdown label={t('rocks.label')} disabled={!isHost} value={st.rockShapes ?? 'mixed'} onChange={(v) => set({ rockShapes: v })} options={[{ value: 'mixed', label: t('rocks.mixed') }, { value: 'circles', label: t('rocks.circles') }]} />
+                  </span>
+                )}
+                {isHost && (
+                  <span class="dd-field">{t('lobby.addBot')}{' '}
+                    <Dropdown label={t('ui.botLevel')} value={null} placeholder={t('ui.chooseLevel')} onChange={(level) => session.send({ t: 'addBot', level })} options={(Object.keys(BOT_LEVELS) as BotLevel[]).map((l) => ({ value: l, label: BOT_LEVELS[l].label }))} />
+                  </span>
+                )}
                 <label class="check"><input type="checkbox" disabled={!isHost} checked={st.showFunctions} onChange={(e) => set({ showFunctions: (e.target as HTMLInputElement).checked })} /> {t('ui.showEveryoneSFunctions')}</label>
               </div>
+              {isHost && <MapCodeBox current={st.map ?? null} onLoad={(m) => set({ map: m })} />}
             </div>
           )}
           {chatPanel}
@@ -356,9 +387,10 @@ export function Ranked() {
         ) : (
           <button class="primary" onClick={queue}>{t('ui.findAMatch')}</button>
         )}
-        {error && <p class="error" role="alert">{error}</p>}
+        <FadeText text={error} />
       </div>
       {auth.ready && auth.user && <RankedInfo />}
+      {auth.ready && !auth.user && <RankLadder />}
     </div>
   );
 }

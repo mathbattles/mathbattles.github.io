@@ -16,10 +16,13 @@ import { PlayerScreen } from './screens/History';
 import { SideNav } from './screens/SideNav';
 import { initAudioUi } from './audio/ui';
 import { Inventory } from './screens/Inventory';
+import { Abilities } from './screens/Abilities';
+import { SeasonPage } from './screens/Season';
 import { Admin } from './screens/Admin';
 import { Friends, InviteToasts } from './screens/Friends';
 import { MapEditor, MapsPage, SharedMapScreen } from './screens/Maps';
 import { initSocial } from './social';
+import { Notices } from './screens/Notices';
 
 // Another site could frame the game to trick clicks. If it's framed, break out of the frame.
 if (window.top !== window.self) {
@@ -82,7 +85,10 @@ function Router({ path }: { path: string }) {
       if (!parts[1]) return <OnlineMenu />;
       return <Room key={`watch-${parts[1]}`} code={parts[1]} watch ranked={parts[1].toUpperCase().startsWith('R-')} />;
     case 'learn': return <Learn lessonId={parts[1]} />;
-    case 'shop': return <Shop />;
+    case 'shop':
+    case 'cosmetics': return <Shop />;
+    case 'abilities': return <Abilities />;
+    case 'season': return <SeasonPage />;
     case 'inventory': return <Inventory />;
     case 'admin': return <Admin />;
     case 'friends': return <Friends />;
@@ -183,6 +189,7 @@ function App() {
       </div>
       <Consent />
       <InviteToasts />
+      <Notices />
     </>
   );
 }

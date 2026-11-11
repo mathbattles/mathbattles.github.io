@@ -8,6 +8,7 @@ import { TopBar } from './Shared';
 import { ChatWindow, useOpenChats } from './Chat';
 import { MAX_OPEN_CHATS, openChat } from '../dms';
 import { t } from '../i18n';
+import { FadeText } from './Notices';
 
 export function useSocial() {
   const [, force] = useState(0);
@@ -75,7 +76,7 @@ export function Friends() {
   return (
     <div class="page">
       <TopBar title={t('ui.friends')} />
-      {error && <p class="error" role="alert">{error}</p>}
+      <FadeText text={error} />
       {note && <p class="ok" role="status">{note}</p>}
       {chats.length > 0 && (
         <div class="sheet chats-sheet">
@@ -205,7 +206,7 @@ export function InviteToasts() {
     for (const [name, n] of Object.entries(unread)) {
       if (n > (seenUnread[name] ?? 0) && !onFriends) {
         setNewFrom(name);
-        sound('turn', profile.muted);
+        sound('chatReceive', profile.muted);
       }
     }
     for (const k of Object.keys(seenUnread)) delete seenUnread[k];

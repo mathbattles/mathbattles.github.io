@@ -5,6 +5,7 @@ import { refreshSocial } from '../social';
 import { profile } from '../store';
 import { sound } from '../util';
 import { t } from '../i18n';
+import { Icon } from './Icons';
 
 const MAX = 300;
 const POLL_MS = 4000;
@@ -58,7 +59,7 @@ export function ChatWindow({ chat, online }: { chat: OpenChat; online: boolean }
       merge(r.data.messages);
       if (first) setMore(r.data.more);
       // A new message from them makes a soft sound, unless this is the first load.
-      if (!first && r.data.messages.some((m) => !m.mine && !messages.some((x) => x.id === m.id)) && before > 0) sound('turn', profile.muted);
+      if (!first && r.data.messages.some((m) => !m.mine && !messages.some((x) => x.id === m.id)) && before > 0) sound('chatReceive', profile.muted);
       setError('');
     } else if (r.error) setError(r.error);
     if (first) setLoading(false);
@@ -113,6 +114,7 @@ export function ChatWindow({ chat, online }: { chat: OpenChat; online: boolean }
       sound('error', profile.muted);
       return;
     }
+    sound('chatSend', profile.muted);
     setError('');
     setText('');
     stick.current = true;
@@ -141,9 +143,9 @@ export function ChatWindow({ chat, online }: { chat: OpenChat; online: boolean }
         </span>
         <span class="chat-controls">
           <button class="small plain" aria-label={chat.minimized ? `Open chat with ${chat.name}` : `Minimize chat with ${chat.name}`} aria-expanded={!chat.minimized} onClick={() => toggleMinimized(chat.name)}>
-            {chat.minimized ? '▴' : '▾'}
+            <Icon name={chat.minimized ? 'chevronUp' : 'chevronDown'} />
           </button>
-          <button class="small plain" aria-label={`Close chat with ${chat.name}`} onClick={() => closeChat(chat.name)}>✕</button>
+          <button class="small plain" aria-label={`Close chat with ${chat.name}`} onClick={() => closeChat(chat.name)}><Icon name="close" /></button>
         </span>
       </header>
       {!chat.minimized && (

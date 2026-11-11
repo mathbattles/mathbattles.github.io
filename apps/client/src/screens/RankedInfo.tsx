@@ -1,4 +1,4 @@
-import { RANKS, START_RATING, rankFor, type MatchRecord } from '@mathbattles/sim';
+import { PLACEMENT_MATCHES, RANKS, START_RATING, rankFor, type MatchRecord } from '@mathbattles/sim';
 import { useEffect, useState } from 'preact/hooks';
 import { useAuth } from '../auth';
 import { loadHistory } from '../history';
@@ -11,27 +11,77 @@ export function tierProgress(rating: number) {
   const index = RANKS.reduce((best, r, i) => (rating >= r.min ? i : best), 0);
   const tier = RANKS[index]!;
   const next = RANKS[index + 1];
-  const floor = index === 0 ? Math.min(rating, 800) : tier.min;
-  const share = next ? Math.max(0, Math.min(1, (rating - floor) / (next.min - floor))) : 1;
+  const share = next ? Math.max(0, Math.min(1, (rating - tier.min) / (next.min - tier.min))) : 1;
   return { index, tier, next, share, toNext: next ? next.min - rating : 0 };
 }
 
-/** A small hand-drawn badge for a tier, coloured from bronze up to gold. */
+/** Each tier's colour, from bronze Arithmetic up to gold Medalist. */
+const RANK_COLORS = ['#c08a5b', '#a9b4c0', '#5fb0e8', '#57d977', '#b57bff', '#ffcf2e'];
+
+/** The drawing at the centre of each tier's badge: a sign of that branch of maths. */
+function RankMark({ index }: { index: number }) {
+  const line = { fill: 'none', stroke: 'currentColor', 'stroke-width': 4.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' } as const;
+  switch (index) {
+    case 0: // Arithmetic: a plus sign.
+      return <path {...line} d="M32 19v26M19 32h26" />;
+    case 1: // Algebra: an x.
+      return <path {...line} d="M21 22c6 0 8 4 11 10s5 10 11 10M43 22c-5 0-8 6-11 10s-6 10-11 10" />;
+    case 2: // Geometry: a triangle with a compass arc.
+      return <g {...line}><path d="M32 18L45 43H19Z" /><path stroke-width="3" d="M24 43a8 8 0 0 1 3.5-6.6" /></g>;
+    case 3: // Calculus: an integral sign.
+      return <path {...line} d="M38 18c-4-3-8 0-7 5l2 18c1 5-3 8-7 5" />;
+    case 4: // Analysis: an infinity loop.
+      return <path {...line} d="M32 32c-4-6-13-6-13 0s9 6 13 0 13-6 13 0-9 6-13 0Z" />;
+    default: // Medalist: a star.
+      return <path {...line} fill="#ffffff" fill-opacity="0.9" stroke-width="3" d="M32 17l4.4 9.3 10.1 1.3-7.4 7 1.9 10L32 39.7l-9 4.9 1.9-10-7.4-7 10.1-1.3Z" />;
+  }
+}
+
+/** A hand-drawn badge for a tier: a coloured medal with that branch of maths drawn on it. */
 export function RankBadge({ index, size = 64 }: { index: number; size?: number }) {
-  const colors = ['#b5835a', '#a7b0ba', '#5fb0e8', '#57d977', '#b57bff', '#ff9838', '#ff4d7e', '#ffd33d'];
-  const fill = colors[Math.min(index, colors.length - 1)]!;
-  const points = Math.min(index + 3, 8);
-  const star = Array.from({ length: points * 2 }, (_, i) => {
-    const a = (i / (points * 2)) * Math.PI * 2 - Math.PI / 2;
-    const r = i % 2 ? 13 : 22;
-    return `${32 + Math.cos(a) * r},${32 + Math.sin(a) * r}`;
+  const i = Math.max(0, Math.min(index, RANK_COLORS.length - 1));
+  const fill = RANK_COLORS[i]!;
+  // Higher tiers get more notches around the rim.
+  const notches = 6 + i * 2;
+  const rim = Array.from({ length: notches * 2 }, (_, k) => {
+    const a = (k / (notches * 2)) * Math.PI * 2 - Math.PI / 2;
+    const r = k % 2 ? 26.5 : 29.5;
+    return `${(32 + Math.cos(a) * r).toFixed(1)},${(32 + Math.sin(a) * r).toFixed(1)}`;
   }).join(' ');
   return (
     <svg class="rank-badge" width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
-      <circle cx="32" cy="32" r="29" fill={fill} stroke="currentColor" stroke-width="3" />
-      <polygon points={star} fill="#ffffff" fill-opacity="0.85" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+      <polygon points={rim} fill={fill} stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" />
+      <circle cx="32" cy="32" r="20" fill="#ffffff" fill-opacity="0.35" stroke="currentColor" stroke-width="2" />
+      <RankMark index={i} />
     </svg>
   );
+}
+
+/** Every tier, highest first, with where it starts. Guests see it too, before signing up. */
+export function RankLadder({ here }: { here?: number }) {
+  return (
+    <div class="sheet">
+      <h3>{t('ui.ranks')}</h3>
+      <ol class="rank-ladder">
+        {[...RANKS].reverse().map((r) => {
+          const i = RANKS.indexOf(r);
+          return (
+            <li class={i === here ? 'here' : ''}>
+              <RankBadge index={i} size={26} />
+              <span>{r.name}</span>
+              <small class="muted">{i === 0 ? t('rank.startAt', { n: START_RATING }) : `${r.min}+`}</small>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+/** "Placement 2 / 3" while the first ranked matches still count double, or null after. */
+export function placementText(games: number | undefined): string | null {
+  if (games === undefined || games >= PLACEMENT_MATCHES) return null;
+  return t('rank.placement', { n: games + 1, total: PLACEMENT_MATCHES });
 }
 
 /** Your ranked standing, record and recent ranked matches. */
@@ -76,6 +126,7 @@ export function RankedInfo() {
             <p class="muted" style={{ margin: 0 }}>{t('ui.yourRank')}</p>
             <h2 style={{ margin: 0 }}>{p.tier.name}</h2>
             <p style={{ margin: '2px 0 0' }}><strong>{rating}</strong> rating{me?.place ? `, #${me.place} of ${me.total} ranked players` : ''}</p>
+            {placementText(me?.games) && <p class="placement-tag"><span>{placementText(me?.games)}</span> <small class="muted">{t('rank.placementNote')}</small></p>}
           </div>
         </div>
         <div class="bar rank-bar" role="progressbar" aria-valuenow={Math.round(p.share * 100)} aria-valuemax={100} aria-label={t('ui.progressToTheNextRank')}>
@@ -96,21 +147,7 @@ export function RankedInfo() {
           {matches === null ? <p>{t('ui.loading')}</p> : <MatchList matches={ranked.slice(0, 15)} empty="No ranked matches yet. Your first one is a click away." />}
         </div>
         <div>
-          <div class="sheet">
-            <h3>{t('ui.ranks')}</h3>
-            <ol class="rank-ladder">
-              {[...RANKS].reverse().map((r) => {
-                const i = RANKS.indexOf(r);
-                return (
-                  <li class={i === p.index ? 'here' : ''}>
-                    <RankBadge index={i} size={26} />
-                    <span>{r.name}</span>
-                    <small class="muted">{r.min > 0 ? `${r.min}+` : 'Start'}</small>
-                  </li>
-                );
-              })}
-            </ol>
-          </div>
+          <RankLadder here={p.index} />
           <div class="sheet">
             <h3>{t('ui.topPlayers')}</h3>
             {top === null ? <p>{t('ui.loading')}</p> : top.length === 0 ? <p class="muted">{t('ui.nobodyHasPlayedRankedYet')}</p> : (
@@ -118,7 +155,7 @@ export function RankedInfo() {
                 {top.map((r) => (
                   <li class={r.name === auth.username ? 'me' : ''}>
                     <a href={`#/player/${encodeURIComponent(r.name)}`}>{r.name}</a>
-                    <small class="muted">{rankFor(r.rating)}, {r.rating}</small>
+                    <small class="muted rank-inline"><RankBadge index={RANKS.findIndex((x) => x.name === rankFor(r.rating))} size={18} /> {rankFor(r.rating)}, {r.rating}</small>
                   </li>
                 ))}
               </ol>

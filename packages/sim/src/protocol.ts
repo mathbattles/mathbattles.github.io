@@ -1,4 +1,5 @@
 import type { Dir, ShotMode } from './constants';
+import type { AbilityId } from './abilities';
 import type { MapDef } from './maps';
 import type { MatchKind, MatchState, PlayerSetup, RoundRecord } from './rules';
 
@@ -6,6 +7,10 @@ export interface RoomSettings {
   kind: MatchKind;
   mode: ShotMode;
   showFunctions: boolean;
+  /** How long each round lasts, in seconds. */
+  roundSeconds: number;
+  /** Random maps mix rock shapes, or use circles only. */
+  rockShapes: 'mixed' | 'circles';
   /** A player-made map for the next match, or none for a random one. */
   map?: MapDef | null;
 }
@@ -29,7 +34,7 @@ export interface ChatLine {
 }
 
 export type ClientMsg =
-  | { t: 'join'; name: string; token: string; idToken?: string | null; hat?: string; spectate?: boolean }
+  | { t: 'join'; name: string; token: string; idToken?: string | null; hat?: string; spectate?: boolean; abilities?: AbilityId[] }
   | { t: 'leave' }
   | { t: 'settings'; settings: Partial<RoomSettings> }
   | { t: 'team'; team: 1 | 2 }
@@ -38,8 +43,10 @@ export type ClientMsg =
   | { t: 'removeSeat'; id: string }
   | { t: 'start' }
   /** What you've typed so far. Kept secret, and fired if the round ends before you lock in. */
-  | { t: 'draft'; expr: string; angle?: number; dir?: Dir }
-  | { t: 'lock'; expr: string; angle?: number; dir?: Dir }
+  | { t: 'draft'; expr: string; angle?: number; dir?: Dir; ability?: AbilityId }
+  | { t: 'lock'; expr: string; angle?: number; dir?: Dir; ability?: AbilityId }
+  /** After a match: vote to play again straight away with the same people. */
+  | { t: 'rematch' }
   | { t: 'unlock' }
   | { t: 'skipVote' }
   | { t: 'chat'; text: string }
@@ -47,14 +54,14 @@ export type ClientMsg =
 
 export type ServerMsg =
   | { t: 'welcome'; you: string; code: string }
-  | { t: 'lobby'; host: string; seats: Seat[]; settings: RoomSettings; ranked: boolean; inMatch: boolean; spectators: number }
+  | { t: 'lobby'; host: string; seats: Seat[]; settings: RoomSettings; ranked: boolean; inMatch: boolean; spectators: number; rematch?: string[] }
   /** A match started, or you rejoined one. Your own draft comes back so a reconnect keeps it. */
   | { t: 'match'; state: MatchState; setups: PlayerSetup[]; deadline: number; serverNow: number; draft?: Draft | null }
   /** Every shot of a round fired. The deadline is when the next round ends. */
   | { t: 'round'; round: RoundRecord; state: MatchState; deadline: number; serverNow: number }
   /** Someone locked, unlocked, left, or reconnected. */
   | { t: 'update'; state: MatchState; deadline: number; serverNow: number }
-  | { t: 'over'; state: MatchState; setups: PlayerSetup[]; ratingDelta?: number; replayId?: string }
+  | { t: 'over'; state: MatchState; setups: PlayerSetup[]; ratingDelta?: number; replayId?: string; ratings?: Record<string, RatingChange> }
   /** The room can't be used. Clients should stop reconnecting and show this. */
   | { t: 'closed'; message: string }
   | { t: 'chat'; line: ChatLine }
@@ -65,10 +72,23 @@ export interface Draft {
   expr: string;
   angle?: number;
   dir?: Dir;
+  ability?: AbilityId;
+}
+
+export const ROUND_SECONDS = [30, 45, 60, 90] as const;
+
+/** A ranked rating before and after a match, so a player can see a rank change. */
+export interface RatingChange {
+  before: number;
+  after: number;
+  /** Ranked matches played after this one, for placement progress. */
+  games: number;
 }
 
 export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   kind: 'teams',
   mode: 'fn',
   showFunctions: false,
+  roundSeconds: 45,
+  rockShapes: 'mixed',
 };

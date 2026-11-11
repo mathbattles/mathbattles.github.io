@@ -31,16 +31,18 @@ export const DRAW_STEPS_PER_SEC = 1500;
 
 /** Two moving shot tips closer than this, on the same step, collide and make a beam. */
 export const HEAD_HIT_RADIUS = 4;
-/** A beam is twice as wide as a shot and moves 1.5 times as fast. */
-export const BEAM_WIDTH_MULT = 2;
+/** A beam is three times as wide as a shot and moves 1.5 times as fast. */
+export const BEAM_WIDTH_MULT = 3;
 export const BEAM_SPEED_MULT = 1.5;
 /** A typical shot covers about this many pixels per step (a 45 degree line). */
 export const SHOT_PX_PER_STEP = STEP * PX_PER_UNIT * Math.SQRT2;
 export const BEAM_PX_PER_STEP = SHOT_PX_PER_STEP * BEAM_SPEED_MULT;
 /** Soldiers this close to a beam's centre line die. */
-export const BEAM_HIT_R = SOLDIER_R + 3;
+export const BEAM_HIT_R = SOLDIER_R + 4.5;
 /** Radius of the channel a beam tears through rock. */
-export const BEAM_CARVE_R = 6;
+export const BEAM_CARVE_R = 9;
+/** A shot tip this close to a beam's centre line is cut off. */
+export const BEAM_CUT_R = 5.5;
 
 export const MAX_FUNCTION_CHARS = 200;
 

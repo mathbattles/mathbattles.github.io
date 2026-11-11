@@ -41,6 +41,7 @@ import { modeLabel, sound } from '../util';
 import { Tex } from './GameView';
 import { TopBar, useProfile } from './Shared';
 import { t } from '../i18n';
+import { Icon } from './Icons';
 
 /** Turns `backticks` into math text. */
 function Rich({ text }: { text: string }) {
@@ -56,6 +57,7 @@ const REASON_TEXT: Record<EndReason | Exclude<ShotEnd, EndReason>, string> = {
   'too-long': 'It ran out of length, because the curve is too wiggly.',
   killed: 'Its shooter was knocked out, so it stopped.',
   collision: 'It met another shot head to head.',
+  beamcut: 'A beam cut it off.',
 };
 
 const fmt = (n: number) => (Math.round(n * 10) / 10).toString();
@@ -569,7 +571,7 @@ function Overview() {
                 const isDone = lessonDone(l, profile.learnDone);
                 return (
                   <a class={`lesson-link ${isDone ? 'done' : ''} ${nextUp === l ? 'next' : ''}`} href={`#/learn/${l.id}`}>
-                    <strong>{isDone && <span aria-label={t('ui.complete')}>✓ </span>}{l.title}</strong>
+                    <strong>{isDone && <span class="done-mark"><Icon name="check" label={t('ui.complete')} /> </span>}{l.title}</strong>
                     <small>{l.blurb}</small>
                   </a>
                 );

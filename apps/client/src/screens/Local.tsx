@@ -25,9 +25,11 @@ import { authState } from '../auth';
 import { LocalSession, SoloSession } from '../game/session';
 import { recordMatchHistory } from '../history';
 import { TopBar } from './Shared';
-import { profile, recordMatch } from '../store';
+import { ownedAbilities, profile, recordMatch } from '../store';
 import { go, modeName, sound } from '../util';
 import { GameView, winnerText } from './GameView';
+import { MapCodeBox } from './MapCode';
+import { Icon } from './Icons';
 import { bestReplayLink, copyText, replayCode, replayId, shortReplayUrl } from '../replayLinks';
 import { t, useLang } from '../i18n';
 
@@ -95,6 +97,7 @@ export function LocalSetup() {
   useLang();
   const [mode, setMode] = useState<ShotMode>('fn');
   const [picking, setPicking] = useState<number | null>(null);
+  const [rocks, setRocks] = useState<'mixed' | 'circles'>('mixed');
   // A map chosen in the editor or the maps page arrives here, ready to play.
   const [map, setMap] = useState<MapDef | null>(() => takePendingMap());
   const maps = savedMaps();
@@ -135,7 +138,13 @@ export function LocalSetup() {
                   ]}
                 />
               </span>
+              {!map && (
+                <span class="dd-field">{t('rocks.label')}{' '}
+                  <Dropdown label={t('rocks.label')} value={rocks} onChange={setRocks} options={[{ value: 'mixed', label: t('rocks.mixed') }, { value: 'circles', label: t('rocks.circles') }]} />
+                </span>
+              )}
             </div>
+            <MapCodeBox current={map} onLoad={(m) => setMap(m)} />
           </div>
           <div>
             <h3>{t('ui.players')}</h3>
@@ -189,7 +198,7 @@ export function LocalSetup() {
       </div>
       {!valid && <p class="error">{t('ui.eachTeamNeedsAtLeastOne')}</p>}
       {seats.filter((s) => s.kind === 'human').length > 1 && <p class="muted small-note">{t('local.passAndLock')}</p>}
-      <button class="primary" disabled={!valid} onClick={() => setPlaying({ key: 1, config: { kind, mode, seats, map } })}>{t('ui.startMatch')}</button>
+      <button class="primary" disabled={!valid} onClick={() => setPlaying({ key: 1, config: { kind, mode, seats, map, rocks } })}>{t('ui.startMatch')}</button>
     </div>
   );
 }
@@ -208,7 +217,7 @@ function seatColor(seats: SeatDraft[], i: number): string | undefined {
   return undefined;
 }
 
-function makeSession(c: { kind: MatchKind; mode: ShotMode; seats: SeatDraft[]; map?: MapDef | null }) {
+function makeSession(c: { kind: MatchKind; mode: ShotMode; seats: SeatDraft[]; map?: MapDef | null; rocks?: 'mixed' | 'circles' }) {
   const setups: PlayerSetup[] = c.seats.map((s, i) => ({
     id: `p${i}`,
     name: s.name.trim() || `Player ${i + 1}`,
@@ -217,7 +226,7 @@ function makeSession(c: { kind: MatchKind; mode: ShotMode; seats: SeatDraft[]; m
     botLevel: s.kind !== "human" ? s.kind : undefined,
     ...(s.color ? { color: s.color } : {}),
   }));
-  return new LocalSession({ kind: c.kind, mode: c.mode, seed: (Math.random() * 2 ** 31) >>> 0, ...(c.map ? { map: c.map } : {}) }, setups);
+  return new LocalSession({ kind: c.kind, mode: c.mode, seed: (Math.random() * 2 ** 31) >>> 0, rockShapes: c.rocks ?? 'mixed', ...(c.map ? { map: c.map } : {}) }, setups, { abilities: ownedAbilities() });
 }
 
 function LocalGame(props: { config: Parameters<typeof makeSession>[0]; onAgain: () => void }) {
@@ -264,20 +273,33 @@ function LocalGame(props: { config: Parameters<typeof makeSession>[0]; onAgain: 
   );
 }
 
-export function randomPractice(mode: ShotMode, seed: number): SoloDef {
+export function randomPractice(mode: ShotMode, seed: number, map?: MapDef | null): SoloDef {
   const rng = new Rng(seed);
-  const placed = placeSoldiers(rng, generateCircles(rng), [{ side: 0 }, { side: 1 }, { side: 1 }]);
-  return { mode, shooter: placed.spots[0]!, enemies: placed.spots.slice(1), circles: placed.circles };
+  if (map) {
+    // A shared map: you start on the first blue spot, and targets stand on the red ones.
+    const blue = map.spawns.filter((s) => s.team === 1);
+    const red = map.spawns.filter((s) => s.team === 2);
+    const slots = [{ side: 0 as const }, ...Array.from({ length: Math.max(2, red.length) }, () => ({ side: 1 as const }))];
+    const fixed = [blue[0], ...red];
+    const placed = placeSoldiers(rng, map.circles, slots, fixed);
+    return { mode, shooter: placed.spots[0]!, enemies: placed.spots.slice(1), circles: placed.circles, kind: 'ffa' };
+  }
+  const placed = placeSoldiers(rng, generateCircles(rng, 'mixed', seed), [{ side: 0 }, { side: 1 }, { side: 1 }]);
+  return { mode, shooter: placed.spots[0]!, enemies: placed.spots.slice(1), circles: placed.circles, kind: 'ffa' };
 }
 
 export function Practice() {
   const [mode, setMode] = useState<ShotMode>('fn');
   const [key, setKey] = useState(1);
+  const [practiceMap, setPracticeMap] = useState<MapDef | null>(null);
+  const [showCode, setShowCode] = useState(false);
   const session = useMemo(() => {
     const seed = (Math.random() * 2 ** 31) >>> 0;
     let n = seed;
-    return new SoloSession(randomPractice(mode, seed), { endless: () => randomPractice(mode, ++n) });
-  }, [mode, key]);
+    // Free Play: unlimited energy, so every owned ability can be practised.
+    const practice = (s: number) => ({ ...randomPractice(mode, s, practiceMap), abilities: ownedAbilities(), freeEnergy: true });
+    return new SoloSession(practice(seed), { endless: () => practice(++n) });
+  }, [mode, key, practiceMap]);
   return (
     <GameView
       key={`${mode}-${key}`}
@@ -285,9 +307,11 @@ export function Practice() {
       header={
         <span class="row">
           <a class="btn small" href="#/">{t('ui.menu')}</a>
-          <button class="small" onClick={() => setKey(key + 1)}>{t('ui.newMap')}</button>
+          <button class="small" onClick={() => { setPracticeMap(null); setKey(key + 1); }}>{t('ui.newMap')}</button>
+          <button class={`small ${showCode ? 'on' : ''}`} aria-expanded={showCode} onClick={() => setShowCode(!showCode)}><Icon name="code" /> {t('mapcode.label')}</button>
         </span>
       }
+      extraSide={showCode ? <div class="mini"><h3>{t('mapcode.label')}</h3><MapCodeBox current={practiceMap} onLoad={(m) => { setPracticeMap(m); setKey(key + 1); }} /></div> : undefined}
       soloInfo="No timer. The dotted line shows your whole shot. Clear all the targets for a new map."
     />
   );

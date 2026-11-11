@@ -239,6 +239,29 @@ describe('match on the server', () => {
     expect(h.room.state).not.toBeNull();
     expect(h.room.state!.soldiers.length).toBe(2);
     expect(h.room.seats.map((s) => s.team)).toEqual([1, 2]);
+    // Ranked matches always mix rock shapes in.
+    expect(h.room.state!.config.rockShapes).toBe('mixed');
+  });
+});
+
+describe('rock shapes setting', () => {
+  it('defaults to mixed, only the host can change it, and bad values are ignored', () => {
+    const h = harness();
+    h.join('a', 'tokA');
+    h.join('b', 'tokB');
+    expect(h.room.settings.rockShapes).toBe('mixed');
+    h.room.handle('b', { t: 'settings', settings: { rockShapes: 'circles' } });
+    expect(h.room.settings.rockShapes).toBe('mixed');
+    h.room.handle('a', { t: 'settings', settings: { rockShapes: 'squares' } as never });
+    expect(h.room.settings.rockShapes).toBe('mixed');
+    h.room.handle('a', { t: 'settings', settings: { rockShapes: 'circles' } });
+    expect(h.room.settings.rockShapes).toBe('circles');
+    h.room.handle('b', { t: 'ready', ready: true });
+    h.room.handle('a', { t: 'start' });
+    h.advance(5001);
+    // Circles are the default, so the match config leaves the setting out.
+    expect(h.room.state!.config.rockShapes).not.toBe('mixed');
+    expect(h.room.state!.circles.every((c) => !c.shape || c.shape === 'circle')).toBe(true);
   });
 });
 

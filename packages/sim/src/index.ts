@@ -14,3 +14,5 @@ export * from './progression';
 export * from './protocol';
 export * from './colors';
 export * from './round';
+export * from './abilities';
+export * from './shapes';

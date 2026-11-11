@@ -1,9 +1,13 @@
 import { PLANE_H, PLANE_W } from './constants';
+import { rockContains, type RockShape } from './shapes';
 
+/** A rock, or a carved hole. Rocks can have a shape and a rotation; holes are always round. */
 export interface Circle {
   x: number;
   y: number;
   r: number;
+  shape?: RockShape;
+  rot?: number;
 }
 
 /**
@@ -50,6 +54,7 @@ export class Terrain {
 }
 
 function paint(g: Uint8Array, c: Circle, value: 0 | 1): void {
+  const shaped = value === 1 && !!c.shape && c.shape !== 'circle';
   const r2 = c.r * c.r;
   const y0 = Math.max(0, Math.floor(c.y - c.r));
   const y1 = Math.min(PLANE_H - 1, Math.ceil(c.y + c.r));
@@ -60,7 +65,7 @@ function paint(g: Uint8Array, c: Circle, value: 0 | 1): void {
     const row = y * PLANE_W;
     for (let x = x0; x <= x1; x++) {
       const dx = x - c.x;
-      if (dx * dx + dy * dy <= r2) g[row + x] = value;
+      if (dx * dx + dy * dy <= r2 && (!shaped || rockContains(c, x, y))) g[row + x] = value;
     }
   }
 }

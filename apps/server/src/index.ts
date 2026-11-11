@@ -4,9 +4,13 @@ import {
   START_RATING,
   MAX_STORED_REPLAY,
   eloDelta,
+  eloK,
+  type RatingChange,
   matchRecordFor,
   seasonReset,
   usernameProblem,
+  cleanAbilities,
+  type AbilityId,
   utcDayNumber,
   type ClientMsg,
   type MatchRecord,
@@ -226,11 +230,11 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
         const name = await publicName(env, uid, body.name);
         // An older copy from another device must not replace a newer one.
         await env.DB.prepare(
-          `INSERT INTO players (uid, name, profile, updated_at) VALUES (?, ?, ?, ?)
+          `INSERT INTO players (uid, name, profile, rating, updated_at) VALUES (?, ?, ?, ?, ?)
            ON CONFLICT (uid) DO UPDATE SET name = excluded.name, profile = excluded.profile, updated_at = excluded.updated_at
            WHERE players.profile IS NULL
               OR json_extract(excluded.profile, '$.updatedAt') >= COALESCE(json_extract(players.profile, '$.updatedAt'), 0)`,
-        ).bind(uid, name, JSON.stringify(body), Date.now()).run();
+        ).bind(uid, name, JSON.stringify(body), START_RATING, Date.now()).run();
         return json({ ok: true });
       }
       const row = await env.DB.prepare('SELECT rating, profile FROM players WHERE uid = ?').bind(uid).first<{ rating: number; profile: string | null }>();
@@ -484,7 +488,7 @@ export class RoomObject implements DurableObject {
       onLobbyChange: (info) => this.saveLobby(code, info),
       onRankedOver: (winner, loser) => this.settleRanked(winner, loser),
       saveReplay: async (replay) => (await storeReplay(this.env.DB, replay)) ?? undefined,
-      onMatchOver: (state, setups, delta, replayId) => this.saveHistory(code, state, setups, delta, replayId),
+      onMatchOver: (state, setups, delta, replayId, ratings) => this.saveHistory(code, state, setups, delta, replayId, ratings),
     }, { ranked, rankedPair: pair });
     return this.core;
   }
@@ -515,40 +519,63 @@ export class RoomObject implements DurableObject {
   }
 
   /** Records the match for every signed-in player in it. Guests' devices keep their own copy. */
-  private saveHistory(code: string, state: MatchState, setups: PlayerSetup[], ratingDelta: number | undefined, replayId?: string): void {
+  private saveHistory(code: string, state: MatchState, setups: PlayerSetup[], ratingDelta: number | undefined, replayId?: string, ratings?: Record<string, RatingChange>): void {
     const statements: D1PreparedStatement[] = [];
     const at = Date.now();
     for (const [seat, uid] of this.seatUid) {
       if (!state.players.some((p) => p.id === seat)) continue;
       const base = matchRecordFor(state, setups, seat, { id: `${code}-${state.config.seed}`, at, kind: code.startsWith('R-') ? 'ranked' : 'online', ...(replayId ? { replayId } : {}) });
-      const record = ratingDelta === undefined ? base : { ...base, ratingDelta: base.result === 'win' ? ratingDelta : -ratingDelta };
+      const own = ratings?.[seat];
+      const record = own ? { ...base, ratingDelta: own.after - own.before } : ratingDelta === undefined ? base : { ...base, ratingDelta: base.result === 'win' ? ratingDelta : -ratingDelta };
       statements.push(...historyStatements(this.env, uid, record, 'server'));
     }
     if (statements.length) void this.env.DB.batch(statements).catch((e) => logError('Saving match history failed', e));
   }
 
-  private async settleRanked(winnerSeat: string, loserSeat: string): Promise<number | undefined> {
+  /**
+   * Settles a ranked match. Each player's first few matches count double (placement), so the
+   * two changes can differ. Ratings never drop below zero.
+   */
+  private async settleRanked(winnerSeat: string, loserSeat: string): Promise<Record<string, RatingChange> | undefined> {
     const w = this.seatUid.get(winnerSeat);
     const l = this.seatUid.get(loserSeat);
     if (!w || !l) return undefined;
     const db = this.env.DB;
-    const rate = async (uid: string) =>
-      (await db.prepare('SELECT rating FROM players WHERE uid = ?').bind(uid).first<{ rating: number }>())?.rating ?? START_RATING;
-    const [rw, rl] = await Promise.all([rate(w), rate(l)]);
-    const delta = eloDelta(rw, rl);
+    const read = async (uid: string) => {
+      const row = await db.prepare('SELECT rating, games FROM players WHERE uid = ?').bind(uid).first<{ rating: number; games: number }>();
+      return { rating: row?.rating ?? START_RATING, games: row?.games ?? 0 };
+    };
+    const [rw, rl] = await Promise.all([read(w), read(l)]);
+    const gain = eloDelta(rw.rating, rl.rating, eloK(rw.games));
+    const loss = Math.min(rl.rating, eloDelta(rw.rating, rl.rating, eloK(rl.games)));
     const now = Date.now();
     const nameOf = (seat: string) => this.core?.state?.players.find((p) => p.id === seat)?.name ?? 'Player';
     // Adds to the stored value, so two matches ending together can't lose a change.
     const update = (uid: string, name: string, change: number) =>
       db.prepare(
         `INSERT INTO players (uid, name, rating, games, updated_at) VALUES (?, ?, ?, 1, ?)
-         ON CONFLICT (uid) DO UPDATE SET rating = rating + ?, games = games + 1, updated_at = ?`,
-      ).bind(uid, name, START_RATING + change, now, change, now);
-    await db.batch([update(w, nameOf(winnerSeat), delta), update(l, nameOf(loserSeat), -delta)]);
-    return delta;
+         ON CONFLICT (uid) DO UPDATE SET rating = MAX(0, rating + ?), games = games + 1, updated_at = ?`,
+      ).bind(uid, name, Math.max(0, START_RATING + change), now, change, now);
+    await db.batch([update(w, nameOf(winnerSeat), gain), update(l, nameOf(loserSeat), -loss)]);
+    return {
+      [winnerSeat]: { before: rw.rating, after: rw.rating + gain, games: rw.games + 1 },
+      [loserSeat]: { before: rl.rating, after: Math.max(0, rl.rating - loss), games: rl.games + 1 },
+    };
   }
 
   /** Works out who is joining, and the name others should see. Returns null if they can't join. */
+  /** Abilities an account really has: the ones it claims that its saved progress also lists. */
+  private async ownedAbilities(uid: string, claimed: unknown): Promise<AbilityId[]> {
+    try {
+      const row = await this.env.DB.prepare('SELECT profile FROM players WHERE uid = ?').bind(uid).first<{ profile: string | null }>();
+      const saved = row?.profile ? (JSON.parse(row.profile) as { abilitiesOwned?: unknown }).abilitiesOwned : [];
+      const owned = new Set(cleanAbilities(saved));
+      return cleanAbilities(claimed).filter((a) => owned.has(a));
+    } catch {
+      return cleanAbilities([]);
+    }
+  }
+
   private async identify(code: string, msg: Extract<ClientMsg, { t: 'join' }>): Promise<{ identity: string; name: string; uid: string | null } | { error: string }> {
     const claims = await verifyClaims(this.env, msg.idToken);
     if (code.startsWith('R-')) {
@@ -622,7 +649,9 @@ export class RoomObject implements DurableObject {
             server.close(4401, 'not allowed');
             return;
           }
-          core.join(connId, who.identity, { ...msg, name: who.name });
+          // Ranked checks abilities against the account's saved progress, not just what the page says.
+          const abilities = code.startsWith('R-') && who.uid ? await this.ownedAbilities(who.uid, msg.abilities) : msg.abilities;
+          core.join(connId, who.identity, { ...msg, name: who.name, abilities });
           if (who.uid) {
             const seat = core.seats.find((s) => s.conns.has(connId));
             if (seat) this.seatUid.set(seat.id, who.uid);

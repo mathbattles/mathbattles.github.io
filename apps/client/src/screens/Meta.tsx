@@ -12,7 +12,7 @@ import { LANGS, browserLang, isLang, setLanguage, t, useLang } from '../i18n';
 import { AccountPanel } from './Account';
 import { MyHistory } from './History';
 import { TopBar, useProfile } from './Shared';
-import { QuestsPanel, SeasonPass } from './Season';
+import { SeasonSummary } from './Season';
 import { sound } from '../util';
 import { TRACKS } from '../audio/compose';
 
@@ -23,8 +23,23 @@ export function ItemThumb({ item }: { item: Cosmetic }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current!;
+    // Drawn in a 140 by 80 space, but at the size it really shows on screen, so large
+    // previews stay sharp instead of being a small picture stretched up.
+    const paint = () => {
+    const dpr = Math.min(3, globalThis.devicePixelRatio || 1);
+    const shown = canvas.clientWidth || 140;
+    const k = Math.min(8, Math.max(1, (shown / 140) * dpr));
+    const w = Math.round(140 * k);
+    const h = Math.round(80 * k);
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
     const c = canvas.getContext('2d')!;
+    c.setTransform(1, 0, 0, 1, 0, 0);
     c.clearRect(0, 0, canvas.width, canvas.height);
+    c.setTransform(k, 0, 0, k, 0, 0);
+    c.imageSmoothingQuality = 'high';
     if (item.kind === 'hat') {
       c.save();
       c.translate(70, 54);
@@ -65,8 +80,21 @@ export function ItemThumb({ item }: { item: Cosmetic }) {
       c.textBaseline = 'middle';
       c.fillText(item.value || 'No title', 70, 40, 130);
     }
+    };
+    paint();
+    let last = canvas.clientWidth;
+    const watch = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
+      if (canvas.clientWidth !== last) {
+        last = canvas.clientWidth;
+        paint();
+      }
+    });
+    watch?.observe(canvas);
+    // Fonts may load after the first paint; titles are redrawn once they are ready.
+    void document.fonts?.ready.then(() => paint());
+    return () => watch?.disconnect();
   }, [item.id]);
-  return <canvas ref={ref} width={140} height={80} aria-hidden="true" />;
+  return <canvas class="item-thumb" ref={ref} width={140} height={80} aria-hidden="true" />;
 }
 
 /** Tries an item on in a live scene, before buying it. */
@@ -191,7 +219,7 @@ export function Shop() {
   };
   return (
     <div class="page">
-      <TopBar title={t('ui.shop')} />
+      <TopBar title={t('nav.cosmetics')} />
       <p>{t('ui.seasonPassRewardsArenTSold')}</p>
       {error && <p class="error" role="alert">{error}</p>}
       <div class="shop-layout">
@@ -251,8 +279,7 @@ export function ProfileScreen() {
           <AccountPanel />
         </div>
       </div>
-      <SeasonPass />
-      <QuestsPanel />
+      <SeasonSummary />
       <div class="sheet">
         <h3>{t('ui.matchHistory')}</h3>
         <MyHistory />

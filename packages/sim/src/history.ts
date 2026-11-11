@@ -39,6 +39,13 @@ export function roundMoment(state: MatchState, roundIndex: number): RoundMoment 
       const after: BoardMoment | null = index === roundIndex ? { soldiers: soldiers.map((s) => ({ ...s })), holes: [...holes] } : null;
       holes = holes.slice(0, holes.length - e.round.holes);
       for (const k of e.round.kills) if (soldiers[k.id]) soldiers[k.id]!.alive = true;
+      for (const m of e.round.moves ?? []) {
+        const s = soldiers[m.id];
+        if (s) {
+          s.x = m.from.x;
+          s.y = m.from.y;
+        }
+      }
       if (after) return { round: e.round, before: { soldiers, holes }, after };
     }
   }

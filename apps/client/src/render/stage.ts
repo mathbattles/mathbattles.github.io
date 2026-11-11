@@ -4,17 +4,20 @@ import {
   BEAM_WIDTH_MULT,
   BLAST_R,
   DRAW_STEPS_PER_SEC,
+  HEAVY_BLAST_MULT,
   NEXT_ROUND_DELAY_MS,
   PLANE_H,
   PLANE_W,
   PX_PER_UNIT,
   SOLDIER_R,
   TEAM_RING,
+  hopPosition,
   isAlly,
   isTarget,
   mixColors,
   type BeamRecord,
   type Circle,
+  type HopRecord,
   type KillRecord,
   type MatchState,
   type RoundRecord,
@@ -75,6 +78,15 @@ interface ActiveShot {
   exploded: boolean;
 }
 
+interface ActiveHop {
+  rec: HopRecord;
+  path: { xs: ArrayLike<number>; ys: ArrayLike<number>; steps: number };
+  launched: boolean;
+  overs: Set<number>;
+  jumped: boolean;
+  landed: boolean;
+}
+
 interface ActiveBeam {
   rec: BeamRecord;
   color: string;
@@ -88,6 +100,9 @@ interface ActiveRound {
   round: RoundRecord;
   shots: ActiveShot[];
   beams: ActiveBeam[];
+  hops: ActiveHop[];
+  /** Ricochet bounces already shown, by shot index. */
+  bounced: Set<number>;
   /** Kills already shown, by index in round.kills. */
   shown: Set<number>;
   /** Kills so far this round, by shooter, for DOUBLE! and TRIPLE!. */
@@ -194,9 +209,10 @@ export function strokeTrail(
     c.restore();
     return;
   }
-  if (trail === 'candycane' || trail === 'frost' || trail === 'gold') {
+  if (trail === 'candycane' || trail === 'frost' || trail === 'gold' || trail === 'magma') {
     const layers: [string, number, number, number[]][] =
-      trail === 'candycane' ? [['#ffffff', 6, 1, []], ['#e8304a', 6, 1, [7, 7]], ['#00000022', 1, 1, []]]
+      trail === 'magma' ? [['#ff5a1f', 13, 0.3, []], ['#d8320f', 5, 1, []], ['#ffd25e', 1.8, 1, [10, 6]]]
+      : trail === 'candycane' ? [['#ffffff', 6, 1, []], ['#e8304a', 6, 1, [7, 7]], ['#00000022', 1, 1, []]]
       : trail === 'frost' ? [['#bfe9ff', 13, 0.35, []], ['#8fd3ff', 6, 0.7, []], ['#ffffff', 2, 1, []]]
       : [['#ffd75e', 12, 0.35, []], ['#e0a400', 4.5, 1, []], ['#fff6c2', 1.4, 1, []]];
     for (const [stroke, width, alpha, dash] of layers) {
@@ -554,6 +570,20 @@ export class Stage {
   paused = false;
   /** The viewer's player: an arrow floats over their soldier. */
   youId: string | null = null;
+  /** Where Hop riders are this frame, with how high they are in the air (0 to 1). */
+  private riderPos = new Map<number, { x: number; y: number; air: number }>();
+  /** Heavy Shot preview: the blast ring where the line ends. */
+  previewBlast: { x: number; y: number; r: number } | null = null;
+  /** Hop preview: where you'd land, or 'out' if you'd leave the field. */
+  previewLanding: { x: number; y: number } | 'out' | null = null;
+  /** Plays a named sound effect. */
+  onSfx?: (name: string) => void;
+  /**
+   * A soldier hopping out of the field. It is not drawn on the field at all: it leaves the
+   * coordinate plane and leaps out over the page on a layer laid over the whole window.
+   */
+  private cutscene: { id: number; playerId: string; x: number; y: number; dx: number; dy: number; p: number } | null = null;
+  private escapeLayer: HTMLCanvasElement | null = null;
   /** Bigger or smaller names and arrow, from the game text size setting. */
   labelScale = 1;
   private rings: Ring[] = [];
@@ -704,6 +734,8 @@ export class Stage {
     const round = this.shot;
     if (!round) return;
     this.shot = null;
+    this.riderPos.clear();
+    this.endEscape();
     this.zoom.target = 1;
     if (this.state) this.sync(this.state);
     round.resolve();
@@ -715,10 +747,13 @@ export class Stage {
       n: 0,
       shots: [record],
       beams: [],
-      kills: record.hits.map((h) => ({ id: h.id, step: h.step, by: [record.playerId] })),
+      kills: record.hits.map((h) => ({ id: h.id, step: h.step, by: [record.playerId], kind: 'shot' as const })),
       luck: [],
       steps: path.steps,
       holes: 1,
+      hops: [],
+      moves: [],
+      energy: [],
     };
     return this.playRound(round, [path]);
   }
@@ -746,10 +781,20 @@ export class Stage {
         started: false,
         carved: rec.dirs.map(() => 0),
       }));
+      const hops: ActiveHop[] = (round.hops ?? []).map((rec) => ({
+        rec,
+        path: paths[rec.shot] ?? { xs: [], ys: [], steps: 0 },
+        launched: false,
+        overs: new Set(),
+        jumped: false,
+        landed: false,
+      }));
       this.shot = {
         round,
         shots,
         beams,
+        hops,
+        bounced: new Set(),
         shown: new Set(),
         combo: new Map(),
         luckShown: new Set(),
@@ -880,7 +925,8 @@ export class Stage {
     c.setTransform(this.terrainLayer.width / PLANE_W, 0, 0, this.terrainLayer.height / PLANE_H, 0, 0);
     c.clearRect(0, 0, PLANE_W, PLANE_H);
     c.globalCompositeOperation = 'source-over';
-    this.circles.forEach((o, i) => drawObstacle(c, this.rockStyle, this.px(o.x), o.y, o.r, i));
+    // A mirrored view flips each shape too, which for these symmetric shapes means turning it the other way.
+    this.circles.forEach((o, i) => drawObstacle(c, this.rockStyle, this.px(o.x), o.y, o.r, i, o.shape, this.mirror ? -(o.rot ?? 0) : o.rot ?? 0));
     const holes = this.past?.holes ?? this.holes;
     c.globalCompositeOperation = 'destination-out';
     c.fillStyle = '#000';
@@ -975,6 +1021,11 @@ export class Stage {
   private drawSoldier(c: CanvasRenderingContext2D, s: Stage['soldiers'][number], now: number, theme: Theme): void {
     const owner = this.state?.players.find((p) => p.id === s.playerId);
     const color = this.colorOf(s.playerId);
+    const ride = this.past ? undefined : this.riderPos.get(s.id);
+    if (ride && s.alive) {
+      this.drawRider(c, s, ride, color, theme, now);
+      return;
+    }
     const x = this.px(s.x);
     const y = s.y;
     if (!s.alive) {
@@ -1028,14 +1079,21 @@ export class Stage {
       // of the field everything goes below instead: soldier, arrow, name.
       const w = 7 * k;
       const h = 7 * k;
+      // Always pointing at the soldier: down from above, or up from below when the name flips.
       const ay = flip ? y + SOLDIER_R + 5 + bob : y - SOLDIER_R - 6 - h + bob;
       c.fillStyle = color;
       c.strokeStyle = theme.bg;
       c.lineWidth = 2;
       c.beginPath();
-      c.moveTo(x - w, ay);
-      c.lineTo(x + w, ay);
-      c.lineTo(x, ay + h);
+      if (flip) {
+        c.moveTo(x - w, ay + h);
+        c.lineTo(x + w, ay + h);
+        c.lineTo(x, ay);
+      } else {
+        c.moveTo(x - w, ay);
+        c.lineTo(x + w, ay);
+        c.lineTo(x, ay + h);
+      }
       c.closePath();
       c.stroke();
       c.fill();
@@ -1045,15 +1103,127 @@ export class Stage {
       c.textAlign = 'center';
       c.fillStyle = color;
       const locked = !!owner?.locked && !this.state?.over && !this.shot;
-      const label = locked ? `${name} \u2713` : name;
-      if (!flip) {
-        c.textBaseline = 'bottom';
-        c.fillText(label, lx, above);
-      } else {
-        c.textBaseline = 'top';
-        c.fillText(label, lx, y + SOLDIER_R + 6 + arrowH + (mine ? 3 : 0));
+      const ty = flip ? y + SOLDIER_R + 6 + arrowH + (mine ? 3 : 0) : above;
+      c.textBaseline = flip ? 'top' : 'bottom';
+      c.fillText(name, lx, ty);
+      if (locked) {
+        // A small drawn tick after the name: this player has locked in.
+        const tw = c.measureText(name).width;
+        const cx = lx + tw / 2 + 4 * k;
+        const cy = flip ? ty + 6 * k : ty - 6 * k;
+        c.strokeStyle = color;
+        c.lineWidth = 2 * k;
+        c.lineCap = 'round';
+        c.lineJoin = 'round';
+        c.beginPath();
+        c.moveTo(cx, cy);
+        c.lineTo(cx + 3 * k, cy + 3 * k);
+        c.lineTo(cx + 8 * k, cy - 4 * k);
+        c.stroke();
       }
     }
+  }
+
+  /** Removes the escaping soldier and its window layer. */
+  private endEscape(): void {
+    this.cutscene = null;
+    this.escapeLayer?.remove();
+    this.escapeLayer = null;
+  }
+
+  /**
+   * Hopping out of the field breaks the fourth wall. The coordinate plane does not change at
+   * all: the soldier jumps off its edge and out over the page around it, growing a little as
+   * it leaps toward you, then shrinking away, spinning and fading out.
+   */
+  private drawEscape(now: number, theme: Theme): void {
+    const cs = this.cutscene;
+    if (!cs) return;
+    const rect = this.canvas.getBoundingClientRect();
+    if (!rect.width) return;
+    let layer = this.escapeLayer;
+    if (!layer) {
+      layer = document.createElement('canvas');
+      layer.className = 'escape-layer';
+      layer.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(layer);
+      this.escapeLayer = layer;
+    }
+    const dpr = Math.min(2, globalThis.devicePixelRatio || 1);
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    if (layer.width !== Math.round(W * dpr) || layer.height !== Math.round(H * dpr)) {
+      layer.width = Math.round(W * dpr);
+      layer.height = Math.round(H * dpr);
+    }
+    const c = layer.getContext('2d')!;
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.clearRect(0, 0, layer.width, layer.height);
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const k = rect.width / PLANE_W;
+    const p = Math.max(0, Math.min(1, cs.p));
+    // Where it left the field, on the screen.
+    const sx = rect.left + this.px(cs.x) * k;
+    const sy = rect.top + cs.y * (rect.height / PLANE_H);
+    const dirX = this.mirror ? -cs.dx : cs.dx;
+    const dirY = cs.dy;
+    // Far enough to clear the field's edge and land out on the page, but always inside the
+    // window, so the leap can be seen even when the field touches the window's edge.
+    const reach = Math.max(120, Math.min(W, H) * 0.22);
+    const ease = 1 - Math.pow(1 - Math.min(1, p / 0.7), 2);
+    const hop = Math.sin(Math.min(1, p / 0.7) * Math.PI) * reach * 0.3;
+    const edge = SOLDIER_R * k * 2.4;
+    let tx = sx + dirX * reach * ease;
+    let ty = sy + dirY * reach * ease - hop;
+    // No room past that edge: the leap swings sideways along the page instead, away from the
+    // middle of the field, so it still ends up off the coordinate plane.
+    const side = sx < rect.left + rect.width / 2 ? -1 : 1;
+    if (ty < edge) { tx += side * (edge - ty) * 1.3; ty = edge; }
+    if (ty > H - edge) { tx += side * (ty - H + edge) * 1.3; ty = H - edge; }
+    if (tx < edge) { ty += (edge - tx) * 0.8; tx = edge; }
+    if (tx > W - edge) { ty += (tx - W + edge) * 0.8; tx = W - edge; }
+    const x = tx;
+    const y = Math.max(edge, Math.min(H - edge, ty));
+    const grow = p < 0.3 ? p / 0.3 : 1;
+    const shrink = p < 0.3 ? 0 : (p - 0.3) / 0.7;
+    const scale = k * (1 + grow * 0.9) * (1 - shrink * 0.9);
+    c.globalAlpha = Math.max(0, 1 - shrink * shrink);
+    // A soft shadow left behind on the page as it leaves.
+    c.fillStyle = 'rgba(20, 22, 60, 0.18)';
+    c.beginPath();
+    c.ellipse(x + 6 * scale, y + 10 * scale + hop * 0.15, SOLDIER_R * scale * 0.9, SOLDIER_R * scale * 0.35, 0, 0, Math.PI * 2);
+    c.fill();
+    c.translate(x, y);
+    c.scale(scale, scale);
+    if (!reducedMotion()) c.rotate(shrink * Math.PI * 2.5 * Math.sign(dirX || 1));
+    const color = this.colorOf(cs.playerId);
+    this.drawFigure(c, 0, 0, color, dirX >= 0 ? 1 : -1, theme.bg);
+    drawHat(c, this.looks[cs.playerId]?.hat ?? 'none', 0, -SOLDIER_R + 1, color, 1);
+    void now;
+  }
+
+  /** A Hop rider: lifted by how high it is in the air, with a shadow left on the ground. */
+  private drawRider(c: CanvasRenderingContext2D, s: Stage['soldiers'][number], ride: { x: number; y: number; air: number }, color: string, theme: Theme, now: number): void {
+    const gx = this.px(ride.x);
+    const gy = ride.y;
+    const lift = ride.air * 34;
+    const scale = 1 + ride.air * 0.5;
+    c.save();
+    c.globalAlpha = 0.25 + 0.15 * (1 - ride.air);
+    c.fillStyle = theme.smoke;
+    c.beginPath();
+    c.ellipse(gx, gy + SOLDIER_R * 0.9, SOLDIER_R * (1.1 - ride.air * 0.4), SOLDIER_R * 0.4 * (1.1 - ride.air * 0.4), 0, 0, Math.PI * 2);
+    c.fill();
+    c.restore();
+    const facing = this.faceDirs.get(s.id) ?? 1;
+    c.save();
+    c.translate(gx, gy - lift);
+    c.scale(scale, scale);
+    if (!reducedMotion()) c.rotate(Math.sin(now / 90) * 0.12 * ride.air);
+    this.drawFigure(c, 0, 0, color, facing, theme.bg);
+    drawHat(c, this.looks[s.playerId]?.hat ?? 'none', 0, -SOLDIER_R + 1, color, facing);
+    c.restore();
   }
 
   private knockOut(s: Stage['soldiers'][number], now: number, by: { color: string; blast: string; kills: number }): void {
@@ -1085,7 +1255,21 @@ export class Stage {
   }
 
   private explode(shot: ActiveShot, now: number, kills: number): void {
-    const r = BLAST_R;
+    if (shot.record.ability === 'hop') return;
+    const heavy = shot.record.ability === 'heavy';
+    const r = heavy ? BLAST_R * HEAVY_BLAST_MULT : BLAST_R;
+    if (shot.record.reason === 'beamcut') {
+      // Cut off by a beam: a white flash where it stopped.
+      this.rings.push({ x: shot.record.end.x, y: shot.record.end.y, r: 10, at: now, color: '#ffffff', style: 'shock' });
+      this.onSfx?.('beamCut');
+    }
+    if (heavy) {
+      this.onSfx?.('heavy');
+      this.burst(shot.record.end.x, shot.record.end.y, 40, '#ffb02e', 'spark', 5);
+      this.burst(shot.record.end.x, shot.record.end.y, 30, this.rockColorAt(shot.record.end.x, shot.record.end.y), 'chunk', 3.5);
+      this.rings.push({ x: shot.record.end.x, y: shot.record.end.y, r, at: now, color: shot.color, style: 'shock' });
+      this.shake = Math.max(this.shake, 16);
+    }
     const { x, y } = shot.record.end;
     const theme = THEMES[this.themeId];
     this.burst(x, y, 22, theme.smoke, 'smoke', 0.8);
@@ -1094,7 +1278,7 @@ export class Stage {
     this.burst(x, y, 20, this.rockColorAt(x, y), 'chunk', 2.3);
     this.holes.push({ x, y, r });
     this.terrainDirty = true;
-    if (!reducedMotion()) this.fireballs.push({ x, y, r: Math.max(r * 1.3, 17), at: now });
+    if (!reducedMotion()) this.fireballs.push({ x, y, r: Math.max(r * (heavy ? 1.1 : 1.3), 17), at: now });
     // Where the shot ends, everyone gets the same explosion. Kill effects are only for kills.
     this.rings.push({ x, y, r, at: now, color: shot.color, style: 'ring' });
     this.shake = Math.max(this.shake, 8);
@@ -1108,7 +1292,11 @@ export class Stage {
     this.zoom.target = 1;
     setTimeout(() => {
       const done = this.shot === round;
-      if (done) this.shot = null;
+      if (done) {
+        this.shot = null;
+        this.riderPos.clear();
+        this.endEscape();
+      }
       if (done && this.state) this.sync(this.state);
       round.resolve();
     }, NEXT_ROUND_DELAY_MS / Math.max(0.25, this.speed));
@@ -1348,7 +1536,8 @@ export class Stage {
       if (left < 260) {
         scale = 0.22;
         const last = rec.kills.find((k) => k.step === round.lastKillStep);
-        const victim = last && this.soldiers.find((q) => q.id === last.id);
+        const victim = last && last.kind !== 'out' ? this.soldiers.find((q) => q.id === last.id) : undefined;
+        if (last?.kind === 'out') scale = 1;
         if (victim) {
           this.zoom.target = 1.7;
           // Centre on the victim, but never so far out that the view passes the drawn margin.
@@ -1369,6 +1558,58 @@ export class Stage {
     }
     for (const beam of round.beams) this.drawBeam(c, beam, reached, now, still);
 
+    // Ricochet: a spark ring where the line bounced.
+    round.shots.forEach((shot, i) => {
+      const b = shot.record.bounce;
+      if (!b || round.bounced.has(i) || reached < b.step) return;
+      round.bounced.add(i);
+      this.rings.push({ x: b.x, y: b.y, r: 9, at: now, color: shot.color, style: 'ring' });
+      this.burst(b.x, b.y, 12, shot.color, 'spark', 2.5);
+      this.onSfx?.('ricochet');
+    });
+
+    // Hop riders follow their own lines, hop over things, and jump at the end.
+    this.riderPos.clear();
+    for (const h of round.hops) {
+      const rec = h.rec;
+      const at = still ? rec.rideEnd + (rec.jump?.steps ?? 0) : reached;
+      const p = hopPosition(rec, h.path, at);
+      const dead = round.round.kills.some((k) => k.id === rec.soldierId && k.step <= at);
+      const j = rec.jump;
+      if (j?.out && at >= j.start && at < j.start + j.steps && !still) {
+        const len = Math.hypot(j.to.x - j.from.x, j.to.y - j.from.y) || 1;
+        this.cutscene = {
+          id: rec.soldierId, playerId: rec.playerId, x: j.from.x, y: j.from.y,
+          dx: (j.to.x - j.from.x) / len, dy: (j.to.y - j.from.y) / len, p: (at - j.start) / j.steps,
+        };
+      } else if (this.cutscene?.id === rec.soldierId) {
+        this.endEscape();
+      }
+      if (!dead && this.cutscene?.id !== rec.soldierId) this.riderPos.set(rec.soldierId, p);
+      if (at > rec.start && !h.launched) {
+        h.launched = true;
+        this.onSfx?.('hopLaunch');
+      }
+      for (const o of rec.overs) {
+        if (at >= o.step && !h.overs.has(o.step)) {
+          h.overs.add(o.step);
+          this.onSfx?.('hopOver');
+        }
+      }
+      if (rec.jump && at >= rec.jump.start && !h.jumped) {
+        h.jumped = true;
+        this.onSfx?.(rec.jump.out ? 'hopOut' : 'hopOver');
+        this.burst(rec.jump.from.x, rec.jump.from.y + SOLDIER_R, 6, THEMES[this.themeId].grid, 'chunk', 1.4);
+      }
+      if (rec.jump && !rec.jump.out && at >= rec.jump.start + rec.jump.steps && !h.landed) {
+        h.landed = true;
+        this.onSfx?.('hopLand');
+        this.burst(rec.jump.to.x, rec.jump.to.y + SOLDIER_R, 10, THEMES[this.themeId].grid, 'chunk', 1.6);
+        this.rings.push({ x: rec.jump.to.x, y: rec.jump.to.y + SOLDIER_R, r: 8, at: performance.now(), color: THEMES[this.themeId].axis, style: 'ring' });
+        this.shake = Math.max(this.shake, 4);
+      }
+    }
+
     rec.kills.forEach((kill: KillRecord, i) => {
       if (round.shown.has(i) || reached < kill.step) return;
       round.shown.add(i);
@@ -1379,7 +1620,34 @@ export class Stage {
       const shot = round.shots.find((x) => x.record.playerId === killer);
       const beam = kill.beam ? round.beams.find((b) => b.rec.owners.includes(killer)) : undefined;
       const color = beam?.color ?? shot?.color ?? this.colorOf(killer);
-      if (s && s.alive) this.knockOut(s, now, { color, blast: shot?.blast ?? 'ring', kills: n });
+      // A rider is knocked out wherever it had got to.
+      const rp = this.riderPos.get(kill.id);
+      if (s && rp) {
+        s.x = rp.x;
+        s.y = rp.y;
+        this.riderPos.delete(kill.id);
+      }
+      if (kill.kind === 'out') {
+        // Hopped out of the field: a pop at the edge and a call-out, with no body flying back.
+        if (s) {
+          s.alive = false;
+          s.flown = true;
+          const rec = round.hops.find((h) => h.rec.soldierId === kill.id)?.rec;
+          const at = rec?.jump?.to ?? s;
+          const ex = Math.max(8, Math.min(PLANE_W - 8, at.x));
+          const ey = Math.max(8, Math.min(PLANE_H - 8, at.y));
+          this.burst(ex, ey, 26, this.colorOf(s.playerId), 'star', 3);
+          this.rings.push({ x: ex, y: ey, r: 14, at: now, color: this.colorOf(s.playerId), style: 'shock' });
+          this.float('OUT!', this.px(ex), ey - 10, 30, this.colorOf(s.playerId), now, 1500);
+          this.onKill?.();
+        }
+      } else if (s && s.alive) {
+        this.knockOut(s, now, { color, blast: shot?.blast ?? 'ring', kills: n });
+        if (kill.kind === 'hop') {
+          this.float('HOP KILL!', this.px(s.x), s.y - 34, 30, color, now, 1500);
+          this.onSfx?.('hopKill');
+        }
+      }
       // A coin flip saved someone: say so over their head.
       for (const lucky of rec.luck) {
         if (round.luckShown.has(lucky) || !kill.by.includes(lucky)) continue;
@@ -1400,7 +1668,10 @@ export class Stage {
         this.explode(shot, now, shot.record.hits.length);
       }
     }
-    if (!round.ending && reached >= rec.steps && round.shots.every((x) => x.exploded)) this.endRound(round);
+    if (!round.ending && reached >= rec.steps && round.shots.every((x) => x.exploded)) {
+      this.riderPos.clear();
+      this.endRound(round);
+    }
   }
 
   private draw(now: number): void {
@@ -1453,6 +1724,52 @@ export class Stage {
       c.restore();
     }
 
+    if (!this.past && this.previewBlast) {
+      const b = this.previewBlast;
+      c.save();
+      c.setLineDash([5, 5]);
+      c.strokeStyle = this.youId ? this.colorOf(this.youId) : theme.axis;
+      c.lineWidth = 2;
+      c.beginPath();
+      c.arc(this.px(b.x), b.y, b.r, 0, Math.PI * 2);
+      c.stroke();
+      c.restore();
+    }
+    if (!this.past && this.previewLanding) {
+      const color = this.youId ? this.colorOf(this.youId) : theme.axis;
+      c.save();
+      c.strokeStyle = color;
+      c.lineWidth = 2.4;
+      c.lineCap = 'round';
+      if (this.previewLanding === 'out') {
+        // Would hop out of the field: a warning cross at the end of the line.
+        const p = this.previewPath;
+        const i = p ? Math.max(0, p.steps - 1) : 0;
+        if (p && Number.isFinite(p.ys[i]!)) {
+          const x = this.px(p.xs[i]!);
+          const y = p.ys[i]!;
+          c.strokeStyle = '#ee3a57';
+          c.beginPath();
+          c.moveTo(x - 7, y - 7);
+          c.lineTo(x + 7, y + 7);
+          c.moveTo(x + 7, y - 7);
+          c.lineTo(x - 7, y + 7);
+          c.stroke();
+        }
+      } else {
+        const l = this.previewLanding;
+        c.setLineDash([3, 4]);
+        c.beginPath();
+        c.arc(this.px(l.x), l.y, SOLDIER_R + 2, 0, Math.PI * 2);
+        c.stroke();
+        c.setLineDash([]);
+        c.beginPath();
+        c.ellipse(this.px(l.x), l.y + SOLDIER_R + 4, SOLDIER_R, 2.5, 0, 0, Math.PI * 2);
+        c.stroke();
+      }
+      c.restore();
+    }
+
     if (this.past) {
       for (const { path, playerId } of this.past.paths) {
         strokeTrail(c, path.xs, path.ys, path.steps, this.colorOf(playerId), this.looks[playerId]?.trail ?? 'ink', true, (x) => this.px(x));
@@ -1467,7 +1784,9 @@ export class Stage {
     if (this.past) {
       for (const s of this.past.soldiers) this.drawSoldier(c, { ...s, flown: false, bornAt: 0 }, now, theme);
     } else {
-      for (const s of this.soldiers) this.drawSoldier(c, s, now, theme);
+      // A soldier leaving in the cutscene is drawn only by the cutscene.
+      for (const s of this.soldiers) if (s.id !== this.cutscene?.id) this.drawSoldier(c, s, now, theme);
+      this.drawEscape(now, theme);
     }
 
     if (this.aimAngle !== null && this.activeSoldierId !== null && !this.past) {

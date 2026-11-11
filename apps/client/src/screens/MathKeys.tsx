@@ -5,6 +5,7 @@ import { profile } from '../store';
 import { sound } from '../util';
 import { useProfile } from './Shared';
 import { t } from '../i18n';
+import { Icon, type IconName } from './Icons';
 
 const touchQuery = globalThis.matchMedia?.('(pointer: coarse)');
 
@@ -28,6 +29,8 @@ export function useMathKeys(): { on: boolean; typing: boolean; setTyping: (t: bo
 
 interface Key {
   label: string;
+  /** A drawn icon shown instead of the label. */
+  icon?: IconName;
   /** What the key types. Function keys add their brackets and put the cursor inside. */
   insert?: string;
   back?: number;
@@ -53,8 +56,8 @@ function layout(mode: ShotMode): Key[][] {
     [num('7'), num('8'), num('9'), { label: '÷', insert: '/', kind: 'op', aria: 'divide' }, fn('sin'), fn('cos')],
     [num('4'), num('5'), num('6'), { label: '×', insert: '*', kind: 'op', aria: 'times' }, fn('tan'), fn('sqrt', '√')],
     [num('1'), num('2'), num('3'), { label: '−', insert: '-', kind: 'op', aria: 'minus' }, fn('abs'), fn('exp')],
-    [num('0'), { label: '.', insert: '.', kind: 'num', aria: 'point' }, { label: 'π', insert: 'pi', kind: 'var', aria: 'pi' }, { label: '+', insert: '+', kind: 'op', aria: 'plus' }, fn('ln'), { label: '⌫', action: 'delete', kind: 'ctl', aria: 'Delete' }],
-    [{ label: '◀', action: 'left', kind: 'ctl', aria: 'Move left' }, { label: '▶', action: 'right', kind: 'ctl', aria: 'Move right' }, { label: t('ui.abc'), action: 'abc', kind: 'ctl', wide: true, aria: 'Use the phone keyboard' }, { label: t('ui.clear'), action: 'clear', kind: 'ctl', wide: true }],
+    [num('0'), { label: '.', insert: '.', kind: 'num', aria: 'point' }, { label: 'π', insert: 'pi', kind: 'var', aria: 'pi' }, { label: '+', insert: '+', kind: 'op', aria: 'plus' }, fn('ln'), { label: '', icon: 'backspace', action: 'delete', kind: 'ctl', aria: 'Delete' }],
+    [{ label: '', icon: 'left', action: 'left', kind: 'ctl', aria: 'Move left' }, { label: '', icon: 'right', action: 'right', kind: 'ctl', aria: 'Move right' }, { label: t('ui.abc'), action: 'abc', kind: 'ctl', wide: true, aria: 'Use the phone keyboard' }, { label: t('ui.clear'), action: 'clear', kind: 'ctl', wide: true }],
   ];
 }
 
@@ -180,7 +183,7 @@ export function MathKeys(props: {
             if ((e as MouseEvent).detail === 0) press(key);
           }}
         >
-          {key.label}
+          {key.icon ? <Icon name={key.icon} size="1.25em" /> : key.label}
         </button>
       ))}
     </div>

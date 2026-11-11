@@ -2,6 +2,7 @@ import {
   ME,
   NEXT_ROUND_DELAY_MS,
   ROUND_MS,
+  ABILITY_IDS,
   DRAW_STEPS_PER_SEC,
   BOT_LEVELS,
   RuleError,
@@ -37,9 +38,11 @@ import {
   type ServerMsg,
   type RoomSettings,
   type SoloDef,
+  type RatingChange,
 } from '@mathbattles/sim';
 import type { Stage } from '../render/stage';
 import { serverText } from '../i18n';
+import { notify } from '../screens/Notices';
 
 export type { Draft };
 
@@ -63,12 +66,18 @@ export function roundPaths(board: { circles: Circle[]; holes: Circle[] }, round:
         mirrored: shot.mirrored,
         terrain,
         targets: [],
+        ricochet: shot.ability === 'ricochet',
       });
       return { xs: path.xs, ys: path.ys, steps: Math.min(path.steps, shot.steps) };
     } catch {
       return { xs: [], ys: [], steps: 0 };
     }
   });
+}
+
+/** How long a round lasts in this match, in milliseconds. */
+export function roundLengthMs(state: MatchState | null): number {
+  return (state?.config.roundSeconds ?? ROUND_MS / 1000) * 1000;
 }
 
 /** How long a round takes to draw, plus the pause after it. */
@@ -97,6 +106,8 @@ export abstract class GameSession {
   handoff: string | null = null;
   /** Practice and campaign fire the moment you press the button: there's nobody to wait for. */
   instantFire = false;
+  /** Whether abilities can be used here at all. The campaign leaves them out. */
+  abilitiesOn = true;
   private listeners = new Set<() => void>();
   onRound?: (round: RoundRecord) => void;
   onOver?: (state: MatchState) => void;
@@ -199,10 +210,11 @@ export class LocalSession extends GameSession {
   private roundId = 0;
   readonly setups: PlayerSetup[];
 
-  constructor(config: MatchConfig, setups: PlayerSetup[], opts: { noTimer?: boolean } = {}) {
+  constructor(config: MatchConfig, setups: PlayerSetup[], opts: { noTimer?: boolean; abilities?: readonly string[] } = {}) {
     super();
-    this.setups = setups;
-    this.state = createMatch(config, setups);
+    // Bots own every ability. People sharing this device use what this device owns.
+    this.setups = setups.map((s) => ({ ...s, abilities: s.isBot ? [...ABILITY_IDS] : (opts.abilities ?? ['hop']) as PlayerSetup['abilities'] }));
+    this.state = createMatch(config, this.setups);
     this.terrain = terrainOf(this.state);
     this.showTimer = !opts.noTimer;
     this.aimer = setups.find((s) => !s.isBot)?.id ?? setups[0]!.id;
@@ -258,14 +270,14 @@ export class LocalSession extends GameSession {
     this.aimer = id;
     this.handoff = this.shared() && cover ? playerById(this.state, id)?.name ?? 'the next player' : null;
     this.restoreDraft = this.drafts.get(id) ?? null;
-    this.deadline = !this.handoff && this.showTimer ? Date.now() + ROUND_MS : null;
+    this.deadline = !this.handoff && this.showTimer ? Date.now() + roundLengthMs(this.state) : null;
     this.emit();
   }
 
   override acceptHandoff(): void {
     if (!this.handoff) return;
     this.handoff = null;
-    this.deadline = this.showTimer ? Date.now() + ROUND_MS : null;
+    this.deadline = this.showTimer ? Date.now() + roundLengthMs(this.state) : null;
     this.emit();
   }
 
@@ -282,7 +294,7 @@ export class LocalSession extends GameSession {
     setLocked(this.state, prev, false);
     this.passTo(prev, false);
     this.handoff = null;
-    this.deadline = this.showTimer ? Date.now() + ROUND_MS : null;
+    this.deadline = this.showTimer ? Date.now() + roundLengthMs(this.state) : null;
     this.emit();
     return true;
   }
@@ -295,7 +307,7 @@ export class LocalSession extends GameSession {
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     this.botsThinking--;
     if (this.disposed || this.roundId !== round || this.state.over || this.busy) return;
-    this.drafts.set(id, { expr: move.expr, angle: move.angle, dir: move.dir });
+    this.drafts.set(id, { expr: move.expr, angle: move.angle, dir: move.dir, ...(move.ability ? { ability: move.ability } : {}) });
     setLocked(this.state, id, true);
     this.maybeFire();
   }
@@ -342,7 +354,7 @@ export class LocalSession extends GameSession {
     for (const p of actors(this.state)) {
       const d = this.drafts.get(p.id);
       // Anything valid that was typed fires, locked or not.
-      if (isValid(d, this.state.config.mode)) shots.push({ playerId: p.id, expr: d!.expr, angle: d!.angle, dir: d!.dir });
+      if (isValid(d, this.state.config.mode)) shots.push({ playerId: p.id, expr: d!.expr, angle: d!.angle, dir: d!.dir, ability: d!.ability });
     }
     const round = resolveRound(this.state, shots, this.terrain);
     await this.animate(round, board);
@@ -405,6 +417,7 @@ export class SoloSession extends GameSession {
   constructor(private def: SoloDef, private opts: { maxShots?: number; endless?: () => SoloDef } = {}) {
     super();
     this.instantFire = true;
+    this.abilitiesOn = !!def.abilities?.length;
     this.state = createSolo(def);
     this.terrain = terrainOf(this.state);
     this.showTimer = false;
@@ -425,14 +438,16 @@ export class SoloSession extends GameSession {
     const err = validate(d.expr, this.state.config.mode);
     if (err) throw new RuleError(err.message);
     const board = { circles: this.state.circles, holes: this.state.holes.slice() };
-    const round = resolveRound(this.state, [{ playerId: ME, expr: d.expr, angle: d.angle, dir: d.dir }], this.terrain);
+    const round = resolveRound(this.state, [{ playerId: ME, expr: d.expr, angle: d.angle, dir: d.dir, ability: d.ability }], this.terrain);
     const shot = round.shots[0];
     this.shots.push({ expr: d.expr, ...(this.state.config.mode === 'ode2' && shot ? { angle: shot.angle } : {}) });
     void this.animate(round, board).then(() => {
       const cleared = soloCleared(this.state);
       const friendHit = soloHitFriend(this.state);
       const out = this.opts.maxShots !== undefined && this.shots.length >= this.opts.maxShots;
-      if (cleared && this.opts.endless) {
+      // Free Play goes on: a cleared board, or hopping out of the field, brings a new map.
+      const meDown = !this.state.soldiers.find((x) => x.playerId === ME)?.alive;
+      if ((cleared || meDown) && this.opts.endless) {
         this.restart(this.opts.endless());
         return;
       }
@@ -576,6 +591,17 @@ export class ReplaySession extends GameSession {
       if (this.playing) void this.run(0);
     });
   }
+  /** Jumps to just before a knockout and pauses there. */
+  jumpToKill(round: number, step: number): void {
+    this.playing = false;
+    this.seekRound(Math.max(0, round - 1));
+    if (this.stage) this.stage.paused = true;
+    const gen = this.generation;
+    // The round starts drawing straight away; move it on to a moment before the knockout.
+    void this.playNext(gen);
+    this.stage?.scrubRound(Math.max(0, ((step - 45) / DRAW_STEPS_PER_SEC) * 1000));
+    this.emit();
+  }
   /** Moves the round being drawn a frame forward or back. */
   stepFrame(dir: 1 | -1): void {
     if (!this.busy || !this.stage) return;
@@ -637,8 +663,12 @@ export class NetSession extends GameSession {
   ranked = false;
   /** How many people are watching the room. */
   spectators = 0;
+  /** Seats that voted for a rematch. */
+  rematchVotes: string[] = [];
   error = '';
   ratingDelta: number | undefined;
+  /** Each player's rating before and after a ranked match. */
+  ratings: Record<string, RatingChange> | undefined;
   /** The short replay id the server saved when the match ended. */
   replayId: string | undefined;
   private ws: WebSocket | null = null;
@@ -698,12 +728,8 @@ export class NetSession extends GameSession {
   }
 
   private showError(message: string): void {
-    this.error = serverText(message);
-    clearTimeout(this.errorTimer);
-    this.errorTimer = window.setTimeout(() => {
-      this.error = '';
-      this.emit();
-    }, 5000);
+    // Short errors fade in and out on their own, wherever you are.
+    notify(serverText(message), 'error');
   }
 
   /** Runs in order. One failure must not stop every later update. */
@@ -727,12 +753,14 @@ export class NetSession extends GameSession {
         this.settings = msg.settings;
         this.ranked = msg.ranked;
         this.spectators = msg.spectators ?? 0;
+        this.rematchVotes = msg.rematch ?? [];
         // Seat changes can arrive during a match. Only the server ending it returns everyone here.
         if (!msg.inMatch && !(msg.ranked && this.state?.over)) {
           this.status = 'lobby';
           this.state = null as unknown as MatchState;
           this.overNotified = false;
           this.ratingDelta = undefined;
+          this.ratings = undefined;
           this.replayId = undefined;
         }
         break;
@@ -745,6 +773,7 @@ export class NetSession extends GameSession {
         this.startsAt = this.opening;
         this.overNotified = false;
         this.replayId = undefined;
+        this.ratings = undefined;
         this.restoreDraft = msg.draft ?? null;
         this.chat = this.chat.slice(-40);
         this.stage?.sync(msg.state);
@@ -777,6 +806,7 @@ export class NetSession extends GameSession {
       }
       case 'over':
         this.ratingDelta = msg.ratingDelta;
+        this.ratings = msg.ratings;
         this.replayId = msg.replayId;
         this.setups = msg.setups;
         this.enqueue(() => {
@@ -804,10 +834,14 @@ export class NetSession extends GameSession {
 
   /** True during the countdown before the round's clock starts, or while shots land. */
   get waitingToStart(): boolean {
-    return this.deadline !== null && Date.now() < this.deadline - ROUND_MS;
+    return this.deadline !== null && Date.now() < this.deadline - roundLengthMs(this.state);
   }
   private get opening(): number | null {
-    return this.state && this.state.log.length === 0 && this.deadline !== null ? this.deadline - ROUND_MS : null;
+    return this.state && this.state.log.length === 0 && this.deadline !== null ? this.deadline - roundLengthMs(this.state) : null;
+  }
+  /** Votes to play again straight away after a match. */
+  rematch(): void {
+    this.send({ t: 'rematch' });
   }
   canAim(): boolean {
     if (this.busy || !this.state || this.state.over || this.waitingToStart) return false;
@@ -819,12 +853,12 @@ export class NetSession extends GameSession {
   }
   override setDraft(d: Draft): void {
     clearTimeout(this.draftTimer);
-    this.draftTimer = window.setTimeout(() => this.send({ t: 'draft', expr: d.expr, angle: d.angle, dir: d.dir }), 300);
+    this.draftTimer = window.setTimeout(() => this.send({ t: 'draft', expr: d.expr, angle: d.angle, dir: d.dir, ability: d.ability }), 300);
   }
   lock(d: Draft): void {
     clearTimeout(this.draftTimer);
     if (!d.expr.trim()) throw new RuleError('Type a function first');
-    this.send({ t: 'lock', expr: d.expr, angle: d.angle, dir: d.dir });
+    this.send({ t: 'lock', expr: d.expr, angle: d.angle, dir: d.dir, ability: d.ability });
   }
   unlock(): void {
     this.send({ t: 'unlock' });

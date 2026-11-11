@@ -6,6 +6,7 @@ import {
   PLANE_H,
   PLANE_W,
   PX_PER_UNIT,
+  SHOT_PX_PER_STEP,
   SOLDIER_R,
   STEP,
   type Dir,
@@ -34,6 +35,8 @@ export interface ShotRequest {
   terrain: Terrain;
   /** Living soldiers other than the shooter. */
   targets: readonly Target[];
+  /** Ricochet: bounce once off the first rock, like light off a mirror, then fly straight. */
+  ricochet?: boolean;
 }
 
 export type EndReason = 'obstacle' | 'edge' | 'invalid' | 'steep' | 'too-long';
@@ -47,6 +50,8 @@ export interface ShotResult {
   end: { x: number; y: number };
   reason: EndReason;
   angle: number;
+  /** Where a ricochet bounced, if it did. */
+  bounce?: { x: number; y: number; step: number };
 }
 
 const ANGLE_ERROR = Math.PI / 360;
@@ -121,37 +126,47 @@ export function simulateShot(
   let lastPy = py;
   const endsOnSteep = req.mode === 'fn';
   const R2 = SOLDIER_R * SOLDIER_R;
+  // After a ricochet the shot flies straight, in field pixels.
+  let straight = false;
+  let sdx = 0;
+  let sdy = 0;
+  let bounce: ShotResult['bounce'];
 
   for (let i = 1; i < MAX_STEPS; i++) {
-    let h = STEP;
-    let ny = stepper(x, y, dy, h);
-    let nx = x + dir * h;
-    let ended = false;
-    while (true) {
-      const ddx = nx - x;
-      const ddy = ny - y;
-      if (!(ddx * ddx + ddy * ddy > MAX_STEP_DIST_SQ)) break;
-      if (Math.abs(nx - x) > MIN_X_STEP) {
-        h /= 2;
-        ny = stepper(x, y, dy, h);
-        nx = x + dir * h;
-      } else {
-        // y = f(x) ends on a true jump. Solved equations keep going at the smallest step.
-        if (endsOnSteep) ended = true;
+    if (straight) {
+      px += sdx;
+      py += sdy;
+    } else {
+      let h = STEP;
+      let ny = stepper(x, y, dy, h);
+      let nx = x + dir * h;
+      let ended = false;
+      while (true) {
+        const ddx = nx - x;
+        const ddy = ny - y;
+        if (!(ddx * ddx + ddy * ddy > MAX_STEP_DIST_SQ)) break;
+        if (Math.abs(nx - x) > MIN_X_STEP) {
+          h /= 2;
+          ny = stepper(x, y, dy, h);
+          nx = x + dir * h;
+        } else {
+          // y = f(x) ends on a true jump. Solved equations keep going at the smallest step.
+          if (endsOnSteep) ended = true;
+          break;
+        }
+      }
+      if (ended) {
+        steps = i;
+        reason = 'steep';
         break;
       }
-    }
-    if (ended) {
-      steps = i;
-      reason = 'steep';
-      break;
-    }
 
-    x = nx;
-    y = ny;
-    dy = nextDy;
-    px = toPx(x, mirrored);
-    py = PLANE_H / 2 - y * PX_PER_UNIT;
+      x = nx;
+      y = ny;
+      dy = nextDy;
+      px = toPx(x, mirrored);
+      py = PLANE_H / 2 - y * PX_PER_UNIT;
+    }
     if (collect) {
       xs[i] = px;
       ys[i] = py;
@@ -180,6 +195,27 @@ export function simulateShot(
       break;
     }
     if (req.terrain.solidAt(ipx, ipy)) {
+      if (req.ricochet && !bounce) {
+        // Bounce off the rock's surface: reflect the direction about the surface normal.
+        const n = surfaceNormal(req.terrain, px, py);
+        let ddx = px - lastPx;
+        let ddy = py - lastPy;
+        const len = Math.hypot(ddx, ddy) || 1;
+        ddx /= len;
+        ddy /= len;
+        const dot = ddx * n.x + ddy * n.y;
+        sdx = (ddx - 2 * dot * n.x) * SHOT_PX_PER_STEP;
+        sdy = (ddy - 2 * dot * n.y) * SHOT_PX_PER_STEP;
+        straight = true;
+        px = lastPx;
+        py = lastPy;
+        if (collect) {
+          xs[i] = px;
+          ys[i] = py;
+        }
+        bounce = { x: px, y: py, step: i };
+        continue;
+      }
       steps = i;
       reason = 'obstacle';
       break;
@@ -196,7 +232,30 @@ export function simulateShot(
     end: { x: lastPx, y: lastPy },
     reason,
     angle: Number.isFinite(angle) ? angle : 0,
+    ...(bounce ? { bounce } : {}),
   };
+}
+
+/**
+ * The outward direction of the rock surface at a point: away from the rock pixels around it.
+ * Works for circles, flat sides, corners and carved holes alike.
+ */
+function surfaceNormal(terrain: Terrain, x: number, y: number): { x: number; y: number } {
+  let sx = 0;
+  let sy = 0;
+  const cx = Math.trunc(x);
+  const cy = Math.trunc(y);
+  for (let dy = -4; dy <= 4; dy++) {
+    for (let dx = -4; dx <= 4; dx++) {
+      if (dx * dx + dy * dy > 16) continue;
+      if (terrain.solidAt(cx + dx, cy + dy)) {
+        sx -= dx;
+        sy -= dy;
+      }
+    }
+  }
+  const len = Math.hypot(sx, sy);
+  return len > 0 ? { x: sx / len, y: sy / len } : { x: -1, y: 0 };
 }
 
 const EMPTY = new Float64Array(0);

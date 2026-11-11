@@ -467,14 +467,15 @@ test('larger screens: a left tab bar replaces the tiles, and steps aside during 
   const nav = page.getByRole('navigation', { name: 'Main' });
   await expect(nav).toBeVisible();
   await expect(page.locator('.menu-list')).toBeHidden();
-  // Home stands alone, then the three sections, each holding its own tabs in order.
+  // Home stands alone, then the four sections, each holding its own tabs in order.
   const sections: Record<string, string[]> = {
-    Play: ['Play Online', 'Ranked', 'Bots and Friends', 'Friends'],
+    Play: ['Play Online', 'Ranked', 'Bots', 'Friends'],
     Practice: ['Free Play', 'Learn', 'Campaign', 'Custom Maps'],
-    Misc: ['Shop', 'Inventory', 'Leaderboard', 'Profile', 'Settings'],
+    Shop: ['Cosmetics', 'Abilities', 'Inventory'],
+    Misc: ['Season Pass', 'Leaderboard', 'Profile', 'Settings'],
   };
   await expect(nav.getByRole('link', { name: 'Home', exact: true })).toBeVisible();
-  await expect(nav.getByRole('region')).toHaveCount(3);
+  await expect(nav.getByRole('region')).toHaveCount(4);
   for (const [section, tabs] of Object.entries(sections)) {
     const group = nav.getByRole('region', { name: section });
     await expect(group.getByRole('heading', { name: section })).toBeVisible();
@@ -955,10 +956,15 @@ test('inventory shows owned items by section, with details', async ({ browser })
   await expect(detail.getByRole('button', { name: 'Wearing it' })).toBeDisabled();
 });
 
-test('the season pass and quests show on the profile and menu', async ({ browser }) => {
+test('the season pass has its own tab, and quests show on the menu', async ({ browser }) => {
   const page = await newPlayer(browser, 'Seasonal');
   await page.goto('/#/profile');
+  await expect(page.locator('.season-summary')).toContainText(/level \d+ of 50/);
+  await page.locator('.season-summary').click();
+  await expect(page).toHaveURL(/#\/season/);
   await expect(page.getByRole('heading', { name: 'Season 0 pass' })).toBeVisible();
+  await expect(page.locator('.season-countdown')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Claim all|Nothing to claim/ })).toBeVisible();
   const levels = page.getByRole('list', { name: 'Season rewards' }).getByRole('listitem');
   await expect(levels).toHaveCount(50);
   await expect(levels.last()).toContainText('Smite');
@@ -1234,7 +1240,7 @@ test('pages change with a fade', async ({ browser }) => {
     location.hash = '/shop';
   }));
   expect(await leaving).toBe(true);
-  await expect(page.getByRole('heading', { name: 'Shop' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Cosmetics' })).toBeVisible();
 });
 
 for (const [name, width, height] of [
@@ -1252,7 +1258,7 @@ for (const [name, width, height] of [
     await page.addInitScript(() => {
       if (!localStorage.getItem('mathbattles.profile.v1')) localStorage.setItem('mathbattles.profile.v1', JSON.stringify({ name: 'Fit', analytics: 'no' }));
     });
-    for (const path of ['/#/', '/#/practice', '/#/campaign', '/#/learn', '/#/learn/slope', '/#/learn/winning', '/#/shop', '/#/settings', '/#/local', '/#/profile', '/#/online', '/#/ranked', '/#/leaderboard', '/#/signin', '/#/level/0-1', '/#/maps', '/#/maps/edit/fitcheck', '/#/inventory', '/#/friends', '/#/admin']) {
+    for (const path of ['/#/', '/#/practice', '/#/campaign', '/#/learn', '/#/learn/slope', '/#/learn/winning', '/#/shop', '/#/settings', '/#/local', '/#/profile', '/#/online', '/#/ranked', '/#/leaderboard', '/#/signin', '/#/level/0-1', '/#/maps', '/#/maps/edit/fitcheck', '/#/inventory', '/#/friends', '/#/admin', '/#/abilities', '/#/season']) {
       await page.goto(path);
       await page.waitForTimeout(250);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -1268,3 +1274,120 @@ for (const [name, width, height] of [
     expect((await page.locator('#fn-input').boundingBox())!.width).toBeGreaterThan(100);
   });
 }
+
+test('abilities: the shop, the in-match menu, the energy bar, and history cycling', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Hopper');
+  await page.goto('/#/abilities');
+  await expect(page.getByRole('heading', { name: 'Abilities' })).toBeVisible();
+  await expect(page.locator('.ability-card')).toHaveCount(3);
+  await expect(page.locator('.ability-card').first()).toContainText('Free for everyone');
+  await page.goto('/#/practice');
+  await expect(page.locator('.energy')).toContainText('Unlimited');
+  await page.locator('#fn-input').fill('x/12');
+  await page.getByRole('button', { name: 'Fire', exact: true }).click();
+  await expect(page.locator('#fn-input')).toBeEnabled({ timeout: 30_000 });
+  await page.locator('#fn-input').fill('x/20');
+  await page.getByRole('button', { name: 'Fire', exact: true }).click();
+  await expect(page.locator('#fn-input')).toBeEnabled({ timeout: 30_000 });
+  // The up arrow steps back one function per press, wrapping around.
+  await page.getByRole('button', { name: /Paste your last function/ }).click();
+  await expect(page.locator('#fn-input')).toHaveValue('x/20');
+  await page.getByRole('button', { name: /Paste your last function/ }).click();
+  await expect(page.locator('#fn-input')).toHaveValue('x/12');
+  await expect(page.locator('.recall-count')).toHaveText('2 / 2');
+  // Choosing Hop changes the button, and it still fires.
+  await page.getByRole('button', { name: 'Ability', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Choose an ability' }).getByRole('button', { name: /Hop/ }).click();
+  await expect(page.getByRole('button', { name: 'Fire (Hop)' })).toBeVisible();
+  await page.getByRole('button', { name: 'Fire (Hop)' }).click();
+  await expect(page.locator('#fn-input')).toBeEnabled({ timeout: 30_000 });
+});
+
+test('chat boxes sit at the bottom of their chat panel', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Talker');
+  await page.goto('/#/online');
+  await page.getByRole('button', { name: 'Create private room' }).click();
+  await expect(page).toHaveURL(/#\/room\//);
+  const panel = page.locator('.chat-panel');
+  await expect(panel).toBeVisible();
+  const p = (await panel.boundingBox())!;
+  const f = (await panel.locator('form').boundingBox())!;
+  // The message box is the last thing in the panel, within its padding of the bottom edge.
+  expect(p.y + p.height - (f.y + f.height)).toBeLessThan(24);
+  expect(p.y + p.height - (f.y + f.height)).toBeGreaterThanOrEqual(0);
+});
+
+test('room setup: Add bot is under Rules, and a map code box is there for the host', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Host');
+  await page.goto('/#/online');
+  await page.getByRole('button', { name: 'Create private room' }).click();
+  await expect(page).toHaveURL(/#\/room\//);
+  await expect(page.locator('.dd-field').filter({ hasText: 'Add bot' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Rocks' })).toBeVisible();
+  const code = page.getByLabel('Map code');
+  await expect(code).toBeVisible();
+  await code.fill('M-ZZZZZZ');
+  await page.getByRole('button', { name: 'Load' }).click();
+  await expect(page.getByText('No map has that code. Check it and try again.')).toBeVisible();
+});
+
+test('Free Play: the direction buttons sit to the right of Functions', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Free');
+  await page.goto('/#/practice');
+  const fns = page.locator('.fn-row .fn-picker-button');
+  const plus = page.getByRole('button', { name: 'Fire toward +x' });
+  const minus = page.getByRole('button', { name: 'Fire toward −x' });
+  await expect(fns).toBeVisible();
+  await expect(plus).toBeVisible();
+  const a = (await fns.boundingBox())!;
+  const b = (await plus.boundingBox())!;
+  expect(b.x).toBeGreaterThan(a.x + a.width - 1);
+  expect(Math.abs(b.y + b.height / 2 - (a.y + a.height / 2))).toBeLessThan(12);
+  await minus.click();
+  await expect(minus).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('inventory details open in a wide panel on the right', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Wide');
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto('/#/inventory');
+  await page.locator('.card').filter({ hasText: 'Ring' }).click();
+  const detail = page.locator('.card-detail');
+  await expect(detail).toBeVisible();
+  const d = (await detail.boundingBox())!;
+  expect(d.x).toBeGreaterThan(1400 / 2 - 40);
+  expect(d.width).toBeGreaterThan(330);
+});
+
+test('map editor: shape picker, rotation, and a preview under the cursor', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Shaper');
+  await page.goto('/#/maps');
+  await page.getByRole('link', { name: 'Make a new map' }).click();
+  await page.getByRole('button', { name: 'Star', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Star', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Turn right' }).click();
+  const field = page.locator('.editor-overlay');
+  await field.scrollIntoViewIfNeeded();
+  const box = (await field.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.4, box.y + box.height * 0.4);
+  // Something is drawn under the cursor before clicking.
+  const drawn = () => field.evaluate((el) => {
+    const c = el as HTMLCanvasElement;
+    const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+    for (let i = 3; i < d.length; i += 4) if (d[i]! > 0) return true;
+    return false;
+  });
+  await expect.poll(drawn, { timeout: 5000 }).toBe(true);
+  await page.mouse.click(box.x + box.width * 0.4, box.y + box.height * 0.4);
+  await expect(page.getByText(/1\/40 rocks/)).toBeVisible();
+});
+
+test('the Ranked page shows the six new tiers, starting at 100', async ({ browser }) => {
+  const page = await newPlayer(browser, 'Climber');
+  await page.goto('/#/ranked');
+  for (const name of ['Arithmetic', 'Algebra', 'Geometry', 'Calculus', 'Analysis', 'Medalist']) {
+    await expect(page.locator('.rank-ladder').getByText(name, { exact: true })).toBeVisible();
+  }
+  await expect(page.locator('.rank-ladder')).toContainText('Start (100)');
+  await expect(page.locator('.rank-ladder')).toContainText('500+');
+});

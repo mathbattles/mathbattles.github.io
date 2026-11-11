@@ -14,6 +14,9 @@ import {
   utcDayNumber,
   type CosmeticKind,
   type ShotMode,
+  ABILITIES,
+  cleanAbilities,
+  type AbilityId,
 } from '@mathbattles/sim';
 import { mergeProgress } from './profileMerge';
 import type { ThemeId } from './render/stage';
@@ -34,6 +37,12 @@ export interface Profile {
   questsPaid: string[];
   /** Course exercises finished. */
   learnDone: string[];
+  /** Abilities bought. Hop is always there. */
+  abilitiesOwned: AbilityId[];
+  /** Abilities marked as favourites, listed first in a match. */
+  abilityFavs: AbilityId[];
+  /** How often each ability was used, and the knockouts it got. */
+  abilityStats: Record<string, { uses: number; kills: number }>;
   /** The season these numbers belong to. A new season starts them again. */
   seasonId: number;
   seasonXp: number;
@@ -112,6 +121,9 @@ function fresh(): Profile {
     questProgress: {},
     questsPaid: [],
     learnDone: [],
+    abilitiesOwned: ['hop'],
+    abilityFavs: [],
+    abilityStats: {},
     seasonId: SEASON.id,
     seasonXp: 0,
     seasonPaid: [],
@@ -282,6 +294,40 @@ export function buy(id: string): string | null {
   return null;
 }
 
+/** Abilities this player owns, always including the free ones. */
+export function ownedAbilities(): AbilityId[] {
+  return cleanAbilities(profile.abilitiesOwned);
+}
+
+export function buyAbility(id: AbilityId): string | null {
+  const a = ABILITIES.find((x) => x.id === id);
+  if (!a) return 'That ability no longer exists';
+  if (ownedAbilities().includes(id)) return null;
+  if (profile.sparks < a.price) return `You need ${a.price - profile.sparks} more Sparks`;
+  profile.sparks -= a.price;
+  profile.abilitiesOwned = cleanAbilities([...profile.abilitiesOwned, id]);
+  saveProfile();
+  return null;
+}
+
+export function toggleAbilityFav(id: AbilityId): void {
+  profile.abilityFavs = profile.abilityFavs.includes(id) ? profile.abilityFavs.filter((x) => x !== id) : [...profile.abilityFavs, id];
+  saveProfile();
+}
+
+/** Owned abilities, favourites first. */
+export function abilityMenu(): AbilityId[] {
+  const owned = ownedAbilities();
+  return [...owned.filter((a) => profile.abilityFavs.includes(a)), ...owned.filter((a) => !profile.abilityFavs.includes(a))];
+}
+
+export function noteAbilityUse(id: AbilityId, kills: number): void {
+  const s = (profile.abilityStats[id] ??= { uses: 0, kills: 0 });
+  s.uses++;
+  s.kills += kills;
+  saveProfile();
+}
+
 export function equip(id: string): void {
   const c = COSMETICS.find((x) => x.id === id);
   if (!c || !profile.owned.includes(id)) return;
@@ -360,17 +406,28 @@ function rollSeason(): void {
 export function addSeasonXp(amount: number): void {
   rollSeason();
   if (amount > 0 && seasonActive(Date.now())) profile.seasonXp += Math.round(amount);
-  payoutSeason();
 }
 
-function payoutSeason(): void {
+/** Season levels reached whose rewards haven't been claimed yet. */
+export function seasonClaimable(): number[] {
+  rollSeason();
   const { level } = seasonLevel(profile.seasonXp);
-  for (const r of SEASON_REWARDS) {
-    if (r.level > level || profile.seasonPaid.includes(r.level)) continue;
-    profile.seasonPaid.push(r.level);
+  return SEASON_REWARDS.filter((r) => r.level <= level && !profile.seasonPaid.includes(r.level)).map((r) => r.level);
+}
+
+/** Claims one reached level's reward, or every waiting one. Each is paid once. */
+export function claimSeason(only?: number): number {
+  let n = 0;
+  for (const lv of seasonClaimable()) {
+    if (only !== undefined && lv !== only) continue;
+    const r = SEASON_REWARDS.find((x) => x.level === lv)!;
+    profile.seasonPaid.push(lv);
     if ('sparks' in r) profile.sparks += r.sparks;
     else if (!profile.owned.includes(r.cosmetic)) profile.owned.push(r.cosmetic);
+    n++;
   }
+  if (n) saveProfile();
+  return n;
 }
 
 export interface MatchRewardInput {

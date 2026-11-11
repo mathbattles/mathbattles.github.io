@@ -33,6 +33,24 @@ import {
   setLocked,
   shotsOf,
   waitingOn,
+  energyGain,
+  historyOf,
+  BLAST_R,
+  HEAVY_BLAST_MULT,
+  MAX_ENERGY,
+  START_ENERGY,
+  RANKS,
+  START_RATING,
+  PLACEMENT_MATCHES,
+  ROCK_SHAPES,
+  rankFor,
+  rankProgress,
+  eloK,
+  seasonReset,
+  rockContains,
+  rockTouches,
+  generateCircles,
+  cleanMap,
   type MatchConfig,
   type PlayerSetup,
 } from '../src';
@@ -468,7 +486,7 @@ describe('replays', () => {
     removePlayer(m, 'b');
     const code = encodeReplay(makeReplay(m, setups));
     const back = decodeReplay(code)!;
-    expect(back.v).toBe(3);
+    expect(back.v).toBe(5);
     const again = replayStart(back);
     for (const a of back.actions) if (!again.over) applyAction(again, a);
     expect(again.soldiers.map((s) => s.alive)).toEqual(m.soldiers.map((s) => s.alive));
@@ -545,5 +563,314 @@ describe('bot speed', () => {
     const t0 = Date.now();
     chooseMove(m, { playerId: 'a', generations: 400, seed: 1, budgetMs: 500 });
     expect(Date.now() - t0).toBeLessThan(1500);
+  });
+});
+
+describe('energy', () => {
+  it('follows floor(10 + 1.6 x 1.15^n), always a whole number', () => {
+    expect(energyGain(1)).toBe(11);
+    expect(energyGain(10)).toBe(16);
+    expect(energyGain(20)).toBe(36);
+    for (let n = 0; n < 60; n++) expect(Number.isInteger(energyGain(n))).toBe(true);
+  });
+  it('starts at 50, grows for each line fired, caps at 100, and fills on a kill', () => {
+    const m = board(createMatch(cfg(), [...duel, { id: 'c', name: 'C', team: 2 }]), { a: [100, 225], b: [400, 225], c: [700, 40] });
+    expect(m.players.every((p) => p.energy === START_ENERGY)).toBe(true);
+    resolveRound(m, [{ playerId: 'c', expr: 'x/50' }]);
+    expect(m.players.find((p) => p.id === 'c')!.energy).toBe(START_ENERGY + energyGain(1));
+    expect(m.players.find((p) => p.id === 'a')!.energy).toBe(START_ENERGY);
+    resolveRound(m, [{ playerId: 'a', expr: '0' }]);
+    expect(m.players.find((p) => p.id === 'a')!.energy).toBe(MAX_ENERGY);
+    const c = m.players.find((p) => p.id === 'c')!;
+    c.energy = 95;
+    resolveRound(m, [{ playerId: 'c', expr: 'x/50' }]);
+    expect(c.energy).toBe(MAX_ENERGY);
+  });
+  it('an ability you can’t afford, or don’t own, fires as a plain shot', () => {
+    const m = board(createMatch(cfg(), duel), { a: [100, 300], b: [700, 40] });
+    m.circles.push({ x: 400, y: 300, r: 40 });
+    const a = m.players.find((p) => p.id === 'a')!;
+    a.energy = 10;
+    const r1 = resolveRound(m, [{ playerId: 'a', expr: '0', ability: 'hop' }]);
+    expect(r1.shots[0]!.ability).toBeUndefined();
+    a.energy = 100;
+    const r2 = resolveRound(m, [{ playerId: 'a', expr: '0', ability: 'heavy' }]);
+    expect(r2.shots[0]!.ability).toBeUndefined();
+  });
+});
+
+describe('Hop', () => {
+  it('rides the line, jumps the rock, and lands just behind it', () => {
+    const m = board(createMatch(cfg(), duel), { a: [100, 300], b: [700, 40] });
+    m.circles.push({ x: 400, y: 300, r: 40 });
+    const round = resolveRound(m, [{ playerId: 'a', expr: '0', ability: 'hop' }]);
+    const hop = round.hops[0]!;
+    expect(hop.outcome).toBe('land');
+    const a = m.soldiers[m.players.find((p) => p.id === 'a')!.soldierId]!;
+    expect(a.alive).toBe(true);
+    expect(a.x).toBeGreaterThan(440);
+    expect(a.x).toBeLessThan(480);
+    expect(round.moves.length).toBe(1);
+    // The line itself is only a path: no blast hole where it stopped.
+    expect(round.holes).toBe(0);
+    expect(m.players.find((p) => p.id === 'a')!.energy).toBe(START_ENERGY - 50 + energyGain(1));
+  });
+  it('the line kills nobody, but riding into someone is a Hop Kill', () => {
+    const m = board(createMatch(cfg(), [...duel, { id: 'c', name: 'C', team: 2 }]), { a: [100, 300], b: [300, 300], c: [700, 40] });
+    m.circles.push({ x: 500, y: 300, r: 40 });
+    const round = resolveRound(m, [{ playerId: 'a', expr: '0', ability: 'hop' }]);
+    const bSoldier = m.players.find((p) => p.id === 'b')!.soldierId;
+    const kill = round.kills.find((k) => k.id === bSoldier)!;
+    expect(kill.kind).toBe('hop');
+    expect(kill.by).toEqual(['a']);
+    // The kill happens while riding, after the line has finished drawing.
+    expect(kill.step).toBeGreaterThan(round.shots[0]!.steps);
+  });
+  it('riding off the edge of the field knocks you out, with no credit', () => {
+    const m = board(createMatch(cfg(), [...duel, { id: 'c', name: 'C', team: 2 }]), { a: [100, 300], b: [700, 40], c: [650, 420] });
+    const round = resolveRound(m, [{ playerId: 'a', expr: '0', ability: 'hop' }]);
+    expect(round.hops[0]!.outcome).toBe('out');
+    const aSoldier = m.players.find((p) => p.id === 'a')!.soldierId;
+    expect(m.soldiers[aSoldier]!.alive).toBe(false);
+    const k = round.kills.find((x) => x.id === aSoldier)!;
+    expect(k.kind).toBe('out');
+    expect(k.by).toEqual([]);
+  });
+  it('crossing another player’s line hops over it', () => {
+    const m = board(createMatch(cfg({ kind: 'ffa' }), [
+      { id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 1 }, { id: 'c', name: 'C', team: 1 },
+    ]), { a: [100, 300], b: [300, 60], c: [700, 40] });
+    m.circles.push({ x: 560, y: 300, r: 40 });
+    // B's line goes straight down across A's path; A rides across it later.
+    const round = resolveRound(m, [
+      { playerId: 'a', expr: '0', dir: 1, ability: 'hop' },
+      { playerId: 'b', expr: '-x*40', dir: 1 },
+    ]);
+    expect(round.hops[0]!.overs.length).toBeGreaterThanOrEqual(1);
+    expect(round.hops[0]!.outcome).toBe('land');
+  });
+  it('a beam wipes a rider out: no hopping over beams', () => {
+    const m = board(createMatch(cfg({ kind: 'ffa', seed: 4 }), [
+      { id: 'a', name: 'A', team: 1 }, { id: 'c', name: 'C', team: 1 }, { id: 'd', name: 'D', team: 1 }, { id: 'e', name: 'E', team: 1 },
+    ]), { a: [100, 400], c: [185, 225], d: [585, 225], e: [700, 40] });
+    const round = resolveRound(m, [
+      { playerId: 'a', expr: '0', dir: 1, ability: 'hop' },
+      { playerId: 'c', expr: '0', dir: 1 },
+      { playerId: 'd', expr: '0', dir: -1 },
+    ]);
+    expect(round.beams.length).toBe(1);
+    const aSoldier = m.players.find((p) => p.id === 'a')!.soldierId;
+    expect(m.soldiers[aSoldier]!.alive).toBe(false);
+    expect(round.kills.find((k) => k.id === aSoldier)!.kind).toBe('beam');
+  });
+});
+
+describe('Ricochet and Heavy Shot', () => {
+  it('Ricochet bounces off the first rock like a mirror', () => {
+    const m = board(createMatch(cfg({ kind: 'ffa' }), [
+      { id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 1 }, { id: 'c', name: 'C', team: 1 },
+    ]), { a: [120, 300], b: [40, 300], c: [700, 40] });
+    m.circles.push({ x: 320, y: 300, r: 40 });
+    m.players.forEach((p) => (p.abilities = ['hop', 'ricochet', 'heavy']));
+    const round = resolveRound(m, [{ playerId: 'a', expr: '0', dir: 1, ability: 'ricochet' }]);
+    const shot = round.shots[0]!;
+    expect(shot.ability).toBe('ricochet');
+    expect(shot.bounce).toBeDefined();
+    expect(shot.bounce!.x).toBeGreaterThan(275);
+    expect(shot.bounce!.x).toBeLessThan(285);
+    // Straight back the way it came, past its own shooter, into B.
+    const bSoldier = m.players.find((p) => p.id === 'b')!.soldierId;
+    expect(round.kills.some((k) => k.id === bSoldier)).toBe(true);
+  });
+  it('Heavy Shot knocks out soldiers inside its wide blast and carves a big crater', () => {
+    const m = board(createMatch(cfg(), [...duel, { id: 'c', name: 'C', team: 2 }]), { a: [100, 300], b: [352, 330], c: [700, 40] });
+    m.circles.push({ x: 400, y: 300, r: 40 });
+    m.players.forEach((p) => (p.abilities = ['hop', 'ricochet', 'heavy']));
+    const round = resolveRound(m, [{ playerId: 'a', expr: '0', ability: 'heavy' }]);
+    const bSoldier = m.players.find((p) => p.id === 'b')!.soldierId;
+    const k = round.kills.find((x) => x.id === bSoldier)!;
+    expect(k.kind).toBe('heavy');
+    expect(m.holes.at(-1)!.r).toBe(BLAST_R * HEAVY_BLAST_MULT);
+  });
+});
+
+describe('beams', () => {
+  it('are three times as wide, and cut off any shot that touches them', () => {
+    const m = board(createMatch(cfg({ kind: 'ffa', seed: 6 }), [
+      { id: 'c', name: 'C', team: 1 }, { id: 'd', name: 'D', team: 1 }, { id: 'e', name: 'E', team: 1 }, { id: 'f', name: 'F', team: 1 },
+    ]), { c: [185, 225], d: [585, 225], e: [100, 120], f: [640, 120] });
+    const round = resolveRound(m, [
+      { playerId: 'c', expr: '0', dir: 1 },
+      { playerId: 'd', expr: '0', dir: -1 },
+      { playerId: 'e', expr: '0', dir: 1 },
+    ]);
+    expect(round.beams.length).toBe(1);
+    const e = round.shots.find((s) => s.playerId === 'e')!;
+    expect(e.reason).toBe('beamcut');
+    expect(Math.abs(e.end.x - 385)).toBeLessThan(20);
+    // F stood on E's line past the beam, so the cut saved them.
+    expect(m.soldiers[m.players.find((p) => p.id === 'f')!.soldierId]!.alive).toBe(true);
+  });
+});
+
+describe('history', () => {
+  it('lists past functions newest first, without repeats', () => {
+    const m = board(createMatch(cfg(), duel), { a: [100, 100], b: [670, 350] });
+    resolveRound(m, [{ playerId: 'a', expr: 'x/3' }]);
+    resolveRound(m, [{ playerId: 'a', expr: 'x/4' }]);
+    resolveRound(m, [{ playerId: 'a', expr: 'x/3' }]);
+    expect(historyOf(m, 'a').map((s) => s.expr)).toEqual(['x/3', 'x/4']);
+  });
+});
+
+describe('bots and abilities', () => {
+  it('a bot can plan with abilities and returns a move that fires', () => {
+    const m = createMatch(cfg({ seed: 12 }), [{ id: 'a', name: 'A', team: 1, abilities: ['hop', 'ricochet', 'heavy'] }, { id: 'b', name: 'B', team: 2 }]);
+    m.players[0]!.energy = 100;
+    const move = chooseMove(m, { playerId: 'a', generations: 6, seed: 3, useAbilities: true });
+    expect(() => resolveRound(m, [{ playerId: 'a', expr: move.expr, angle: move.angle, dir: move.dir, ability: move.ability }])).not.toThrow();
+  });
+});
+
+describe('replays with abilities', () => {
+  it('round-trip the ability of every shot', () => {
+    const setups: PlayerSetup[] = [{ id: 'a', name: 'A', team: 1, abilities: ['hop', 'heavy'] }, { id: 'b', name: 'B', team: 2 }];
+    const m = createMatch(cfg({ seed: 31 }), setups);
+    m.players.find((p) => p.id === 'a')!.energy = 100;
+    resolveRound(m, [{ playerId: 'a', expr: 'x/5', ability: 'heavy' }, { playerId: 'b', expr: 'x/7' }]);
+    const back = decodeReplay(encodeReplay(makeReplay(m, setups)))!;
+    const action = back.actions[0]!;
+    expect(action.a === 'r' && action.shots.find((s) => s.p === back.setups[0]!.id || s.a)?.a).toBe('heavy');
+  });
+});
+
+describe('rock shapes', () => {
+  it('every shape contains its centre and nothing outside its outer size', () => {
+    for (const shape of ROCK_SHAPES) {
+      const rock = { x: 200, y: 200, r: 40, shape };
+      expect(rockContains(rock, 200, 200)).toBe(true);
+      expect(rockContains(rock, 241, 200)).toBe(false);
+      expect(rockContains(rock, 200, 159)).toBe(false);
+    }
+  });
+  it('rotation turns the outline: a flat rectangle stood on end', () => {
+    const flat = { x: 0, y: 0, r: 40, shape: 'rect' as const };
+    expect(rockContains(flat, 0, 30)).toBe(false);
+    expect(rockContains(flat, 30, 0)).toBe(true);
+    const upright = { ...flat, rot: Math.PI / 2 };
+    expect(rockContains(upright, 0, 30)).toBe(true);
+    expect(rockContains(upright, 30, 0)).toBe(false);
+  });
+  it('a star is solid at its points and empty between them', () => {
+    const star = { x: 0, y: 0, r: 40, shape: 'star' as const };
+    expect(rockContains(star, 0, -36)).toBe(true);
+    const between = -Math.PI / 2 + Math.PI / 5;
+    expect(rockContains(star, Math.cos(between) * 34, Math.sin(between) * 34)).toBe(false);
+  });
+  it('the terrain grid matches the shape', () => {
+    const t = new Terrain([{ x: 200, y: 200, r: 40, shape: 'rect' }]);
+    expect(t.solidAt(230, 200)).toBe(true);
+    expect(t.solidAt(200, 230)).toBe(false);
+  });
+  it('spawn checks see the real outline', () => {
+    const rock = { x: 0, y: 0, r: 40, shape: 'rect' as const };
+    expect(rockTouches(rock, 0, 34, 8)).toBe(false);
+    expect(rockTouches(rock, 0, 26, 8)).toBe(true);
+  });
+  it('circle-only maps are the same as before, and mixed maps use other shapes', () => {
+    const a = generateCircles(new Rng(9), 'circles', 9);
+    expect(a.every((c) => !c.shape || c.shape === 'circle')).toBe(true);
+    expect(a).toEqual(generateCircles(new Rng(9)));
+    const mixed = generateCircles(new Rng(9), 'mixed', 9);
+    expect(mixed.map((c) => [c.x, c.y, c.r])).toEqual(a.map((c) => [c.x, c.y, c.r]));
+    const many = Array.from({ length: 8 }, (_, i) => generateCircles(new Rng(i), 'mixed', i)).flat();
+    expect(many.some((c) => c.shape && c.shape !== 'circle')).toBe(true);
+  });
+  it('Ricochet bounces straight back off a flat side', () => {
+    const m = board(createMatch(cfg({ kind: 'ffa' }), [
+      { id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 1 }, { id: 'c', name: 'C', team: 1 },
+    ]), { a: [120, 300], b: [40, 300], c: [700, 40] });
+    m.circles.push({ x: 320, y: 300, r: 40, shape: 'rect' });
+    m.players.forEach((p) => (p.abilities = ['hop', 'ricochet', 'heavy']));
+    const round = resolveRound(m, [{ playerId: 'a', expr: '0', dir: 1, ability: 'ricochet' }]);
+    const shot = round.shots[0]!;
+    expect(shot.bounce).toBeDefined();
+    // The rectangle's left side is at 320 - 0.88 * 40.
+    expect(Math.abs(shot.bounce!.x - (320 - 35.2))).toBeLessThan(6);
+    const bSoldier = m.players.find((p) => p.id === 'b')!.soldierId;
+    expect(round.kills.some((k) => k.id === bSoldier)).toBe(true);
+  });
+  it('custom maps keep shape and rotation, rounded to replay precision', () => {
+    const map = cleanMap({ name: 'Shapes', circles: [{ x: 300, y: 200, r: 40, shape: 'star', rot: 1 }], spawns: [{ x: 100, y: 100, team: 1 }, { x: 680, y: 380, team: 2 }] });
+    expect(map).not.toBeNull();
+    const rock = map!.circles[0]!;
+    expect(rock.shape).toBe('star');
+    expect(Math.abs((rock.rot ?? 0) - 1)).toBeLessThan((Math.PI * 2) / 256);
+  });
+});
+
+describe('replays with rock shapes', () => {
+  it('a mixed-shape match rebuilds the same rocks from a version 5 replay', () => {
+    const setups: PlayerSetup[] = [{ id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 2 }];
+    const m = createMatch(cfg({ seed: 19, rockShapes: 'mixed' }), setups);
+    resolveRound(m, [{ playerId: 'a', expr: 'x/4' }, { playerId: 'b', expr: 'x/6' }]);
+    const back = decodeReplay(encodeReplay(makeReplay(m, setups)))!;
+    expect(back.v).toBe(5);
+    expect(back.config.rockShapes).toBe('mixed');
+    expect(replayStart(back).circles).toEqual(createMatch(cfg({ seed: 19, rockShapes: 'mixed' }), setups).circles);
+  });
+  it('a custom map with shapes round-trips its shapes', () => {
+    const map = cleanMap({ name: 'S', circles: [{ x: 390, y: 220, r: 50, shape: 'hexagon', rot: 0.5 }], spawns: [{ x: 100, y: 100, team: 1 }, { x: 680, y: 380, team: 2 }] })!;
+    const setups: PlayerSetup[] = [{ id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 2 }];
+    const m = createMatch(cfg({ seed: 3, map }), setups);
+    const back = decodeReplay(encodeReplay(makeReplay(m, setups)))!;
+    expect(back.config.map!.circles[0]!.shape).toBe('hexagon');
+    expect(back.config.map!.circles[0]!.rot).toBeCloseTo(map.circles[0]!.rot!, 6);
+  });
+  it('version 4 replays still decode, as circles', () => {
+    const setups: PlayerSetup[] = [{ id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 2 }];
+    const m = createMatch(cfg({ seed: 8 }), setups);
+    resolveRound(m, [{ playerId: 'a', expr: 'x/4' }]);
+    const code = encodeReplay(makeReplay(m, setups));
+    const bytes = Uint8Array.from(atob(code.replaceAll('-', '+').replaceAll('_', '/')), (c) => c.charCodeAt(0));
+    bytes[0] = 4;
+    let bin = '';
+    bytes.forEach((b) => (bin += String.fromCharCode(b)));
+    const old = btoa(bin).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+    const back = decodeReplay(old)!;
+    expect(back.v).toBe(4);
+    expect(back.config.rockShapes).toBeUndefined();
+    expect(replayStart(back).circles).toEqual(createMatch(cfg({ seed: 8 }), setups).circles);
+  });
+});
+
+describe('ranks', () => {
+  it('six tiers from Arithmetic to Medalist at the set ratings', () => {
+    expect(RANKS.map((r) => [r.name, r.min])).toEqual([
+      ['Arithmetic', 0], ['Algebra', 150], ['Geometry', 200], ['Calculus', 300], ['Analysis', 400], ['Medalist', 500],
+    ]);
+    expect(rankFor(START_RATING)).toBe('Arithmetic');
+    expect(rankFor(149)).toBe('Arithmetic');
+    expect(rankFor(150)).toBe('Algebra');
+    expect(rankFor(299)).toBe('Geometry');
+    expect(rankFor(400)).toBe('Analysis');
+    expect(rankFor(2000)).toBe('Medalist');
+  });
+  it('everyone starts at 100, and soft resets pull toward 100', () => {
+    expect(START_RATING).toBe(100);
+    expect(seasonReset(300)).toBe(200);
+    expect(seasonReset(100)).toBe(100);
+  });
+  it('progress shows the way to the next tier', () => {
+    expect(rankProgress(175)).toEqual({ rank: 'Algebra', next: 'Geometry', into: 25, need: 50 });
+    expect(rankProgress(600).next).toBeNull();
+  });
+  it('equal players move 16, and placement matches move twice as fast', () => {
+    expect(eloDelta(100, 100)).toBe(16);
+    expect(PLACEMENT_MATCHES).toBe(3);
+    expect(eloK(0)).toBe(64);
+    expect(eloK(2)).toBe(64);
+    expect(eloK(3)).toBe(32);
+    expect(eloDelta(100, 100, eloK(0))).toBe(32);
   });
 });

@@ -1,13 +1,14 @@
-import { MAP_LIMITS, PLANE_H, PLANE_W, Rng, SOLDIER_R, TEAM_RING, cleanMap, generateCircles, spawnBlocked, type Circle, type MapDef, type MapSpawn, type MatchState } from '@mathbattles/sim';
+import { MAP_LIMITS, PLANE_H, PLANE_W, ROCK_SHAPES, Rng, SOLDIER_R, TEAM_RING, cleanMap, generateCircles, localOutline, rockContains, rockTouches, rotStep, spawnBlocked, type Circle, type MapDef, type MapSpawn, type MatchState, type RockShape } from '@mathbattles/sim';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useAuth } from '../auth';
 import { deleteMap, getMap, newMapId, playMapNext, saveMap, savedMaps, type SavedMap } from '../maps';
 import { countMapPlay, deleteSharedMap, fetchMap, listMaps, publishMap, type SharedMap } from '../net/api';
-import { drawObstacle, obstacleStyle } from '../render/obstacles';
+import { drawObstacle, obstacleStyle, rockPath } from '../render/obstacles';
 import { Stage, THEMES } from '../render/stage';
 import { cosmeticValue, profile } from '../store';
 import { go, sound } from '../util';
 import { TopBar, useProfile } from './Shared';
+import { Icon } from './Icons';
 import { t } from '../i18n';
 
 /** A small picture of a map, drawn in the player's own obstacle design. */
@@ -31,7 +32,7 @@ export function MapPreview({ map }: { map: MapDef }) {
     c.stroke();
     c.setTransform(k, 0, 0, k, 0, 0);
     const style = obstacleStyle(cosmeticValue('obstacle'));
-    map.circles.forEach((o, i) => drawObstacle(c, style, o.x, o.y, o.r, i));
+    map.circles.forEach((o, i) => drawObstacle(c, style, o.x, o.y, o.r, i, o.shape, o.rot));
     for (const s of map.spawns) {
       c.fillStyle = s.team === 2 ? theme.team2 : theme.team1;
       c.beginPath();
@@ -59,6 +60,16 @@ function boardFor(map: MapDef): MatchState {
 }
 
 type Tool = 'rock' | 'blue' | 'red' | 'erase';
+
+/** A small drawing of a rock shape, for the shape picker. */
+export function ShapeIcon({ shape }: { shape: RockShape }) {
+  const pts = localOutline(shape, 10);
+  return (
+    <svg class="shape-icon" viewBox="-12 -12 24 24" aria-hidden="true">
+      {pts ? <polygon points={pts.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ')} /> : <circle r="10" />}
+    </svg>
+  );
+}
 type Grab = { what: 'rock' | 'spawn'; index: number; mode: 'move' | 'size'; dx: number; dy: number } | null;
 
 /** Draw your own map: place rocks, size them, and choose where each team starts. */
@@ -68,6 +79,10 @@ export function MapEditor({ id }: { id?: string }) {
   const [entry, setEntry] = useState<SavedMap>(() => existing ?? { id: id ?? newMapId(), map: blankMap(), updatedAt: Date.now() });
   const [tool, setTool] = useState<Tool>('rock');
   const [size, setSize] = useState(40);
+  const [shape, setShape] = useState<RockShape>('circle');
+  const [rot, setRot] = useState(0);
+  // Where the pointer is, so a preview of the next placement can follow it.
+  const [hover, setHover] = useState<{ x: number; y: number } | null>(null);
   const [picked, setPicked] = useState<number | null>(null);
   const [undo, setUndo] = useState<MapDef[]>([]);
   const [note, setNote] = useState('');
@@ -102,12 +117,46 @@ export function MapEditor({ id }: { id?: string }) {
     c.setTransform(o.width / PLANE_W, 0, 0, o.height / PLANE_H, 0, 0);
     c.clearRect(0, 0, PLANE_W, PLANE_H);
     const rock = picked !== null ? map.circles[picked] : undefined;
+    // A preview of what a click would place, at its exact size and shape. Red means it clashes.
+    if (hover && !grab.current) {
+      const overRock = map.circles.some((r) => rockContains(r, hover.x, hover.y));
+      const overSpawn = map.spawns.some((s) => Math.hypot(s.x - hover.x, s.y - hover.y) <= SOLDIER_R + 6);
+      c.save();
+      if (tool === 'rock' && !overRock && !overSpawn) {
+        const next = { x: hover.x, y: hover.y, r: size, shape: shape === 'circle' ? undefined : shape, rot };
+        const clash = map.spawns.some((s) => rockTouches(next, s.x, s.y, SOLDIER_R));
+        rockPath(c, hover.x, hover.y, size, next.shape, rot);
+        c.fillStyle = clash ? 'rgba(255,77,126,0.25)' : 'rgba(43,47,122,0.12)';
+        c.fill();
+        c.setLineDash([5, 4]);
+        c.lineWidth = 2;
+        c.strokeStyle = clash ? '#ff4d7e' : '#2b2f7a';
+        c.stroke();
+      } else if ((tool === 'blue' || tool === 'red') && !overSpawn) {
+        const blocked = spawnBlocked(hover, map.circles);
+        c.globalAlpha = 0.7;
+        c.setLineDash([4, 3]);
+        c.lineWidth = 2.4;
+        c.strokeStyle = blocked ? '#ff4d7e' : tool === 'blue' ? TEAM_RING[1] : TEAM_RING[2];
+        c.beginPath();
+        c.arc(hover.x, hover.y, SOLDIER_R, 0, Math.PI * 2);
+        c.stroke();
+      } else if (tool === 'erase') {
+        const target = map.circles.findIndex((r) => rockContains(r, hover.x, hover.y));
+        if (target >= 0) {
+          const r = map.circles[target]!;
+          rockPath(c, r.x, r.y, r.r, r.shape, r.rot ?? 0);
+          c.fillStyle = 'rgba(255,77,126,0.3)';
+          c.fill();
+        }
+      }
+      c.restore();
+    }
     if (rock) {
       c.strokeStyle = '#ff4d7e';
       c.lineWidth = 2.5;
       c.setLineDash([6, 5]);
-      c.beginPath();
-      c.arc(rock.x, rock.y, rock.r + 4, 0, Math.PI * 2);
+      rockPath(c, rock.x, rock.y, rock.r + 4, rock.shape, rock.rot ?? 0);
       c.stroke();
       c.setLineDash([]);
       c.fillStyle = '#ff4d7e';
@@ -126,7 +175,18 @@ export function MapEditor({ id }: { id?: string }) {
       c.lineTo(s.x - 9, s.y + 9);
       c.stroke();
     }
-  }, [map, picked]);
+  }, [map, picked, hover, tool, size, shape, rot]);
+
+  // R turns the next rock, or the selected one.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || e.key.toLowerCase() !== 'r') return;
+      turn(e.shiftKey ? -1 : 1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
 
   const change = (next: MapDef, remember = true) => {
     if (remember) setUndo((u) => [...u.slice(-40), map]);
@@ -140,7 +200,7 @@ export function MapEditor({ id }: { id?: string }) {
   const rockAt = (p: { x: number; y: number }) => {
     for (let i = map.circles.length - 1; i >= 0; i--) {
       const c = map.circles[i]!;
-      if (Math.hypot(c.x - p.x, c.y - p.y) <= c.r) return i;
+      if (rockContains(c, p.x, p.y)) return i;
     }
     return -1;
   };
@@ -183,9 +243,10 @@ export function MapEditor({ id }: { id?: string }) {
         return;
       }
       if (map.circles.length >= MAP_LIMITS.circles) return setNote(`A map can have up to ${MAP_LIMITS.circles} rocks.`);
-      change({ ...map, circles: [...map.circles, { x: clampX(p.x), y: clampY(p.y), r: size }] });
+      const placed: Circle = shape === 'circle' ? { x: clampX(p.x), y: clampY(p.y), r: size } : { x: clampX(p.x), y: clampY(p.y), r: size, shape, rot: rotStep(rot) };
+      change({ ...map, circles: [...map.circles, placed] });
       setPicked(map.circles.length);
-      sound('click', profile.muted);
+      sound('place', profile.muted);
       return;
     }
     const team = tool === 'blue' ? 1 : 2;
@@ -195,9 +256,10 @@ export function MapEditor({ id }: { id?: string }) {
     sound('click', profile.muted);
   };
   const move = (e: PointerEvent) => {
+    const p = point(e);
+    setHover(p);
     const g = grab.current;
     if (!g) return;
-    const p = point(e);
     if (g.what === 'spawn') {
       const spawns = map.spawns.map((s, i) => (i === g.index ? { ...s, x: Math.round(Math.max(SOLDIER_R, Math.min(PLANE_W - SOLDIER_R, p.x + g.dx))), y: Math.round(Math.max(SOLDIER_R, Math.min(PLANE_H - SOLDIER_R, p.y + g.dy))) } : s));
       change({ ...map, spawns }, false);
@@ -218,20 +280,36 @@ export function MapEditor({ id }: { id?: string }) {
     grab.current = null;
   };
 
+  /** Turns the selected rock, or the next one, by a sixteenth of a turn. */
+  const turn = (dir: 1 | -1) => {
+    const next = rotStep(rot + dir * (Math.PI / 8));
+    setRot(next);
+    sound('rotate', profile.muted);
+    if (picked !== null && map.circles[picked]?.shape) change({ ...map, circles: map.circles.map((c, i) => (i === picked ? { ...c, rot: next } : c)) }, false);
+  };
+  const pickShape = (s: RockShape) => {
+    setShape(s);
+    sound('toggle', profile.muted);
+    if (picked !== null && map.circles[picked]) {
+      change({ ...map, circles: map.circles.map((c, i) => (i === picked ? (s === 'circle' ? { x: c.x, y: c.y, r: c.r } : { ...c, shape: s, rot: rotStep(rot) }) : c)) });
+    }
+  };
+
   const setPickedSize = (r: number) => {
     setSize(r);
     if (picked !== null && map.circles[picked]) change({ ...map, circles: map.circles.map((c, i) => (i === picked ? { ...c, r } : c)) }, false);
   };
   const randomRocks = () => {
     const rng = new Rng((Math.random() * 2 ** 31) >>> 0);
-    const circles: Circle[] = generateCircles(rng).slice(0, MAP_LIMITS.circles).map((c) => ({ x: c.x, y: c.y, r: Math.max(MAP_LIMITS.minR, Math.min(MAP_LIMITS.maxR, c.r)) }));
+    const seed = (Math.random() * 2 ** 31) >>> 0;
+    const circles: Circle[] = generateCircles(rng, 'mixed', seed).slice(0, MAP_LIMITS.circles).map((c) => ({ ...c, r: Math.max(MAP_LIMITS.minR, Math.min(MAP_LIMITS.maxR, c.r)), ...(c.rot !== undefined ? { rot: rotStep(c.rot) } : {}) }));
     change({ ...map, circles });
     setPicked(null);
   };
   const mirror = () => {
     // Copies the left half onto the right, so both teams get the same field.
     const left = map.circles.filter((c) => c.x < PLANE_W / 2);
-    const circles = [...left, ...left.map((c) => ({ ...c, x: PLANE_W - c.x }))].slice(0, MAP_LIMITS.circles);
+    const circles = [...left, ...left.map((c) => ({ ...c, x: PLANE_W - c.x, ...(c.shape ? { rot: rotStep(-(c.rot ?? 0)) } : {}) }))].slice(0, MAP_LIMITS.circles);
     const blue = map.spawns.filter((s) => s.team === 1);
     const spawns = [...blue, ...blue.map((s) => ({ ...s, x: PLANE_W - s.x, team: 2 as const }))];
     change({ ...map, circles, spawns });
@@ -285,6 +363,7 @@ export function MapEditor({ id }: { id?: string }) {
               onPointerMove={move}
               onPointerUp={up}
               onPointerCancel={up}
+              onPointerLeave={() => setHover(null)}
             />
           </div>
           <p class="muted small-note" style={{ marginTop: 6 }}>
@@ -304,6 +383,23 @@ export function MapEditor({ id }: { id?: string }) {
               </button>
             ))}
           </div>
+          {tool === 'rock' && (
+            <>
+              <div class="shape-picker" role="group" aria-label={t('editor.shape')}>
+                {ROCK_SHAPES.map((s) => (
+                  <button class={`small ${(sel ? sel.shape ?? 'circle' : shape) === s ? 'on' : ''}`} aria-pressed={(sel ? sel.shape ?? 'circle' : shape) === s} aria-label={t(`shape.${s}`)} title={t(`shape.${s}`)} onClick={() => pickShape(s)}>
+                    <ShapeIcon shape={s} />
+                  </button>
+                ))}
+              </div>
+              <div class="row rotate-row">
+                <span>{t('editor.rotate')}</span>
+                <button class="small" aria-label={t('editor.turnLeft')} onClick={() => turn(-1)}><Icon name="rotateLeft" /></button>
+                <button class="small" aria-label={t('editor.turnRight')} onClick={() => turn(1)}><Icon name="rotateRight" /></button>
+                <small class="muted">{t('editor.rotateKey')}</small>
+              </div>
+            </>
+          )}
           <label class="slider">{sel ? 'Selected rock size' : 'New rock size'}: {size}
             <input type="range" min={MAP_LIMITS.minR} max={MAP_LIMITS.maxR} value={size} style={{ '--val': `${((size - MAP_LIMITS.minR) / (MAP_LIMITS.maxR - MAP_LIMITS.minR)) * 100}%` }}
               onInput={(e) => setPickedSize(Number((e.target as HTMLInputElement).value))} />

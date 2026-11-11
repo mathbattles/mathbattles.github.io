@@ -8,9 +8,10 @@ import { go, modeName } from '../util';
 import { GameView } from './GameView';
 import { TopBar, useProfile } from './Shared';
 import { t } from '../i18n';
+import { Stars as DrawnStars } from './Icons';
 
 function Stars({ n }: { n: number }) {
-  return <span class="stars" aria-label={`${n} of 3 stars`}>{'★'.repeat(n)}{'☆'.repeat(3 - n)}</span>;
+  return <DrawnStars n={n} label={`${n} of 3 stars`} />;
 }
 
 export function Campaign() {

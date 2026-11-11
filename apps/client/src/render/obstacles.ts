@@ -1,4 +1,5 @@
-/** Obstacle designs. They only change how circles look: the shape and the rules stay the same. */
+/** Obstacle designs. They only change how rocks look: the shape and the rules stay the same. */
+import { localOutline, type RockShape } from '@mathbattles/sim';
 
 type Painter = (c: CanvasRenderingContext2D, x: number, y: number, r: number, i: number) => void;
 
@@ -338,11 +339,51 @@ export function obstacleStyle(id: string | undefined): ObstacleStyle {
 }
 
 /** Draws one obstacle, clipped to its circle. */
-export function drawObstacle(c: CanvasRenderingContext2D, style: ObstacleStyle, x: number, y: number, r: number, i: number): void {
-  c.save();
+/** Traces a rock's outline: a circle, or its shape turned by rot. */
+export function rockPath(c: CanvasRenderingContext2D, x: number, y: number, r: number, shape?: RockShape, rot = 0): void {
+  const pts = localOutline(shape, r);
   c.beginPath();
-  c.arc(x, y, r, 0, Math.PI * 2);
+  if (!pts) {
+    c.arc(x, y, r, 0, Math.PI * 2);
+    return;
+  }
+  const cos = Math.cos(rot);
+  const sin = Math.sin(rot);
+  pts.forEach(([px, py], k) => {
+    const X = x + px * cos - py * sin;
+    const Y = y + px * sin + py * cos;
+    if (k === 0) c.moveTo(X, Y);
+    else c.lineTo(X, Y);
+  });
+  c.closePath();
+}
+
+/**
+ * Draws one rock in a design. The design paints a disc, clipped to the rock's outline, so every
+ * design works with every shape. Shaped rocks get their own rim, since the disc's rim is cut off.
+ */
+export function drawObstacle(c: CanvasRenderingContext2D, style: ObstacleStyle, x: number, y: number, r: number, i: number, shape?: RockShape, rot = 0): void {
+  const shaped = !!shape && shape !== 'circle';
+  c.save();
+  rockPath(c, x, y, r, shape, rot);
   c.clip();
   style.paint(c, x, y, r, i);
+  if (shaped) {
+    // A soft inner rim along the flat sides gives the shape depth, like the round rocks have.
+    rockPath(c, x, y + 2, r, shape, rot);
+    c.strokeStyle = 'rgba(0,0,0,0.22)';
+    c.lineWidth = 6;
+    c.stroke();
+    rockPath(c, x, y, r - 3, shape, rot);
+    c.strokeStyle = 'rgba(255,255,255,0.35)';
+    c.lineWidth = 2;
+    c.stroke();
+  }
   c.restore();
+  if (shaped) {
+    rockPath(c, x, y, r, shape, rot);
+    c.strokeStyle = 'rgba(0,0,0,0.35)';
+    c.lineWidth = 1.4;
+    c.stroke();
+  }
 }

@@ -1,6 +1,7 @@
 import { MAX_PLAYERS, type Dir, type ShotMode } from './constants';
+import { START_ENERGY, MAX_ENERGY, cleanAbilities, type AbilityId } from './abilities';
 import { assignColors } from './colors';
-import { generateCircles, placeSoldiers, type SpawnSlot } from './map';
+import { generateCircles, placeSoldiers, type RockShapes, type SpawnSlot } from './map';
 import { cleanMap, type MapDef } from './maps';
 import { Rng } from './rng';
 import { Terrain, type Circle } from './terrain';
@@ -14,6 +15,12 @@ export interface MatchConfig {
   seed: number;
   /** A player-made map. Without one, the seed makes a random map. */
   map?: MapDef;
+  /** Free Play: energy never runs out. */
+  freeEnergy?: boolean;
+  /** How long each round lasts online, in seconds. 45 when missing. */
+  roundSeconds?: number;
+  /** Random maps mix rock shapes, or use circles only. Missing means circles, as older matches did. */
+  rockShapes?: RockShapes;
 }
 
 export interface PlayerSetup {
@@ -27,6 +34,8 @@ export interface PlayerSetup {
   color?: string;
   /** Never aims or locks in: practice targets and the friends you mustn't hit. */
   passive?: boolean;
+  /** Abilities this player owns. Hop is always included. */
+  abilities?: AbilityId[];
 }
 
 export interface Player extends PlayerSetup {
@@ -36,6 +45,8 @@ export interface Player extends PlayerSetup {
   connected: boolean;
   /** Locked in for this round. Only whether, never what: functions stay secret until the round fires. */
   locked: boolean;
+  /** Energy for abilities, a whole number from 0 to 100. */
+  energy: number;
   kills: number;
   deaths: number;
   shots: number;
@@ -52,7 +63,7 @@ export interface Soldier {
 }
 
 /** How a shot ended: the path's own reasons, or cut short by the round. */
-export type ShotEnd = EndReason | 'killed' | 'collision';
+export type ShotEnd = EndReason | 'killed' | 'collision' | 'beamcut';
 
 export interface ShotRecord {
   playerId: string;
@@ -69,6 +80,10 @@ export interface ShotRecord {
   end: { x: number; y: number };
   /** Soldiers this shot killed, with the step of each hit. */
   hits: { id: number; step: number }[];
+  /** The ability used with this shot, if any. */
+  ability?: AbilityId;
+  /** Where a ricochet bounced. */
+  bounce?: { x: number; y: number; step: number };
 }
 
 /** A beam made where two shot tips met. It flies straight, through rock, until it leaves the field. */
@@ -87,12 +102,40 @@ export interface BeamRecord {
   hits: { id: number; step: number }[];
 }
 
+/** How a soldier was knocked out. */
+export type KillKind = 'shot' | 'beam' | 'hop' | 'heavy' | 'out';
+
 export interface KillRecord {
   id: number;
   step: number;
-  /** Players credited with the kill. A beam credits both of its shooters. */
+  /** Players credited with the kill. A beam credits both of its shooters. Hopping out of the field credits nobody. */
   by: string[];
   beam?: boolean;
+  kind: KillKind;
+}
+
+/** A soldier riding their own line with Hop. */
+export interface HopRecord {
+  playerId: string;
+  soldierId: number;
+  /** Index of the line in the round's shots. */
+  shot: number;
+  from: { x: number; y: number };
+  /** The step the line finished, when the ride begins. */
+  start: number;
+  /** The last path point ridden. */
+  pathEnd: number;
+  /** Little hops over other lines. */
+  overs: { step: number }[];
+  /** Knocked aside by meeting a line head on, from this step on. */
+  sides: { step: number; dx: number; dy: number }[];
+  /** The step the ride along the line stopped. */
+  rideEnd: number;
+  /** The jump at the end: over a rock, or out of the field. */
+  jump?: { start: number; steps: number; from: { x: number; y: number }; to: { x: number; y: number }; out: boolean };
+  outcome: 'stand' | 'land' | 'out' | 'dead';
+  /** Where the soldier stands once it's over. */
+  at: { x: number; y: number };
 }
 
 export interface RoundRecord {
@@ -106,6 +149,11 @@ export interface RoundRecord {
   steps: number;
   /** Holes this round added to the terrain, so history can rewind it. */
   holes: number;
+  hops: HopRecord[];
+  /** Soldiers that moved this round, so history can rewind them. */
+  moves: { id: number; from: { x: number; y: number }; to: { x: number; y: number } }[];
+  /** Each player's energy before and after the round. */
+  energy: { playerId: string; before: number; after: number }[];
 }
 
 export type MatchEvent =
@@ -146,7 +194,7 @@ export function createMatch(config: MatchConfig, setups: PlayerSetup[]): MatchSt
   }
   let placed;
   try {
-    placed = placeSoldiers(rng, map ? map.circles : generateCircles(rng), slots, fixed);
+    placed = placeSoldiers(rng, map ? map.circles : generateCircles(rng, config.rockShapes ?? 'circles', config.seed), slots, fixed);
   } catch {
     throw new RuleError('Too many players for one map.');
   }
@@ -164,6 +212,8 @@ export function createMatch(config: MatchConfig, setups: PlayerSetup[]): MatchSt
       color: colorOf.get(p.id)!,
       connected: true,
       locked: false,
+      energy: config.freeEnergy ? MAX_ENERGY : START_ENERGY,
+      abilities: cleanAbilities(p.abilities),
       kills: 0,
       deaths: 0,
       shots: 0,
@@ -172,7 +222,7 @@ export function createMatch(config: MatchConfig, setups: PlayerSetup[]): MatchSt
   });
 
   const state: MatchState = {
-    config: { kind: config.kind, mode: config.mode, seed: config.seed, ...(map ? { map } : {}) },
+    config: { kind: config.kind, mode: config.mode, seed: config.seed, ...(map ? { map } : {}), ...(config.freeEnergy ? { freeEnergy: true } : {}), ...(config.roundSeconds ? { roundSeconds: config.roundSeconds } : {}), ...(config.rockShapes === 'mixed' ? { rockShapes: 'mixed' as const } : {}) },
     players,
     soldiers,
     circles: placed.circles,
@@ -279,6 +329,26 @@ export function lastShotOf(state: MatchState, playerId: string): ShotRecord | nu
     if (s) return s;
   }
   return null;
+}
+
+/**
+ * A player's past functions, newest first, without repeats. The up arrow steps through these.
+ * Each entry keeps its angle and direction too.
+ */
+export function historyOf(state: MatchState, playerId: string): ShotRecord[] {
+  const out: ShotRecord[] = [];
+  const seen = new Set<string>();
+  for (let i = state.log.length - 1; i >= 0; i--) {
+    const e = state.log[i]!;
+    if (e.type !== 'round') continue;
+    const s = e.round.shots.find((x) => x.playerId === playerId);
+    if (!s) continue;
+    const key = `${s.expr}|${s.mode === 'ode2' ? s.angle.toFixed(4) : ''}|${s.dir}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+  }
+  return out;
 }
 
 /** A player left: their soldier is removed and play continues. */

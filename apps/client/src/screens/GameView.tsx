@@ -8,7 +8,13 @@ import {
   Terrain,
   isMirrored,
   isOnWinningSide,
-  lastShotOf,
+  historyOf,
+  hopLanding,
+  abilityDef,
+  energyGain,
+  BLAST_R,
+  HEAVY_BLAST_MULT,
+  MAX_ENERGY,
   playerById,
   simulateShot,
   soldierOf,
@@ -19,14 +25,18 @@ import {
   type Player,
   type RoundRecord,
   type ShotRecord,
+  type AbilityId,
+  type KillRecord,
 } from '@mathbattles/sim';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { roundPaths, type GameSession } from '../game/session';
 import { Stage, themedColor } from '../render/stage';
-import { cosmeticValue, gameTextScale, grantAchievement, look, noteKillExpression, profile } from '../store';
+import { abilityMenu, cosmeticValue, gameTextScale, grantAchievement, look, noteAbilityUse, noteKillExpression, profile } from '../store';
+import { Icon, type IconName } from './Icons';
 import { exprToTex, modeLabel, sound } from '../util';
 import { t, useLang } from '../i18n';
+import { FadeText, notify } from './Notices';
 
 export function winnerText(state: MatchState, viewer?: string): string {
   if (state.winner === null) return t('game.draw');
@@ -51,6 +61,87 @@ export function Tex({ expr, prefix }: { expr: string; prefix: string }) {
     };
   }, [expr, prefix]);
   return <div class="preview" ref={ref} aria-hidden="true" />;
+}
+
+export const ABILITY_ICON: Record<AbilityId, IconName> = { hop: 'hop', ricochet: 'ricochet', heavy: 'heavy' };
+
+/** A plain hand-drawn energy bar, with next round's gain shown faintly and the chosen ability's cost hatched. */
+function EnergyBar({ energy, gain, cost, flash, free }: { energy: number; gain: number; cost: number; flash: boolean; free: boolean }) {
+  const pct = (v: number) => `${Math.max(0, Math.min(100, (v / MAX_ENERGY) * 100))}%`;
+  const after = Math.min(MAX_ENERGY, energy + gain);
+  return (
+    <div class={`energy ${flash ? 'flash' : ''}`} role="meter" aria-valuemin={0} aria-valuemax={MAX_ENERGY} aria-valuenow={energy} aria-label={t('energy.label')}>
+      <Icon name="energy" class="energy-icon" />
+      <div class="energy-track">
+        <div class="energy-fill" style={{ width: pct(energy) }} />
+        {!free && gain > 0 && energy < MAX_ENERGY && <div class="energy-ghost" style={{ left: pct(energy), width: `calc(${pct(after)} - ${pct(energy)})` }} />}
+        {cost > 0 && <div class="energy-cost" style={{ left: `calc(${pct(energy)} - ${pct(Math.min(cost, energy))})`, width: pct(Math.min(cost, energy)) }} />}
+      </div>
+      <span class="energy-num">{free ? t('energy.unlimited') : `${energy} / ${MAX_ENERGY}`}</span>
+      {!free && gain > 0 && energy < MAX_ENERGY && <span class="energy-gain">{t('energy.next', { n: gain })}</span>}
+    </div>
+  );
+}
+
+/** The ability menu: every owned ability, favourites first, greyed out when there isn't enough energy. */
+function AbilityMenu({ energy, free, chosen, onPick, onClose }: { energy: number; free: boolean; chosen: AbilityId | null; onPick: (a: AbilityId) => void; onClose: () => void }) {
+  const list = abilityMenu();
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  return (
+    <div class="ability-menu sheet" role="dialog" aria-label={t('ability.menu')}>
+      <div class="ability-menu-head">
+        <strong>{t('ability.menu')}</strong>
+        <button class="small plain" aria-label={t('ability.close')} onClick={onClose}><Icon name="close" /></button>
+      </div>
+      {list.map((id) => {
+        const def = abilityDef(id)!;
+        const short = !free && energy < def.energy;
+        return (
+          <button class={`ability-choice ${chosen === id ? 'on' : ''}`} disabled={short} onClick={() => onPick(id)} aria-pressed={chosen === id}>
+            <Icon name={ABILITY_ICON[id]} size="1.8em" />
+            <span class="ability-text">
+              <strong>{t(`ability.${id}.name`)}</strong>
+              <small>{t(`ability.${id}.short`)}</small>
+            </span>
+            <span class="ability-cost"><Icon name="energy" />{def.energy}</span>
+            {short && <small class="ability-need">{t('ability.need', { n: def.energy - energy })}</small>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const KILL_ICON: Record<KillRecord['kind'], IconName> = { shot: 'skull', beam: 'beam', hop: 'hop', heavy: 'heavy', out: 'out' };
+
+/** Every knockout this match, newest first, with how it happened. */
+function KillFeed({ state, colorOf }: { state: MatchState; colorOf: (id: string) => string }) {
+  const rows: { round: number; kill: KillRecord }[] = [];
+  for (const r of roundsOf(state)) for (const k of r.kills) rows.push({ round: r.n, kill: k });
+  if (!rows.length) return null;
+  const nameOfSoldier = (id: number) => state.players.find((p) => p.soldierId === id);
+  return (
+    <div class="mini kill-feed">
+      <h3>{t('feed.title')}</h3>
+      <ol>
+        {rows.slice(-8).reverse().map(({ kill }) => {
+          const victim = nameOfSoldier(kill.id);
+          const by = kill.by.map((id) => state.players.find((p) => p.id === id)).filter(Boolean);
+          return (
+            <li>
+              {by.length > 0 && by.map((p, i) => <span>{i ? ' + ' : ''}<span style={{ color: colorOf(p!.id) }}>{p!.name}</span></span>)}
+              <span class="feed-how" title={t(`feed.${kill.kind}`)}><Icon name={KILL_ICON[kill.kind] ?? 'skull'} label={t(`feed.${kill.kind}`)} /></span>
+              {victim && <span style={{ color: colorOf(victim.id) }}>{victim.name}</span>}
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
 }
 
 /** A small dot in a player's colour. */
@@ -128,7 +219,7 @@ function Scores({ state, colorOf }: { state: MatchState; colorOf: (id: string) =
       <div class={`score-row ${alive ? '' : 'out'}`}>
         <span><Swatch color={colorOf(p.id)} />{p.name}{p.connected ? '' : ` ${t('game.left')}`}</span>
         <span>
-          {alive && p.locked && !state.over ? <span class="locked-mark" title={t('game.lockedIn')}>✓</span> : null}
+          {alive && p.locked && !state.over ? <span class="locked-mark" title={t('game.lockedIn')}><Icon name="check" label={t('game.lockedIn')} /></span> : null}
           {alive ? t('game.alive') : t('game.out')}
         </span>
       </div>
@@ -181,6 +272,13 @@ export function GameView(props: {
   const [now, setNow] = useState(Date.now());
   const [award, setAward] = useState('');
   const lastRound = useRef(session.state.round);
+  // Up arrow history: which past function is showing, and what was typed before stepping in.
+  const [histIdx, setHistIdx] = useState(-1);
+  const typedBefore = useRef('');
+  const [ability, setAbility] = useState<AbilityId | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [callouts, setCallouts] = useState<{ id: number; name: string; color: string; ability: AbilityId }[]>([]);
+  const [energyFlash, setEnergyFlash] = useState(false);
 
   const state = session.state;
   const canAim = session.canAim();
@@ -203,6 +301,7 @@ export function GameView(props: {
     stage.onKill = () => sound('kill', profile.muted);
     stage.onFinalKill = () => setKnockout(true);
     stage.onBeam = () => sound('beam', profile.muted);
+    stage.onSfx = (name) => sound(name as Parameters<typeof sound>[0], profile.muted);
     stage.onLuck = (id) => {
       sound('luck', profile.muted);
       // Surviving a coin flip earns an achievement and the Survivor title.
@@ -222,7 +321,42 @@ export function GameView(props: {
       stage.clearPast();
       setViewing(null);
       if (r.shots.length) sound('fire', profile.muted);
-      for (const s of r.shots) if (s.hits.length && s.playerId === session.viewerId()) noteKillExpression(s.expr);
+      const me = session.viewerId();
+      for (const s of r.shots) if (s.hits.length && s.playerId === me) noteKillExpression(s.expr);
+      // Everyone sees who used which ability.
+      const used = r.shots.filter((s) => s.ability).map((s, i) => {
+        const p = session.state.players.find((q) => q.id === s.playerId);
+        return { id: Date.now() + i, name: p?.name ?? '', color: themedColor(p?.color ?? '#2b50e8', profile.theme), ability: s.ability! };
+      });
+      if (used.length) {
+        setCallouts(used);
+        setTimeout(() => setCallouts([]), 2600);
+      }
+      if (!('replay' in session)) {
+        for (const s of r.shots) {
+          if (s.playerId !== me || !s.ability) continue;
+          const kills = r.kills.filter((k) => k.by.includes(me) && (s.ability === 'hop' ? k.kind === 'hop' : true)).length;
+          noteAbilityUse(s.ability, kills);
+          if (s.ability === 'hop' && r.kills.some((k) => k.kind === 'hop' && k.by.includes(me)) && grantAchievement('leap-of-faith')) setAward(t('award.leap'));
+          if (s.ability === 'ricochet' && s.hits.length && s.bounce && s.hits.some((h) => h.step > s.bounce!.step) && grantAchievement('bank-shot')) setAward(t('award.bank'));
+          if (s.ability === 'heavy' && r.kills.filter((k) => k.kind === 'heavy' && k.by.includes(me)).length >= 2 && grantAchievement('crater-maker')) setAward(t('award.crater'));
+        }
+        // A beam cut off a shot that would have hit you.
+        const mine = session.state.players.find((p) => p.id === me);
+        if (mine && r.shots.some((s) => s.reason === 'beamcut' && s.playerId !== me) && session.state.soldiers[mine.soldierId]?.alive) {
+          const cutAimedAtMe = r.shots.some((s) => s.reason === 'beamcut' && s.playerId !== me && Math.hypot(s.end.x - session.state.soldiers[mine.soldierId]!.x, s.end.y - session.state.soldiers[mine.soldierId]!.y) < 60);
+          if (cutAimedAtMe && grantAchievement('clean-cut')) setAward(t('award.clean'));
+        }
+        // A kill fills the bar right up.
+        const e = r.energy?.find((x) => x.playerId === me);
+        if (e && e.after >= MAX_ENERGY && e.before < MAX_ENERGY) {
+          sound('energyFull', profile.muted);
+          setEnergyFlash(true);
+          setTimeout(() => setEnergyFlash(false), 1400);
+        } else if (e && e.after > e.before) {
+          sound('energyTick', profile.muted);
+        }
+      }
     };
     const timer = setInterval(() => setNow(Date.now()), 250);
     force((n) => n + 1);
@@ -346,6 +480,9 @@ export function GameView(props: {
       lastRound.current = state.round;
       setExpr('');
       setError('');
+      setHistIdx(-1);
+      setAbility(null);
+      setMenuOpen(false);
     }
   }, [state.round]);
   useEffect(() => {
@@ -355,6 +492,7 @@ export function GameView(props: {
       setExpr(d.expr);
       if (d.angle !== undefined) setAngle(d.angle);
       if (d.dir) setDir(d.dir);
+      setAbility(d.ability ?? null);
     } else if (session.handoff) {
       setExpr('');
     }
@@ -365,8 +503,8 @@ export function GameView(props: {
 
   // Whatever is typed is kept, so a timeout can still fire it.
   useEffect(() => {
-    if (canType) session.setDraft({ expr, angle: mode === 'ode2' ? angle : undefined, dir });
-  }, [expr, angle, dir]);
+    if (canType) session.setDraft({ expr, angle: mode === 'ode2' ? angle : undefined, dir, ...(ability ? { ability } : {}) });
+  }, [expr, angle, dir, ability]);
 
   // Live error text and the whole curve, dotted, in your colour.
   const check = useMemo(() => (expr.trim() ? validate(expr, mode) : null), [expr, mode]);
@@ -374,22 +512,65 @@ export function GameView(props: {
     const stage = stageRef.current;
     if (!stage) return;
     stage.previewPath = null;
+    stage.previewBlast = null;
+    stage.previewLanding = null;
     if (!canAim || session.handoff || !expr.trim() || check || !mySoldier?.alive) return;
+    const terrain = new Terrain(state.circles, state.holes);
+    // The preview shows what the chosen ability really does: the bounce, the blast, or the landing.
     const path = simulateShot({
       mode, expr, angle, dir, from: { x: mySoldier.x, y: mySoldier.y }, mirrored: isMirrored(state, viewer),
-      terrain: new Terrain(state.circles, state.holes), targets: [],
+      terrain, targets: [], ricochet: ability === 'ricochet',
     });
     stage.previewPath = { xs: path.xs, ys: path.ys, steps: path.steps };
-  }, [expr, angle, dir, check, canAim, state.round, viewer, session.handoff]);
+    if (ability === 'heavy') stage.previewBlast = { x: path.end.x, y: path.end.y, r: BLAST_R * HEAVY_BLAST_MULT };
+    if (ability === 'hop') stage.previewLanding = hopLanding(terrain, path);
+  }, [expr, angle, dir, check, canAim, state.round, viewer, session.handoff, ability]);
 
-  const last = lastShotOf(state, viewer);
-  const recall = () => {
-    if (!last || !canType) return;
-    setExpr(last.expr);
-    if (mode === 'ode2') setAngle(last.angle);
-    setDir(last.dir);
+  // Up steps back through your past functions, one per press, wrapping to the newest; down steps forward.
+  const history = historyOf(state, viewer);
+  const nextIdx = history.length ? (histIdx + 1) % history.length : -1;
+  const upcoming = nextIdx >= 0 ? history[nextIdx] : undefined;
+  const recall = (step: 1 | -1 = 1) => {
+    if (!history.length || !canType) return;
+    if (histIdx === -1) typedBefore.current = expr;
+    let i = histIdx + step;
+    if (i >= history.length) i = 0;
+    if (i < 0) {
+      // Past the newest going down: back to what you were typing.
+      setHistIdx(-1);
+      setExpr(typedBefore.current);
+      return;
+    }
+    const shot = history[i]!;
+    setHistIdx(i);
+    setExpr(shot.expr);
+    if (mode === 'ode2') setAngle(shot.angle);
+    setDir(shot.dir);
     setError('');
     sound('click', profile.muted);
+    input.current?.focus({ preventScroll: true });
+  };
+  const leaveHistory = () => {
+    if (histIdx === -1) return;
+    setHistIdx(-1);
+    setExpr(typedBefore.current);
+  };
+
+  const me0 = playerById(state, viewer);
+  const free = !!state.config.freeEnergy;
+  const energy = me0?.energy ?? 0;
+  const chosenDef = ability ? abilityDef(ability) : undefined;
+  const abilitiesHere = session.abilitiesOn && !props.spectator && (me0?.abilities?.length ?? 0) > 0;
+  const pickAbility = (a: AbilityId) => {
+    const def = abilityDef(a)!;
+    if (!free && energy < def.energy) {
+      sound('noEnergy', profile.muted);
+      notify(t('ability.needEnergy', { name: def.name, n: def.energy - energy }), 'info');
+      return;
+    }
+    setAbility(a);
+    setMenuOpen(false);
+    sound('abilitySelect', profile.muted);
     input.current?.focus({ preventScroll: true });
   };
 
@@ -406,7 +587,7 @@ export function GameView(props: {
     }
     if (check) return;
     try {
-      session.lock({ expr, angle: mode === 'ode2' ? angle : undefined, dir });
+      session.lock({ expr, angle: mode === 'ode2' ? angle : undefined, dir, ...(ability ? { ability } : {}) });
       sound('lock', profile.muted);
       setError('');
     } catch (e) {
@@ -419,7 +600,7 @@ export function GameView(props: {
   const waitingStarting = 'waitingToStart' in session && (session as { waitingToStart: boolean }).waitingToStart;
   // The clock shows only while aiming is open, not during the countdown or while shots fly.
   const timed = session.showTimer && secs !== null && !state.over && !session.handoff && !session.busy && !counting && !waitingStarting;
-  const status = state.over
+  const status = state.over || 'replay' in session
     ? null
     : session.busy
       ? t('game.firing')
@@ -468,6 +649,15 @@ export function GameView(props: {
             <div class="slam turn" key={roundSlam}><span>{t('game.roundN', { n: state.round })}</span></div>
           )}
           {knockout && viewing === null && <div class="slam knockout"><span>{t('game.finalKnockout')}</span></div>}
+          {callouts.length > 0 && (
+            <div class="callouts" role="status">
+              {callouts.map((c) => (
+                <span class="callout" key={c.id} style={{ '--who': c.color }}>
+                  <Icon name={ABILITY_ICON[c.ability]} /> <strong>{c.name}</strong> {t(`ability.${c.ability}.name`)}
+                </span>
+              ))}
+            </div>
+          )}
           {session.handoff && !state.over && (
             <div class="handoff" role="dialog" aria-label={t('game.passTo', { name: session.handoff })}>
               <div class="handoff-card sheet">
@@ -489,7 +679,7 @@ export function GameView(props: {
             </div>
           )}
         </div>
-        {props.notice && <p class="error" role="alert" style={{ marginTop: 8 }}>{props.notice}</p>}
+        <FadeText text={props.notice ?? ''} />
         {award && <p class="ok award" role="status">{award}</p>}
         {props.result}
         {props.spectator && !state.over && !props.result && (
@@ -497,6 +687,9 @@ export function GameView(props: {
         )}
         {!props.spectator && !('replay' in session) && !state.over && !props.result && (
           <div class={`shotbar ${locked ? 'is-locked' : ''}`}>
+            {abilitiesHere && me0 && (
+              <EnergyBar energy={energy} gain={energyGain(state.round)} cost={chosenDef?.energy ?? 0} flash={energyFlash} free={free} />
+            )}
             <div class="shotrow">
               <label for="fn-input" style={me ? { color: colorOf(me.id) } : undefined}>{modeLabel(mode)}</label>
               <input
@@ -515,41 +708,83 @@ export function GameView(props: {
                 onInput={(e) => {
                   setExpr((e.target as HTMLInputElement).value);
                   setError('');
+                  setHistIdx(-1);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') toggleLock();
-                  if (mode !== 'ode2' && e.key === 'ArrowUp' && !expr) {
+                  // Up and down walk the history while the box is empty or still shows a past function.
+                  const inHistory = !expr || histIdx !== -1;
+                  if (e.key === 'Escape' && histIdx !== -1) {
                     e.preventDefault();
-                    recall();
+                    leaveHistory();
                   }
-                  if (mode === 'ode2' && e.key === 'ArrowUp') {
+                  if (e.key === 'ArrowUp' && (mode !== 'ode2' || inHistory) && inHistory) {
                     e.preventDefault();
-                    if (!expr) recall();
-                    else setAngle((a) => Math.min(1.55, a + (e.shiftKey ? 0.1 : 0.02)));
+                    recall(1);
+                  } else if (mode === 'ode2' && e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setAngle((a) => Math.min(1.55, a + (e.shiftKey ? 0.1 : 0.02)));
                   }
-                  if (mode === 'ode2' && e.key === 'ArrowDown') {
+                  if (e.key === 'ArrowDown' && histIdx !== -1) {
+                    e.preventDefault();
+                    recall(-1);
+                  } else if (mode === 'ode2' && e.key === 'ArrowDown') {
                     e.preventDefault();
                     setAngle((a) => Math.max(-1.55, a - (e.shiftKey ? 0.1 : 0.02)));
                   }
                 }}
               />
-              <button
-                class="recall"
-                aria-label={last ? t('game.recallWith', { expr: last.expr }) : t('game.recall')}
-                title={last ? t('game.recallWith', { expr: last.expr }) : t('game.recallNone')}
-                disabled={!last || !canType}
-                onClick={recall}
-              >↑</button>
-              <button class={`primary fire lock ${locked ? 'locked' : ''}`} data-sfx="none" onClick={toggleLock} disabled={!canAim || (!locked && !!check)} aria-pressed={locked}>
-                {locked ? t('game.unlock') : session.instantFire ? t('game.fire') : t('game.lockIn')}
+              <span class="recall-group">
+                <button
+                  class="recall"
+                  aria-label={upcoming ? t('game.recallWith', { expr: upcoming.expr }) : t('game.recall')}
+                  title={upcoming ? t('game.recallWith', { expr: upcoming.expr }) : t('game.recallNone')}
+                  disabled={!history.length || !canType}
+                  onClick={() => recall(1)}
+                ><Icon name="up" /></button>
+                {histIdx !== -1 && (
+                  <>
+                    <button class="recall small" aria-label={t('game.recallNewer')} title={t('game.recallNewer')} disabled={!canType} onClick={() => recall(-1)}><Icon name="down" /></button>
+                    <span class="recall-count" aria-live="polite">{histIdx + 1} / {history.length}</span>
+                  </>
+                )}
+              </span>
+              {abilitiesHere && (
+                <span class="ability-anchor">
+                  <button
+                    class={`ability-button ${ability ? 'on' : ''}`}
+                    aria-haspopup="dialog"
+                    aria-expanded={menuOpen}
+                    disabled={!canType}
+                    onClick={() => { setMenuOpen(!menuOpen); sound('abilityOpen', profile.muted); }}
+                  >
+                    <Icon name={ability ? ABILITY_ICON[ability] : 'ability'} /> {t('ability.button')}
+                  </button>
+                  {menuOpen && <AbilityMenu energy={energy} free={free} chosen={ability} onPick={pickAbility} onClose={() => setMenuOpen(false)} />}
+                </span>
+              )}
+              <button class={`primary fire lock ${locked ? 'locked' : ''} ${ability ? 'with-ability' : ''}`} data-sfx="none" onClick={toggleLock} disabled={!canAim || (!locked && !!check)} aria-pressed={locked}>
+                {ability && !locked && <Icon name={ABILITY_ICON[ability]} />}
+                {locked ? t('game.unlock') : `${session.instantFire ? t('game.fire') : t('game.lockIn')}${ability ? ` (${t(`ability.${ability}.name`)})` : ''}`}
               </button>
+              {ability && !locked && (
+                <button class="small plain ability-clear" aria-label={t('ability.clear')} title={t('ability.clear')} onClick={() => setAbility(null)}><Icon name="close" /></button>
+              )}
             </div>
             {locked && canAim && (
               <p class="lock-note" role="status">
                 {othersWaiting > 0 ? t('game.waitingForPlayers', { count: othersWaiting }) : t('game.firingSoon')}
               </p>
             )}
-            <FunctionPicker input={input} value={expr} disabled={!canType} onChange={(v) => { setExpr(v); setError(''); }} />
+            <div class="fn-row">
+              <FunctionPicker input={input} value={expr} disabled={!canType} onChange={(v) => { setExpr(v); setError(''); }} />
+              {state.config.kind === 'ffa' && (
+                <span class="row dir-group" role="group" aria-label={t('game.direction')}>
+                  <button class="small dir-plus" disabled={!canType} onClick={() => { setDir(1); sound('toggle', profile.muted); }} aria-pressed={dir === 1}>{t('game.firePlus')}</button>
+                  <button class="small dir-minus" disabled={!canType} onClick={() => { setDir(-1); sound('toggle', profile.muted); }} aria-pressed={dir === -1}>{t('game.fireMinus')}</button>
+                </span>
+              )}
+            </div>
             {keys.on && (
               <MathKeys input={input} mode={mode} value={expr} disabled={!canType} typing={keys.typing} setTyping={keys.setTyping}
                 onChange={(v) => { setExpr(v); setError(''); }} />
@@ -563,12 +798,6 @@ export function GameView(props: {
                   <button class="small" aria-label={t('game.lowerAngle')} disabled={!canType} onClick={() => setAngle((a) => Math.max(-1.55, a - 0.02))}>{t('game.down')}</button>
                   <button class="small" aria-label={t('game.raiseAngle')} disabled={!canType} onClick={() => setAngle((a) => Math.min(1.55, a + 0.02))}>{t('game.up')}</button>
                 </>
-              )}
-              {state.config.kind === 'ffa' && (
-                <span class="row" role="group" aria-label={t('game.direction')}>
-                  <button class="small dir-plus" disabled={!canType} onClick={() => setDir(1)} aria-pressed={dir === 1}>{t('game.firePlus')}</button>
-                  <button class="small dir-minus" disabled={!canType} onClick={() => setDir(-1)} aria-pressed={dir === -1}>{t('game.fireMinus')}</button>
-                </span>
               )}
             </div>
           </div>
@@ -587,6 +816,7 @@ export function GameView(props: {
             ))}
           </div>
         )}
+        <KillFeed state={state} colorOf={colorOf} />
         <RoundHistory rounds={rounds} state={state} viewing={viewing} onView={setViewing} canSee={canSeeShot} colorOf={colorOf} />
         {props.extraSide}
       </aside>

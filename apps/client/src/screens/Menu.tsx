@@ -40,7 +40,9 @@ const MODES = [
   { href: '#/practice', name: 'Free Play', text: 'No timer, with a preview of your curve.' },
   { href: '#/ranked', name: 'Ranked', text: 'One-on-one for a place on the ladder.' },
   { href: '#/learn', name: 'Learn', text: 'A full course, from your first shot to winning matches.' },
-  { href: '#/shop', name: 'Shop', text: 'Spend Sparks on hats, trails, and obstacles.' },
+  { href: '#/shop', name: 'Cosmetics', text: 'Spend Sparks on hats, trails, and obstacles.' },
+  { href: '#/abilities', name: 'Abilities', text: 'Hop, Ricochet and Heavy Shot: spend energy to change your shot.' },
+  { href: '#/season', name: 'Season pass', text: 'Fifty levels of rewards, quests, and the countdown to the season end.' },
   { href: '#/inventory', name: 'Inventory', text: 'Everything you own, and how rare it is.' },
   { href: '#/friends', name: 'Friends', text: 'Add friends, start a party, and play together.' },
 ];

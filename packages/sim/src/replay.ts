@@ -3,13 +3,15 @@ import { cleanMap } from './maps';
 import { createMatch, removePlayer } from './rules';
 import { resolveRound } from './round';
 import { isHexColor } from './colors';
+import { ABILITY_IDS, cleanAbilities, type AbilityId } from './abilities';
+import { ROCK_SHAPES } from './shapes';
 
 /**
  * A replay is the match's seed, setup, and each round's shots. It rebuilds the whole match
  * through the normal rules, so it stays small enough to store and share.
  */
 export interface Replay {
-  v: 3;
+  v: 3 | 4 | 5;
   config: MatchConfig;
   setups: PlayerSetup[];
   actions: ReplayAction[];
@@ -20,6 +22,8 @@ export interface ReplayShot {
   e: string;
   g?: number;
   d?: 1 | -1;
+  /** The ability used, if any. */
+  a?: AbilityId;
 }
 
 export type ReplayAction =
@@ -29,10 +33,11 @@ export type ReplayAction =
 export function makeReplay(state: MatchState, setups: PlayerSetup[]): Replay {
   // Store each player's final colour, so the replay looks exactly like the match did.
   const colors = new Map(state.players.map((p) => [p.id, p.color]));
+  const owned = new Map(state.players.map((p) => [p.id, p.abilities ?? []]));
   return {
-    v: 3,
+    v: 5,
     config: state.config,
-    setups: setups.map((s) => ({ ...s, ...(colors.has(s.id) ? { color: colors.get(s.id) } : {}) })),
+    setups: setups.map((s) => ({ ...s, ...(colors.has(s.id) ? { color: colors.get(s.id) } : {}), abilities: owned.get(s.id) ?? cleanAbilities(s.abilities) })),
     actions: state.log.map(toAction),
   };
 }
@@ -46,6 +51,7 @@ function toAction(e: MatchEvent): ReplayAction {
       e: s.expr,
       ...(s.mode === 'ode2' ? { g: s.angle } : {}),
       ...(s.dir === -1 ? { d: -1 as const } : {}),
+      ...(s.ability ? { a: s.ability } : {}),
     })),
   };
 }
@@ -55,7 +61,7 @@ export function applyAction(state: MatchState, action: ReplayAction): void {
     removePlayer(state, action.p);
     return;
   }
-  resolveRound(state, action.shots.map((s) => ({ playerId: s.p, expr: s.e, angle: s.g, dir: s.d })));
+  resolveRound(state, action.shots.map((s) => ({ playerId: s.p, expr: s.e, angle: s.g, dir: s.d, ability: s.a })));
 }
 
 export function replayStart(replay: Replay): MatchState {
@@ -191,9 +197,9 @@ function fromBase64Url(text: string): Uint8Array {
 export function encodeReplay(replay: Replay): string {
   const { config, setups } = replay;
   const w = new Writer();
-  w.byte(3);
+  w.byte(5);
   const map = config.map ? cleanMap(config.map) : null;
-  w.byte(KINDS.indexOf(config.kind) | (MODES.indexOf(config.mode) << 1) | (map ? 0x20 : 0));
+  w.byte(KINDS.indexOf(config.kind) | (MODES.indexOf(config.mode) << 1) | (map ? 0x20 : 0) | (config.freeEnergy ? 0x40 : 0) | (config.rockShapes === 'mixed' ? 0x80 : 0));
   // Seeds are whole numbers. Store the sign separately so negative seeds work too.
   const seed = Math.trunc(config.seed);
   w.uint(Math.abs(seed) * 2 + (seed < 0 ? 1 : 0));
@@ -205,6 +211,9 @@ export function encodeReplay(replay: Replay): string {
       w.uint(c.x);
       w.uint(c.y);
       w.uint(c.r);
+      // Version 5: the rock's shape, and its rotation in 256ths of a turn.
+      w.byte(Math.max(0, ROCK_SHAPES.indexOf(c.shape ?? 'circle')));
+      w.byte(((Math.round(((c.rot ?? 0) / (2 * Math.PI)) * 256) % 256) + 256) % 256);
     }
     w.uint(map.spawns.length);
     for (const sp of map.spawns) {
@@ -225,6 +234,9 @@ export function encodeReplay(replay: Replay): string {
       w.byte(n >> 8);
       w.byte(n);
     }
+    // Owned abilities, one bit each.
+    const owned = cleanAbilities(s.abilities);
+    w.byte(ABILITY_IDS.reduce((m, id, i) => (owned.includes(id) ? m | (1 << i) : m), 0));
   }
   const index = new Map(setups.map((s, i) => [s.id, i]));
   w.uint(replay.actions.length);
@@ -234,6 +246,7 @@ export function encodeReplay(replay: Replay): string {
       w.byte(a.shots.length);
       for (const shot of a.shots) {
         w.byte((index.get(shot.p) ?? 0) | (shot.d === -1 ? LEFT_BIT : 0));
+        w.byte(shot.a ? ABILITY_IDS.indexOf(shot.a) + 1 : 0);
         if (config.mode === 'ode2') w.float(shot.g ?? 0);
         w.expr(shot.e);
       }
@@ -247,7 +260,9 @@ export function encodeReplay(replay: Replay): string {
 
 function decodeV3(bytes: Uint8Array): Replay {
   const r = new Reader(bytes);
-  r.byte();
+  const version = r.byte() as 3 | 4 | 5;
+  const v4 = version >= 4;
+  const v5 = version >= 5;
   const flags = r.byte();
   const kind = KINDS[flags & 1]!;
   const mode = MODES[(flags >> 1) & 3];
@@ -257,7 +272,13 @@ function decodeV3(bytes: Uint8Array): Replay {
   let map: MatchConfig['map'];
   if (flags & 0x20) {
     const name = r.text();
-    const circles = Array.from({ length: Math.min(r.uint(), 100) }, () => ({ x: r.uint(), y: r.uint(), r: r.uint() }));
+    const circles = Array.from({ length: Math.min(r.uint(), 100) }, () => {
+      const c = { x: r.uint(), y: r.uint(), r: r.uint() };
+      if (!v5) return c;
+      const shape = ROCK_SHAPES[r.byte()] ?? 'circle';
+      const rot = (r.byte() / 256) * 2 * Math.PI;
+      return shape === 'circle' ? c : { ...c, shape, rot };
+    });
     const spawns = Array.from({ length: Math.min(r.uint(), 40) }, () => ({ x: r.uint(), y: r.uint(), team: (r.byte() === 2 ? 2 : 1) as 1 | 2 }));
     map = cleanMap({ name, circles, spawns }) ?? undefined;
     if (!map) throw new Error('Bad map');
@@ -271,7 +292,10 @@ function decodeV3(bytes: Uint8Array): Replay {
     const name = r.text();
     let color: string | undefined;
     if (f & 0x40) color = '#' + [r.byte(), r.byte(), r.byte()].map((b) => b.toString(16).padStart(2, '0')).join('');
+    const mask = v4 ? r.byte() : 0;
+    const abilities = cleanAbilities(ABILITY_IDS.filter((_, k) => mask & (1 << k)));
     setups.push({
+      abilities,
       id: `p${i}`,
       name,
       team: f & 1 ? 2 : 1,
@@ -279,7 +303,7 @@ function decodeV3(bytes: Uint8Array): Replay {
       ...(color ? { color } : {}),
     });
   }
-  const config: MatchConfig = { kind, mode, seed, ...(map ? { map } : {}) };
+  const config: MatchConfig = { kind, mode, seed, ...(map ? { map } : {}), ...(v4 && flags & 0x40 ? { freeEnergy: true } : {}), ...(v5 && flags & 0x80 ? { rockShapes: 'mixed' as const } : {}) };
   const total = r.uint();
   if (total > MAX_REPLAY_ACTIONS) throw new Error('Too many actions');
   const actions: ReplayAction[] = [];
@@ -293,9 +317,11 @@ function decodeV3(bytes: Uint8Array): Replay {
         const b = r.byte();
         const who = setups[b & 0x7f];
         if (!who) throw new Error('Unknown player');
+        const ab = v4 ? r.byte() : 0;
         const g = mode === 'ode2' ? r.float() : undefined;
         const e = r.expr();
-        shots.push({ p: who.id, e, ...(g !== undefined ? { g } : {}), ...(b & LEFT_BIT ? { d: -1 as const } : {}) });
+        const a = ab ? ABILITY_IDS[ab - 1] : undefined;
+        shots.push({ p: who.id, e, ...(g !== undefined ? { g } : {}), ...(b & LEFT_BIT ? { d: -1 as const } : {}), ...(a ? { a } : {}) });
       }
       actions.push({ a: 'r', shots });
     } else if (tag === TAG_LEAVE) {
@@ -306,13 +332,13 @@ function decodeV3(bytes: Uint8Array): Replay {
       throw new Error('Unknown action');
     }
   }
-  return { v: 3, config, setups, actions };
+  return { v: version, config, setups, actions };
 }
 
 export function decodeReplay(text: string): Replay | null {
   try {
     const bytes = fromBase64Url(text);
-    if (bytes[0] !== 3) return null;
+    if (bytes[0] !== 3 && bytes[0] !== 4 && bytes[0] !== 5) return null;
     const r = decodeV3(bytes);
     return replayIsSane(r) ? r : null;
   } catch {
@@ -336,7 +362,7 @@ const MAX_REPLAY_ACTIONS = 5000;
 
 /** Replays can be edited by hand, so check the shape before building a match from one. */
 function replayIsSane(r: Replay): boolean {
-  if (!r || r.v !== 3 || !r.config || !Array.isArray(r.setups) || !Array.isArray(r.actions)) return false;
+  if (!r || (r.v !== 3 && r.v !== 4 && r.v !== 5) || !r.config || !Array.isArray(r.setups) || !Array.isArray(r.actions)) return false;
   const { kind, mode, seed } = r.config;
   if (kind !== 'teams' && kind !== 'ffa') return false;
   if (mode !== 'fn' && mode !== 'ode1' && mode !== 'ode2') return false;

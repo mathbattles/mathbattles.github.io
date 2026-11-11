@@ -1,5 +1,6 @@
 import type { ShotMode } from './constants';
 import { PALETTE } from './colors';
+import { MAX_ENERGY, START_ENERGY, type AbilityId } from './abilities';
 import type { MatchState, Player } from './rules';
 import type { Circle } from './terrain';
 
@@ -15,12 +16,18 @@ export interface SoloDef {
   allies?: { x: number; y: number }[];
   circles: Circle[];
   name?: string;
+  /** Abilities the solo player can use. None in the campaign. */
+  abilities?: AbilityId[];
+  /** Free Play: unlimited energy. */
+  freeEnergy?: boolean;
+  /** Free-for-all rules let practice shots go either way. */
+  kind?: 'teams' | 'ffa';
 }
 
-function makePlayer(id: string, name: string, team: 1 | 2, soldierId: number, color: string, passive: boolean): Player {
+function makePlayer(id: string, name: string, team: 1 | 2, soldierId: number, color: string, passive: boolean, energy = START_ENERGY, abilities: AbilityId[] = []): Player {
   return {
     id, name, team, soldierId, color, ...(passive ? { passive: true } : {}),
-    connected: true, locked: false, kills: 0, deaths: 0, shots: 0, bestCombo: 0,
+    connected: true, locked: false, energy, abilities, kills: 0, deaths: 0, shots: 0, bestCombo: 0,
   };
 }
 
@@ -32,7 +39,7 @@ export function createSolo(def: SoloDef): MatchState {
   };
   // Targets and friends are many soldiers that never act. Each gets a silent owner, so the
   // one-soldier-per-player rule holds while the practice board stays the same.
-  const players: Player[] = [makePlayer(ME, def.name ?? 'You', 1, add(ME, def.shooter), PALETTE[0].hex, false)];
+  const players: Player[] = [makePlayer(ME, def.name ?? 'You', 1, add(ME, def.shooter), PALETTE[0].hex, false, def.freeEnergy ? MAX_ENERGY : START_ENERGY, def.abilities ?? [])];
   def.enemies.forEach((e, i) => {
     const id = i === 0 ? TARGETS : `${TARGETS}-${i}`;
     players.push(makePlayer(id, 'Target', 2, add(id, e), PALETTE[1].hex, true));
@@ -42,7 +49,7 @@ export function createSolo(def: SoloDef): MatchState {
     players.push(makePlayer(id, 'Friend', 1, add(id, a), PALETTE[2].hex, true));
   });
   return {
-    config: { kind: 'teams', mode: def.mode, seed: 0 },
+    config: { kind: def.kind ?? 'teams', mode: def.mode, seed: 0, ...(def.freeEnergy ? { freeEnergy: true } : {}) },
     players,
     soldiers,
     circles: def.circles.map((c) => ({ ...c })),

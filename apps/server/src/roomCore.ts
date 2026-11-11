@@ -9,9 +9,12 @@ import {
   NEXT_ROUND_DELAY_MS,
   ParseError,
   RECONNECT_GRACE_MS,
-  ROUND_MS,
   RuleError,
   START_DELAY_MS,
+  ABILITY_IDS,
+  ROUND_SECONDS,
+  cleanAbilities,
+  isAbilityId,
   actors,
   allLocked,
   chooseMove,
@@ -25,7 +28,9 @@ import {
   type BotLevel,
   type ChatLine,
   type ClientMsg,
+  type AbilityId,
   type Draft,
+  type RatingChange,
   type MatchState,
   type PlayerSetup,
   type RoomSettings,
@@ -44,21 +49,23 @@ export interface RoomIO {
   /** The most shots a bot may simulate per move on the server. */
   botMaxEvals: number;
   onLobbyChange?(info: { players: number; kind: string; mode: string; inLobby: boolean }): void;
-  onRankedOver?(winnerSeat: string, loserSeat: string): Promise<number | undefined>;
+  onRankedOver?(winnerSeat: string, loserSeat: string): Promise<Record<string, RatingChange> | undefined>;
   /** Stores a finished match's replay and returns its short id. */
   saveReplay?(code: string): Promise<string | undefined>;
   /** Runs once when a match ends, after any rating change is known. */
-  onMatchOver?(state: MatchState, setups: PlayerSetup[], ratingDelta: number | undefined, replayId?: string): void;
+  onMatchOver?(state: MatchState, setups: PlayerSetup[], ratingDelta: number | undefined, replayId?: string, ratings?: Record<string, RatingChange>): void;
 }
 
 interface Internal extends Seat {
+  /** Abilities this player owns, checked when they join. */
+  abilities: AbilityId[];
   conns: Set<string>;
   disconnectedAt: number | null;
   skip: boolean;
   lastChat: number;
 }
 
-const RANKED_SETTINGS: RoomSettings = { kind: 'teams', mode: 'fn', showFunctions: false };
+const RANKED_SETTINGS: RoomSettings = { kind: 'teams', mode: 'fn', showFunctions: false, roundSeconds: 45, rockShapes: 'mixed' };
 const MAX_SEATS = MAX_PLAYERS;
 const LOBBY_RETURN_MS = 12_000;
 const RANKED_NO_SHOW_MS = 30_000;
@@ -86,6 +93,8 @@ export class RoomCore {
   private drafts = new Map<string, Draft>();
   /** When each bot locks in this round. */
   private botAt = new Map<string, number>();
+  /** Seats that voted to play again after the last match. */
+  private rematch = new Set<string>();
   private lobbyAt = 0;
   private nextSeat = 1;
   private setups: PlayerSetup[] = [];
@@ -117,7 +126,7 @@ export class RoomCore {
   }
 
   private sendLobby(to?: string): void {
-    const msg: ServerMsg = { t: 'lobby', host: this.host, seats: this.seats.map((s) => this.publicSeat(s)), settings: this.settings, ranked: this.ranked, inMatch: !!this.state, spectators: this.spectators.size };
+    const msg: ServerMsg = { t: 'lobby', host: this.host, seats: this.seats.map((s) => this.publicSeat(s)), settings: this.settings, ranked: this.ranked, inMatch: !!this.state, spectators: this.spectators.size, rematch: [...this.rematch] };
     if (to) this.io.send(to, msg);
     else this.broadcast(msg);
     this.io.onLobbyChange?.({ players: this.seats.filter((s) => s.connected).length, kind: this.settings.kind, mode: this.settings.mode, inLobby: !this.state });
@@ -166,6 +175,7 @@ export class RoomCore {
         isBot: false,
         connected: true,
         hat: typeof msg.hat === 'string' && HAT_VALUES.has(msg.hat) ? msg.hat : undefined,
+        abilities: cleanAbilities(msg.abilities),
         conns: new Set(),
         disconnectedAt: null,
         skip: false,
@@ -299,6 +309,9 @@ export class RoomCore {
         case 'unlock':
           this.onUnlock(seat);
           return;
+        case 'rematch':
+          this.onRematch(seat);
+          return;
         default:
           return;
       }
@@ -325,6 +338,8 @@ export class RoomCore {
     this.settings.mode = 'fn';
     if ('map' in p) this.settings.map = p.map ? cleanMap(p.map) : null;
     if (typeof p.showFunctions === 'boolean') this.settings.showFunctions = p.showFunctions;
+    if (typeof p.roundSeconds === 'number' && (ROUND_SECONDS as readonly number[]).includes(p.roundSeconds)) this.settings.roundSeconds = p.roundSeconds;
+    if (p.rockShapes === 'mixed' || p.rockShapes === 'circles') this.settings.rockShapes = p.rockShapes;
   }
 
   private addBot(level: string): void {
@@ -339,6 +354,7 @@ export class RoomCore {
       ready: true,
       isBot: true,
       connected: true,
+      abilities: [...ABILITY_IDS],
       conns: new Set(),
       disconnectedAt: null,
       skip: true,
@@ -374,18 +390,19 @@ export class RoomCore {
     const seed = Math.floor(this.io.random() * 2 ** 31);
     const setups: PlayerSetup[] = this.seats
       .filter((s) => s.connected)
-      .map((s) => ({ id: s.id, name: s.name, team: s.team, isBot: s.isBot, botLevel: s.isBot ? s.id.split(':')[1] : undefined }));
+      .map((s) => ({ id: s.id, name: s.name, team: s.team, isBot: s.isBot, botLevel: s.isBot ? s.id.split(':')[1] : undefined, abilities: s.abilities }));
     this.state = createMatch(
-      { kind: this.settings.kind, mode: this.settings.mode, seed, ...(this.settings.map ? { map: this.settings.map } : {}) },
+      { kind: this.settings.kind, mode: this.settings.mode, seed, roundSeconds: this.roundSeconds(), rockShapes: this.settings.rockShapes ?? 'mixed', ...(this.settings.map ? { map: this.settings.map } : {}) },
       setups,
     );
     // The exact list used here, so replay links can rebuild this same match.
     this.setups = setups;
     this.noShowAt = 0;
     for (const s of this.seats) s.skip = s.isBot;
-    this.deadline = this.io.now() + START_DELAY_MS + ROUND_MS;
+    this.deadline = this.io.now() + START_DELAY_MS + this.roundMs();
     this.busyUntil = this.io.now() + START_DELAY_MS;
     this.drafts.clear();
+    this.rematch.clear();
     this.lobbyAt = 0;
     this.planBots();
     this.broadcastMatch();
@@ -406,13 +423,37 @@ export class RoomCore {
     if (this.state) this.broadcast({ t: 'update', state: this.state, deadline: this.deadline, serverNow: this.io.now() });
   }
 
-  private cleanDraft(msg: { expr?: unknown; angle?: unknown; dir?: unknown }): Draft {
+  private cleanDraft(msg: { expr?: unknown; angle?: unknown; dir?: unknown; ability?: unknown }): Draft {
     const expr = String(msg.expr ?? '').slice(0, MAX_FUNCTION_CHARS);
     return {
       expr,
       ...(typeof msg.angle === 'number' && Number.isFinite(msg.angle) ? { angle: msg.angle } : {}),
       dir: msg.dir === -1 ? -1 : 1,
+      ...(isAbilityId(msg.ability) ? { ability: msg.ability } : {}),
     };
+  }
+
+  /** Ranked is always 45 seconds. Other rooms use the host's choice. */
+  private roundSeconds(): number {
+    return this.ranked ? 45 : this.settings.roundSeconds || 45;
+  }
+  private roundMs(): number {
+    return this.roundSeconds() * 1000;
+  }
+
+  /** Everyone still here voting Rematch starts a new match straight away. */
+  private onRematch(seat: Internal): void {
+    if (!this.state?.over || this.ranked) return;
+    this.rematch.add(seat.id);
+    const humans = this.seats.filter((s) => !s.isBot && s.connected);
+    if (humans.length >= 1 && humans.every((s) => this.rematch.has(s.id)) && this.seats.filter((s) => s.connected).length >= 2) {
+      this.system('Everyone wants a rematch. Here we go!');
+      this.finalMsg = null;
+      this.startMatch();
+    } else {
+      this.system(`${seat.name} wants a rematch.`);
+      this.sendLobby();
+    }
   }
 
   private roundOpen(): boolean {
@@ -454,13 +495,13 @@ export class RoomCore {
     const shots = actors(state)
       .map((p) => ({ p, d: this.drafts.get(p.id) }))
       .filter(({ d }) => !!d && d.expr.trim() !== '')
-      .map(({ p, d }) => ({ playerId: p.id, expr: d!.expr, angle: d!.angle, dir: d!.dir }));
+      .map(({ p, d }) => ({ playerId: p.id, expr: d!.expr, angle: d!.angle, dir: d!.dir, ability: d!.ability }));
     const round = resolveRound(state, shots);
     this.drafts.clear();
     this.botAt.clear();
     const animation = (round.steps / DRAW_STEPS_PER_SEC) * 1000 + NEXT_ROUND_DELAY_MS;
     this.busyUntil = this.io.now() + animation;
-    this.deadline = this.busyUntil + ROUND_MS;
+    this.deadline = this.busyUntil + this.roundMs();
     this.broadcast({ t: 'round', round, state, deadline: this.deadline, serverNow: this.io.now() });
     if (state.over) {
       this.finish(animation);
@@ -476,12 +517,16 @@ export class RoomCore {
     this.lobbyAt = this.ranked ? 0 : this.io.now() + delay + LOBBY_RETURN_MS;
     this.botAt.clear();
     const setups = this.setups;
-    const send = (ratingDelta?: number, replayId?: string) => {
-      this.finalMsg = { t: 'over', state, setups, ...(ratingDelta !== undefined ? { ratingDelta } : {}), ...(replayId ? { replayId } : {}) };
+    const send = (ratings?: Record<string, RatingChange>, replayId?: string) => {
+      // The winner's gain, kept for older screens. Each player's own change is in ratings.
+      const winner = state.players.find((p) => p.team === state.winner);
+      const w = winner && ratings?.[winner.id];
+      const ratingDelta = w ? w.after - w.before : undefined;
+      this.finalMsg = { t: 'over', state, setups, ...(ratingDelta !== undefined ? { ratingDelta } : {}), ...(ratings ? { ratings } : {}), ...(replayId ? { replayId } : {}) };
       this.broadcast(this.finalMsg);
-      this.io.onMatchOver?.(state, setups, ratingDelta, replayId);
+      this.io.onMatchOver?.(state, setups, ratingDelta, replayId, ratings);
     };
-    let rating: Promise<number | undefined> | null = null;
+    let rating: Promise<Record<string, RatingChange> | undefined> | null = null;
     if (this.ranked && this.io.onRankedOver && state.winner !== null) {
       const winner = state.players.find((p) => p.team === state.winner);
       const loser = state.players.find((p) => p.team !== state.winner);
@@ -532,8 +577,9 @@ export class RoomCore {
       aimError: def.aimError,
       seed: state.config.seed + state.round * 31 + p.soldierId,
       maxEvals: this.io.botMaxEvals,
+      useAbilities: true,
     });
-    this.drafts.set(id, { expr: move.expr, angle: move.angle, dir: move.dir });
+    this.drafts.set(id, { expr: move.expr, angle: move.angle, dir: move.dir, ...(move.ability ? { ability: move.ability } : {}) });
     setLocked(state, id, true);
     this.afterLockChange();
   }
@@ -593,6 +639,7 @@ export class RoomCore {
   private backToLobby(): void {
     this.state = null;
     this.finalMsg = null;
+    this.rematch.clear();
     this.lobbyAt = 0;
     for (const s of this.seats) s.ready = s.isBot;
     for (const s of [...this.seats]) {

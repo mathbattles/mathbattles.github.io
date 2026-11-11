@@ -28,6 +28,15 @@ function GraphIcon() {
   );
 }
 
+function ShopIcon() {
+  return (
+    <svg class="nav-icon icon-shop" viewBox="0 0 32 32" aria-hidden="true">
+      <path class="bag" d="M6.200 11.800c6.600-.3 13.200.2 19.700-.1l-1.600 14.600c-5.500.3-11 0-16.500.2z" />
+      <path class="handle" d="M11.400 11.600c-.4-4.300 1.800-6.900 4.700-6.900s5.200 2.500 4.600 6.900" />
+    </svg>
+  );
+}
+
 function GearIcon() {
   return (
     <svg class="nav-icon icon-gear" viewBox="0 0 32 32" aria-hidden="true">
@@ -66,13 +75,23 @@ const sectionList = (): { id: string; name: string; icon: () => ComponentChildre
     ],
   },
   {
+    id: 'shop',
+    name: t('nav.shop'),
+    icon: ShopIcon,
+    tone: 'var(--orange)',
+    tabs: [
+      { path: '/shop', label: t('nav.cosmetics') },
+      { path: '/abilities', label: t('nav.abilities') },
+      { path: '/inventory', label: t('ui.inventory') },
+    ],
+  },
+  {
     id: 'misc',
     name: t('nav.misc'),
     icon: GearIcon,
     tone: 'var(--violet)',
     tabs: [
-      { path: '/shop', label: t('ui.shop') },
-      { path: '/inventory', label: t('ui.inventory') },
+      { path: '/season', label: t('nav.season') },
       { path: '/leaderboard', label: t('ui.leaderboard') },
       { path: '/profile', label: t('ui.profile') },
       { path: '/settings', label: t('ui.settings') },
@@ -82,6 +101,7 @@ const sectionList = (): { id: string; name: string; icon: () => ComponentChildre
 
 function isActive(tab: string, path: string): boolean {
   if (tab === '/') return path === '/';
+  if (tab === '/shop') return path.startsWith('/shop') || path.startsWith('/cosmetics');
   if (tab === '/online') return path.startsWith('/online') || path.startsWith('/room') || path.startsWith('/watch');
   if (tab === '/maps') return path.startsWith('/maps') || path.startsWith('/map/');
   if (tab === '/campaign') return path.startsWith('/campaign') || path.startsWith('/level');

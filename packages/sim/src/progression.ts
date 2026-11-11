@@ -36,21 +36,38 @@ export function rewardsFor(m: MatchSummary): { xp: number; sparks: number } {
 
 export const RANKS = [
   { name: 'Arithmetic', min: 0 },
-  { name: 'Algebra', min: 900 },
-  { name: 'Geometry', min: 1050 },
-  { name: 'Trigonometry', min: 1200 },
-  { name: 'Precalculus', min: 1350 },
-  { name: 'Calculus', min: 1500 },
-  { name: 'Analysis', min: 1700 },
-  { name: 'Fields Medalist', min: 1900 },
+  { name: 'Algebra', min: 150 },
+  { name: 'Geometry', min: 200 },
+  { name: 'Calculus', min: 300 },
+  { name: 'Analysis', min: 400 },
+  { name: 'Medalist', min: 500 },
 ] as const;
 
-export const START_RATING = 1000;
+/** Everyone starts here, in Arithmetic. */
+export const START_RATING = 100;
+/** The first few ranked matches move a rating twice as fast, so players find their level quickly. */
+export const PLACEMENT_MATCHES = 3;
+
+/** The next tier up from a rating, and how far along the way there you are (0 to 1). */
+export function rankProgress(rating: number): { rank: string; next: string | null; into: number; need: number } {
+  let i = 0;
+  RANKS.forEach((r, k) => {
+    if (rating >= r.min) i = k;
+  });
+  const cur = RANKS[i]!;
+  const next = RANKS[i + 1];
+  return { rank: cur.name, next: next?.name ?? null, into: Math.max(0, rating - cur.min), need: next ? next.min - cur.min : 0 };
+}
 
 export function rankFor(rating: number): string {
   let name: string = RANKS[0].name;
   for (const r of RANKS) if (rating >= r.min) name = r.name;
   return name;
+}
+
+/** How much a match counts: double during placement matches. */
+export function eloK(gamesPlayed: number): number {
+  return gamesPlayed < PLACEMENT_MATCHES ? 64 : 32;
 }
 
 /** Elo for a 1v1 result. Returns the winner's gain, which equals the loser's loss. */
@@ -108,6 +125,10 @@ export const COSMETICS: Cosmetic[] = [
   { id: 'title-qed', kind: 'title', name: 'Q.E.D.', cost: 0, earn: 'campaign-complete', value: 'Q.E.D.' },
   { id: 'title-triple', kind: 'title', name: 'Triple Integral', cost: 0, earn: 'triple-kill', value: 'Triple Integral' },
   { id: 'title-survivor', kind: 'title', name: 'Survivor', cost: 0, earn: 'brink-of-death', value: 'Survivor' },
+  { id: 'title-hopper', kind: 'title', name: 'Hopper', cost: 0, earn: 'leap-of-faith', value: 'Hopper' },
+  { id: 'title-trickshot', kind: 'title', name: 'Trick Shot', cost: 0, earn: 'bank-shot', value: 'Trick Shot' },
+  { id: 'trail-magma', kind: 'trail', name: 'Magma', cost: 0, earn: 'crater-maker', value: 'magma' },
+  { id: 'title-untouchable', kind: 'title', name: 'Untouchable', cost: 0, earn: 'clean-cut', value: 'Untouchable' },
   { id: 'title-sincity', kind: 'title', name: 'Sin City', cost: 200, value: 'Sin City' },
   { id: 'title-integrator', kind: 'title', name: 'The Integrator', cost: 300, value: 'The Integrator' },
   { id: 'title-prime', kind: 'title', name: 'Prime Suspect', cost: 350, value: 'Prime Suspect' },
@@ -176,6 +197,10 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'double-kill', name: 'Two Roots', detail: 'Hit 2 enemies with one shot', reward: 40 },
   { id: 'triple-kill', name: 'Cubic', detail: 'Hit 3 enemies with one shot', reward: 100 },
   { id: 'brink-of-death', name: 'On The Brink of Death', detail: 'Survive an exact tie on a coin flip', reward: 75 },
+  { id: 'leap-of-faith', name: 'Leap of Faith', detail: 'Get a Hop Kill', reward: 75 },
+  { id: 'bank-shot', name: 'Bank Shot', detail: 'Knock someone out with a Ricochet after it bounces', reward: 100 },
+  { id: 'crater-maker', name: 'Crater Maker', detail: 'Knock out 2 or more with one Heavy Shot', reward: 150 },
+  { id: 'clean-cut', name: 'Clean Cut', detail: 'Survive when a beam cuts off a shot coming your way', reward: 100 },
   { id: 'sine-only', name: 'Wave Rider', detail: 'Land a kill using only sin', reward: 40 },
   { id: 'genius-win', name: 'Beyond Genius', detail: 'Beat a Genius bot', reward: 150 },
   { id: 'campaign-complete', name: 'Q.E.D.', detail: 'Finish the campaign', reward: 200 },

@@ -9,10 +9,27 @@ import {
   SPAWN_CLEARANCE,
   SPAWN_SEPARATION,
 } from './constants';
-import type { Rng } from './rng';
+import { Rng } from './rng';
 import type { Circle } from './terrain';
+import { pickShape, rockTouches } from './shapes';
 
-export function generateCircles(rng: Rng): Circle[] {
+export type RockShapes = 'mixed' | 'circles';
+
+/**
+ * Random rocks. With mixed shapes, each rock also gets a shape and rotation from its own
+ * generator, so circle-only maps for a seed stay exactly the same as before.
+ */
+export function generateCircles(rng: Rng, shapes: RockShapes = 'circles', seed = 0): Circle[] {
+  const out = generateRound(rng);
+  if (shapes !== 'mixed') return out;
+  const s = new Rng((Math.trunc(seed) ^ 0x2c1b3c6d) >>> 0);
+  return out.map((c) => {
+    const shape = pickShape(s.next());
+    return shape === 'circle' ? c : { ...c, shape, rot: Math.round(s.next() * 628) / 100 };
+  });
+}
+
+function generateRound(rng: Rng): Circle[] {
   let count = Math.trunc(rng.gaussian() * CIRCLE_COUNT_SD + CIRCLE_COUNT_MEAN);
   while (count < 0) count = Math.trunc(rng.gaussian() * CIRCLE_COUNT_SD + CIRCLE_COUNT_MEAN);
   const out: Circle[] = [];
@@ -107,7 +124,7 @@ function clear(
     }
   }
   for (const c of circles) {
-    if (Math.hypot(c.x - x, c.y - y) < c.r + SPAWN_CLEARANCE) return false;
+    if (rockTouches(c, x, y, SPAWN_CLEARANCE)) return false;
   }
   return true;
 }

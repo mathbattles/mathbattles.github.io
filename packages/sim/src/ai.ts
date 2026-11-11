@@ -1,4 +1,5 @@
-import { MAX_STEPS, type ShotMode } from './constants';
+import { BLAST_R, MAX_STEPS, PLANE_H, PLANE_W, SOLDIER_R, type ShotMode } from './constants';
+import { ABILITIES, HEAVY_BLAST_MULT, type AbilityId } from './abilities';
 import { compile, varsForMode } from './parser';
 import { Rng } from './rng';
 import { isMirrored, livingTargets, playerById, terrainOf, type MatchState } from './rules';
@@ -21,6 +22,8 @@ interface Genome {
   params: number[];
   angle: number;
   dir: 1 | -1;
+  /** The ability tried with this shot, if any. */
+  ability?: AbilityId;
   score: number;
 }
 
@@ -62,7 +65,7 @@ function exprOf(mode: ShotMode, g: Genome): string {
   return t.build(g.params.map(fmt));
 }
 
-function randomGenome(rng: Rng, mode: ShotMode, ffa: boolean): Genome {
+function randomGenome(rng: Rng, mode: ShotMode, ffa: boolean, usable: readonly AbilityId[] = []): Genome {
   const tpl = rng.int(templatesFor(mode).length);
   const n = templatesFor(mode)[tpl]!.n;
   const params: number[] = [];
@@ -72,6 +75,7 @@ function randomGenome(rng: Rng, mode: ShotMode, ffa: boolean): Genome {
     params,
     angle: rng.range(-1.3, 1.3),
     dir: ffa && rng.next() < 0.5 ? -1 : 1,
+    ...(usable.length && rng.next() < 0.35 ? { ability: usable[rng.int(usable.length)] } : {}),
     score: -Infinity,
   };
 }
@@ -82,11 +86,15 @@ export interface BotMove {
   dir: 1 | -1;
   /** True when the best shot found would hit at least one enemy. */
   expectedHit: boolean;
+  /** An ability worth spending energy on for this shot. */
+  ability?: AbilityId;
 }
 
 export interface ThinkOptions {
   /** The bot that is aiming. Everyone aims at once, so each bot plans from its own soldier. */
   playerId: string;
+  /** Let the bot try its abilities when it has the energy. */
+  useAbilities?: boolean;
   generations: number;
   seed: number;
   /** Random change to the final numbers, so lower levels miss like people do. */
@@ -122,6 +130,10 @@ export function chooseMove(state: MatchState, opts: ThinkOptions): BotMove {
 
   let evals = 0;
   const maxEvals = opts.maxEvals ?? Infinity;
+  // Abilities the bot owns and can pay for this round.
+  const usable: AbilityId[] = opts.useAbilities
+    ? ABILITIES.filter((a) => (me.abilities ?? []).includes(a.id) && (state.config.freeEnergy || me.energy >= a.energy)).map((a) => a.id)
+    : [];
   const evaluate = (g: Genome): number => {
     evals++;
     let f;
@@ -138,10 +150,37 @@ export function chooseMove(state: MatchState, opts: ThinkOptions): BotMove {
       dir: g.dir,
       mirrored,
       terrain,
-      targets,
+      targets: g.ability === 'hop' ? [] : targets,
+      ricochet: g.ability === 'ricochet',
     }, { buffers });
     let score = 0;
+    // Spending energy should only happen when it really helps.
+    if (g.ability) score -= 60;
+    if (g.ability === 'hop') {
+      // Riding: touching an enemy is a Hop Kill; ending at the edge throws you out of the field.
+      if (r.reason === 'edge') return score - 3000;
+      const stride = Math.max(1, Math.floor(r.steps / 400));
+      const touched = new Set<number>();
+      for (let i = 0; i < r.steps; i += stride) {
+        for (const t of targets) {
+          if (touched.has(t.id)) continue;
+          if (Math.hypot(r.xs[i]! - t.x, r.ys[i]! - t.y) < SOLDIER_R * 2) touched.add(t.id);
+        }
+      }
+      for (const id of touched) score += isEnemy.get(id) ? 1000 : -1500;
+      // Landing somewhere sensible matters too.
+      const e = r.end;
+      if (e.x < 20 || e.x > PLANE_W - 20 || e.y < 20 || e.y > PLANE_H - 20) score -= 400;
+      return score;
+    }
     for (const h of r.hits) score += isEnemy.get(h.id) ? 1000 : -1500;
+    if (g.ability === 'heavy') {
+      const hit = new Set(r.hits.map((h) => h.id));
+      for (const t of targets) {
+        if (hit.has(t.id)) continue;
+        if (Math.hypot(r.end.x - t.x, r.end.y - t.y) < BLAST_R * HEAVY_BLAST_MULT + SOLDIER_R) score += isEnemy.get(t.id) ? 1000 : -1500;
+      }
+    }
     // Reward getting close to living enemies that weren't hit, so evolution has a slope to climb.
     const hitIds = new Set(r.hits.map((h) => h.id));
     let best = Infinity;
@@ -162,7 +201,7 @@ export function chooseMove(state: MatchState, opts: ThinkOptions): BotMove {
 
   let pop: Genome[] = [];
   for (let i = 0; i < POPULATION && (i < 5 || (now() <= deadline && evals < maxEvals)); i++) {
-    const g = randomGenome(rng, mode, ffa);
+    const g = randomGenome(rng, mode, ffa, usable);
     g.score = evaluate(g);
     pop.push(g);
   }
@@ -173,7 +212,7 @@ export function chooseMove(state: MatchState, opts: ThinkOptions): BotMove {
     const next = pop.slice(0, 5);
     while (next.length < POPULATION && evals < maxEvals) {
       if (rng.next() < 0.15) {
-        const g = randomGenome(rng, mode, ffa);
+        const g = randomGenome(rng, mode, ffa, usable);
         g.score = evaluate(g);
         next.push(g);
         continue;
@@ -185,6 +224,7 @@ export function chooseMove(state: MatchState, opts: ThinkOptions): BotMove {
         params: parent.params.map((p) => p + rng.gaussian() * scale),
         angle: parent.angle + rng.gaussian() * 0.1 * scale,
         dir: parent.dir,
+        ...(parent.ability ? { ability: parent.ability } : {}),
         score: -Infinity,
       };
       g.score = evaluate(g);
@@ -199,5 +239,5 @@ export function chooseMove(state: MatchState, opts: ThinkOptions): BotMove {
     top.params = top.params.map((p) => p * (1 + rng.gaussian() * opts.aimError!));
     top.angle += rng.gaussian() * opts.aimError * 0.5;
   }
-  return { expr: exprOf(mode, top), angle: top.angle, dir: top.dir, expectedHit: top.score >= 1000 };
+  return { expr: exprOf(mode, top), angle: top.angle, dir: top.dir, expectedHit: top.score >= 900, ...(top.ability ? { ability: top.ability } : {}) };
 }

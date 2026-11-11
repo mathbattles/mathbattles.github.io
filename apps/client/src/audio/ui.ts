@@ -42,12 +42,24 @@ export function initAudioUi(): void {
     applySettings();
   };
 
+  /** Each kind of control has its own family of sounds. */
+  const familyFor = (el: Element): Parameters<typeof sound>[0] => {
+    if (el.closest('.sidenav') || el.matches('.tab')) return 'nav';
+    if (el.matches('[role="option"]')) return 'choose';
+    if (el.matches('.dd-button')) return 'dropdown';
+    if (el.closest('.mathkeys')) return 'mathkey';
+    if (el.matches('.primary')) return 'press';
+    if (el.matches('.small, .plain')) return 'tap';
+    if (el.matches('a[href]') && !el.matches('.btn')) return 'nav';
+    return 'click';
+  };
+
   const quiet = (el: Element) => !!el.closest('[data-sfx="none"]') || (el as HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true';
 
   document.addEventListener('pointerdown', (e) => {
     unlock();
     const el = (e.target as Element | null)?.closest?.(INTERACTIVE);
-    if (el && !quiet(el)) sound('click', profile.muted);
+    if (el && !quiet(el)) sound(familyFor(el), profile.muted);
   }, true);
 
   document.addEventListener('keydown', (e) => {
@@ -55,7 +67,7 @@ export function initAudioUi(): void {
     const target = e.target as HTMLElement | null;
     if (!target) return;
     if ((e.key === 'Enter' || e.key === ' ') && target.matches(INTERACTIVE) && !quiet(target)) {
-      sound('click', profile.muted);
+      sound(familyFor(target), profile.muted);
     } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && target.matches('input[type="text"], input:not([type]), input[type="search"], input[type="password"], input[type="email"], textarea')) {
       sound('key', profile.muted);
     }

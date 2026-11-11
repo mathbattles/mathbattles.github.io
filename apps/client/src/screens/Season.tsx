@@ -1,9 +1,13 @@
 import { COSMETICS, SEASON, SEASON_REWARDS, seasonActive, seasonLevel, utcDayNumber, weekNumber } from '@mathbattles/sim';
 import { useEffect, useRef } from 'preact/hooks';
-import { currentQuests, profile } from '../store';
+import { notify } from './Notices';
+import { claimSeason, currentQuests, profile, seasonClaimable } from '../store';
+import { sound } from '../util';
+import { TopBar } from './Shared';
 import { ItemThumb } from './Meta';
 import { useProfile } from './Shared';
 import { t } from '../i18n';
+import { Icon } from './Icons';
 
 const KIND_LABEL: Record<string, string> = { hat: 'Hat', trail: 'Shot trail', title: 'Title', blast: 'Kill effect', obstacle: 'Obstacles' };
 
@@ -48,16 +52,20 @@ export function SeasonPass() {
       <p class="muted small-note" style={{ margin: '4px 0 10px' }}>{lv.maxed ? 'Every level is unlocked. Well played!' : `${lv.into} of ${lv.need} XP to level ${lv.level + 1}.`}</p>
       <div class="pass-track" ref={track} role="list" aria-label={t('ui.seasonRewards')}>
         {SEASON_REWARDS.map((r) => {
-          const got = profile.seasonPaid.includes(r.level) || lv.level >= r.level;
+          const got = profile.seasonPaid.includes(r.level);
+          const ready = !got && lv.level >= r.level;
           const next = r.level === lv.level + 1;
           const item = 'cosmetic' in r ? COSMETICS.find((c) => c.id === r.cosmetic) : undefined;
           return (
-            <div role="listitem" class={`pass-level ${got ? 'got' : ''} ${next ? 'next' : ''} ${r.level === SEASON.levels ? 'final' : ''} ${item ? `kind-${item.kind}` : 'kind-sparks'}`}>
+            <div role="listitem" class={`pass-level ${got ? 'got' : ''} ${ready ? 'ready' : ''} ${next ? 'next' : ''} ${r.level === SEASON.levels ? 'final' : ''} ${item ? `kind-${item.kind}` : 'kind-sparks'}`}>
               <span class="pass-num">{r.level}</span>
-              {item ? <ItemThumb item={item} /> : <div class="pass-sparks" aria-hidden="true">✦</div>}
+              {item ? <ItemThumb item={item} /> : <div class="pass-sparks" aria-hidden="true"><Icon name="spark" size="1.6em" /></div>}
               <strong>{item ? item.name : `${'sparks' in r ? r.sparks : 0} Sparks`}</strong>
               <small>{item ? KIND_LABEL[item.kind] : 'Currency'}</small>
-              {got && <span class="pass-check" aria-label={t('ui.unlocked')}>✓</span>}
+              {got && <span class="pass-check"><Icon name="check" label={t('ui.unlocked')} /></span>}
+              {ready && (
+                <button class="small primary pass-claim" onClick={() => { claimSeason(r.level); sound('claim', profile.muted); }}>{t('season.claim')}</button>
+              )}
             </div>
           );
         })}
@@ -103,6 +111,71 @@ export function QuestsPanel() {
         <h4>{t('ui.thisWeek')} <small class="muted">New quests in {timeLeft(nextWeek - now).replace(' left', '')}</small></h4>
         {list(group(true))}
       </div>
+    </div>
+  );
+}
+
+/** A small card on the profile that links to the Season Pass tab. */
+export function SeasonSummary() {
+  useProfile();
+  const xp = profile.seasonId === SEASON.id ? profile.seasonXp : 0;
+  const lv = seasonLevel(xp);
+  const waiting = seasonClaimable().length;
+  return (
+    <a class="sheet season-summary" href="#/season">
+      <Icon name="flag" size="1.6em" />
+      <span>
+        <strong>{t('season.summary', { name: SEASON.name, level: lv.level, total: SEASON.levels })}</strong>
+        <small class="muted">{waiting ? t('season.waiting', { count: waiting }) : t('season.open')}</small>
+      </span>
+    </a>
+  );
+}
+
+/** The next few rewards, each drawn as it looks in the game. */
+function NextRewards() {
+  const xp = profile.seasonId === SEASON.id ? profile.seasonXp : 0;
+  const lv = seasonLevel(xp);
+  const upcoming = SEASON_REWARDS.filter((r) => r.level > lv.level).slice(0, 5);
+  if (!upcoming.length) return null;
+  return (
+    <div class="sheet next-rewards">
+      <h3>{t('season.nextUp')}</h3>
+      <div class="next-rewards-row">
+        {upcoming.map((r) => {
+          const item = 'cosmetic' in r ? COSMETICS.find((c) => c.id === r.cosmetic) : undefined;
+          return (
+            <div class="next-reward">
+              {item ? <ItemThumb item={item} /> : <div class="pass-sparks"><Icon name="spark" size="2em" /></div>}
+              <strong>{item ? item.name : t('season.sparks', { n: 'sparks' in r ? r.sparks : 0 })}</strong>
+              <small class="muted">{t('season.atLevel', { n: r.level })}</small>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** The Season Pass tab: countdown, level, every reward with claiming, what's next, and quests. */
+export function SeasonPage() {
+  useProfile();
+  const waiting = seasonClaimable().length;
+  const left = Math.max(0, SEASON.ends - Date.now());
+  const days = Math.floor(left / 86_400_000);
+  const hours = Math.floor((left % 86_400_000) / 3_600_000);
+  return (
+    <div class="page">
+      <TopBar title={t('nav.season')} />
+      <div class="season-top row">
+        <span class="season-countdown"><Icon name="clock" /> {left > 0 ? t('season.countdown', { days, hours }) : t('season.ended')}</span>
+        <button class="primary" disabled={!waiting} onClick={() => { if (claimSeason()) { sound('claim', profile.muted); notify(t('season.claimed'), 'ok'); } }}>
+          {waiting ? t('season.claimAll', { count: waiting }) : t('season.nothing')}
+        </button>
+      </div>
+      <SeasonPass />
+      <NextRewards />
+      <QuestsPanel />
     </div>
   );
 }

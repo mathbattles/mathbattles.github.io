@@ -1,5 +1,6 @@
 import { PLANE_H, PLANE_W, SOLDIER_R } from './constants';
 import type { Circle } from './terrain';
+import { isRockShape, rockTouches } from './shapes';
 
 /** A player-made map: its obstacles, and optionally where soldiers start. */
 export interface MapDef {
@@ -34,7 +35,10 @@ export function cleanMap(raw: unknown): MapDef | null {
     const y = int(c?.y, 0, PLANE_H);
     const r = int(c?.r, MAP_LIMITS.minR, MAP_LIMITS.maxR);
     if (x === null || y === null || r === null) return null;
-    circles.push({ x, y, r });
+    const shape = isRockShape(c?.shape) && c.shape !== 'circle' ? c.shape : undefined;
+    // Rotation is kept in 256ths of a turn, exactly as replays store it, so a map rebuilds identically.
+    const rot = typeof c?.rot === 'number' && Number.isFinite(c.rot) ? rotStep(c.rot) : 0;
+    circles.push(shape ? { x, y, r, shape, rot } : { x, y, r });
   }
   const spawns: MapSpawn[] = [];
   for (const s of Array.isArray(m.spawns) ? m.spawns : []) {
@@ -52,5 +56,11 @@ export function cleanMap(raw: unknown): MapDef | null {
 
 /** True when a soldier standing here would be inside an obstacle. */
 export function spawnBlocked(s: { x: number; y: number }, circles: Circle[]): boolean {
-  return circles.some((c) => Math.hypot(c.x - s.x, c.y - s.y) < c.r + SOLDIER_R);
+  return circles.some((c) => rockTouches(c, s.x, s.y, SOLDIER_R));
+}
+
+/** A rotation rounded to the nearest 256th of a turn. */
+export function rotStep(rot: number): number {
+  const k = ((Math.round((rot / (2 * Math.PI)) * 256) % 256) + 256) % 256;
+  return (k / 256) * 2 * Math.PI;
 }
