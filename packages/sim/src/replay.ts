@@ -11,7 +11,7 @@ import { ROCK_SHAPES } from './shapes';
  * through the normal rules, so it stays small enough to store and share.
  */
 export interface Replay {
-  v: 3 | 4 | 5;
+  v: 3 | 4 | 5 | 6;
   config: MatchConfig;
   setups: PlayerSetup[];
   actions: ReplayAction[];
@@ -35,7 +35,7 @@ export function makeReplay(state: MatchState, setups: PlayerSetup[]): Replay {
   const colors = new Map(state.players.map((p) => [p.id, p.color]));
   const owned = new Map(state.players.map((p) => [p.id, p.abilities ?? []]));
   return {
-    v: 5,
+    v: 6,
     config: state.config,
     setups: setups.map((s) => ({ ...s, ...(colors.has(s.id) ? { color: colors.get(s.id) } : {}), abilities: owned.get(s.id) ?? cleanAbilities(s.abilities) })),
     actions: state.log.map(toAction),
@@ -52,7 +52,10 @@ function toAction(e: MatchEvent): ReplayAction {
       ...(s.mode === 'ode2' ? { g: s.angle } : {}),
       ...(s.dir === -1 ? { d: -1 as const } : {}),
       ...(s.ability ? { a: s.ability } : {}),
-    })),
+    })).concat(
+      // Shield fires no line, so it has no shot record; it still has to be replayed.
+      (e.round.shields ?? []).map((sh) => ({ p: sh.playerId, e: '', a: 'shield' as const })),
+    ),
   };
 }
 
@@ -197,12 +200,22 @@ function fromBase64Url(text: string): Uint8Array {
 export function encodeReplay(replay: Replay): string {
   const { config, setups } = replay;
   const w = new Writer();
-  w.byte(5);
+  w.byte(6);
   const map = config.map ? cleanMap(config.map) : null;
   w.byte(KINDS.indexOf(config.kind) | (MODES.indexOf(config.mode) << 1) | (map ? 0x20 : 0) | (config.freeEnergy ? 0x40 : 0) | (config.rockShapes === 'mixed' ? 0x80 : 0));
   // Seeds are whole numbers. Store the sign separately so negative seeds work too.
   const seed = Math.trunc(config.seed);
   w.uint(Math.abs(seed) * 2 + (seed < 0 ? 1 : 0));
+  // Version 6: more rules. Solid lines (on unless turned off), and admin energy costs.
+  const costs = Object.entries(config.energyCosts ?? {}).filter(([id, e]) => ABILITY_IDS.includes(id as AbilityId) && typeof e === 'number');
+  w.byte((config.solidLines === false ? 1 : 0) | (costs.length ? 2 : 0));
+  if (costs.length) {
+    w.byte(costs.length);
+    for (const [id, e] of costs) {
+      w.byte(ABILITY_IDS.indexOf(id as AbilityId));
+      w.byte(Math.max(0, Math.min(255, Math.round(e as number))));
+    }
+  }
   // A custom map travels inside the replay, so anyone can watch without having the map.
   if (map) {
     w.text(map.name);
@@ -260,15 +273,32 @@ export function encodeReplay(replay: Replay): string {
 
 function decodeV3(bytes: Uint8Array): Replay {
   const r = new Reader(bytes);
-  const version = r.byte() as 3 | 4 | 5;
+  const version = r.byte() as 3 | 4 | 5 | 6;
   const v4 = version >= 4;
   const v5 = version >= 5;
+  const v6 = version >= 6;
   const flags = r.byte();
   const kind = KINDS[flags & 1]!;
   const mode = MODES[(flags >> 1) & 3];
   if (!mode) throw new Error('Unknown mode');
   const rawSeed = r.uint();
   const seed = rawSeed % 2 === 1 ? -(rawSeed - 1) / 2 : rawSeed / 2;
+  // Matches recorded before version 6 had no solid lines, so they replay without them.
+  let solidLines = false;
+  let energyCosts: Partial<Record<AbilityId, number>> | undefined;
+  if (v6) {
+    const rules = r.byte();
+    solidLines = !(rules & 1);
+    if (rules & 2) {
+      energyCosts = {};
+      const n = Math.min(r.byte(), ABILITY_IDS.length);
+      for (let k = 0; k < n; k++) {
+        const id = ABILITY_IDS[r.byte()];
+        const e = r.byte();
+        if (id) energyCosts[id] = e;
+      }
+    }
+  }
   let map: MatchConfig['map'];
   if (flags & 0x20) {
     const name = r.text();
@@ -303,7 +333,7 @@ function decodeV3(bytes: Uint8Array): Replay {
       ...(color ? { color } : {}),
     });
   }
-  const config: MatchConfig = { kind, mode, seed, ...(map ? { map } : {}), ...(v4 && flags & 0x40 ? { freeEnergy: true } : {}), ...(v5 && flags & 0x80 ? { rockShapes: 'mixed' as const } : {}) };
+  const config: MatchConfig = { kind, mode, seed, ...(map ? { map } : {}), ...(v4 && flags & 0x40 ? { freeEnergy: true } : {}), ...(v5 && flags & 0x80 ? { rockShapes: 'mixed' as const } : {}), ...(solidLines ? {} : { solidLines: false }), ...(energyCosts ? { energyCosts } : {}) };
   const total = r.uint();
   if (total > MAX_REPLAY_ACTIONS) throw new Error('Too many actions');
   const actions: ReplayAction[] = [];
@@ -338,7 +368,7 @@ function decodeV3(bytes: Uint8Array): Replay {
 export function decodeReplay(text: string): Replay | null {
   try {
     const bytes = fromBase64Url(text);
-    if (bytes[0] !== 3 && bytes[0] !== 4 && bytes[0] !== 5) return null;
+    if (bytes[0] !== 3 && bytes[0] !== 4 && bytes[0] !== 5 && bytes[0] !== 6) return null;
     const r = decodeV3(bytes);
     return replayIsSane(r) ? r : null;
   } catch {
@@ -362,7 +392,7 @@ const MAX_REPLAY_ACTIONS = 5000;
 
 /** Replays can be edited by hand, so check the shape before building a match from one. */
 function replayIsSane(r: Replay): boolean {
-  if (!r || (r.v !== 3 && r.v !== 4 && r.v !== 5) || !r.config || !Array.isArray(r.setups) || !Array.isArray(r.actions)) return false;
+  if (!r || (r.v !== 3 && r.v !== 4 && r.v !== 5 && r.v !== 6) || !r.config || !Array.isArray(r.setups) || !Array.isArray(r.actions)) return false;
   const { kind, mode, seed } = r.config;
   if (kind !== 'teams' && kind !== 'ffa') return false;
   if (mode !== 'fn' && mode !== 'ode1' && mode !== 'ode2') return false;

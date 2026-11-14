@@ -37,6 +37,8 @@ export interface ShotRequest {
   targets: readonly Target[];
   /** Ricochet: bounce once off the first rock, like light off a mirror, then fly straight. */
   ricochet?: boolean;
+  /** Piercing Shot: pass straight through the first rock, then stop on the next one as usual. */
+  pierce?: boolean;
 }
 
 export type EndReason = 'obstacle' | 'edge' | 'invalid' | 'steep' | 'too-long';
@@ -52,6 +54,8 @@ export interface ShotResult {
   angle: number;
   /** Where a ricochet bounced, if it did. */
   bounce?: { x: number; y: number; step: number };
+  /** Where a Piercing Shot went into and came out of the rock it passed through. */
+  pierced?: { in: { x: number; y: number; step: number }; out?: { x: number; y: number; step: number } };
 }
 
 const ANGLE_ERROR = Math.PI / 360;
@@ -131,6 +135,9 @@ export function simulateShot(
   let sdx = 0;
   let sdy = 0;
   let bounce: ShotResult['bounce'];
+  let pierced: ShotResult['pierced'];
+  // Piercing: 'ready' until the first rock, 'inside' while passing through it, then 'used'.
+  let pierceState: 'ready' | 'inside' | 'used' = req.pierce ? 'ready' : 'used';
 
   for (let i = 1; i < MAX_STEPS; i++) {
     if (straight) {
@@ -194,7 +201,21 @@ export function simulateShot(
       reason = 'edge';
       break;
     }
-    if (req.terrain.solidAt(ipx, ipy)) {
+    const solid = req.terrain.solidAt(ipx, ipy);
+    if (pierceState === 'inside' && !solid) {
+      pierceState = 'used';
+      if (pierced) pierced.out = { x: px, y: py, step: i };
+    }
+    if (solid && pierceState !== 'used') {
+      if (pierceState === 'ready') {
+        pierceState = 'inside';
+        pierced = { in: { x: px, y: py, step: i } };
+      }
+      lastPx = px;
+      lastPy = py;
+      continue;
+    }
+    if (solid) {
       if (req.ricochet && !bounce) {
         // Bounce off the rock's surface: reflect the direction about the surface normal.
         const n = surfaceNormal(req.terrain, px, py);
@@ -233,6 +254,7 @@ export function simulateShot(
     reason,
     angle: Number.isFinite(angle) ? angle : 0,
     ...(bounce ? { bounce } : {}),
+    ...(pierced ? { pierced } : {}),
   };
 }
 

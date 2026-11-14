@@ -25,7 +25,7 @@ import { authState } from '../auth';
 import { LocalSession, SoloSession } from '../game/session';
 import { recordMatchHistory } from '../history';
 import { TopBar } from './Shared';
-import { ownedAbilities, profile, recordMatch } from '../store';
+import { matchLoadout, ownedAbilities, profile, recordMatch } from '../store';
 import { go, modeName, sound } from '../util';
 import { GameView, winnerText } from './GameView';
 import { MapCodeBox } from './MapCode';
@@ -226,7 +226,7 @@ function makeSession(c: { kind: MatchKind; mode: ShotMode; seats: SeatDraft[]; m
     botLevel: s.kind !== "human" ? s.kind : undefined,
     ...(s.color ? { color: s.color } : {}),
   }));
-  return new LocalSession({ kind: c.kind, mode: c.mode, seed: (Math.random() * 2 ** 31) >>> 0, rockShapes: c.rocks ?? 'mixed', ...(c.map ? { map: c.map } : {}) }, setups, { abilities: ownedAbilities() });
+  return new LocalSession({ kind: c.kind, mode: c.mode, seed: (Math.random() * 2 ** 31) >>> 0, rockShapes: c.rocks ?? 'mixed', ...(c.map ? { map: c.map } : {}) }, setups, { abilities: matchLoadout() });
 }
 
 function LocalGame(props: { config: Parameters<typeof makeSession>[0]; onAgain: () => void }) {

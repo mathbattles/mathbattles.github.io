@@ -1115,3 +1115,36 @@ button.ability-choice:disabled { opacity: .5; }
 
 /* A soldier hopping out of the field leaves the coordinate plane and crosses the page on this layer. */
 .escape-layer { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 60; }
+
+/* Announcement from the admin, across the top of every page. */
+.announcement { display: flex; align-items: center; gap: .55rem; margin: 0 0 .75rem; padding: .45rem .75rem; border: 2.5px solid var(--ink); border-radius: 12px 15px 11px 14px; background: color-mix(in srgb, var(--yellow) 45%, var(--card)); box-shadow: 2px 3px 0 var(--ink); font-weight: 700; }
+.announcement span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+/* The room you're still in while browsing other pages. */
+.room-bar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; flex-wrap: wrap; gap: .55rem; margin: 0 0 .75rem; padding: .45rem .75rem; border: 2.5px solid var(--ink); border-radius: 12px 15px 11px 14px; background: color-mix(in srgb, var(--blue, #4fb3ff) 18%, var(--card)); box-shadow: 2px 3px 0 var(--ink); animation: notice-in .3s ease-out both; }
+.room-bar-text { flex: 1; min-width: 10rem; font-weight: 700; }
+.leave-room { margin-left: auto; }
+
+/* Loadout on the Abilities page. */
+.loadout-bar { display: flex; flex-direction: column; gap: .45rem; margin-bottom: .9rem; }
+.loadout-slots { display: flex; flex-wrap: wrap; gap: .45rem; }
+.loadout-slot { display: inline-flex; align-items: center; gap: .35rem; padding: .3rem .65rem; border: 2px solid var(--ink); border-radius: 999px; background: var(--card); font-weight: 700; }
+.loadout-slot.fixed { background: color-mix(in srgb, var(--yellow) 35%, var(--card)); }
+.loadout-slot.empty { border-style: dashed; font-weight: 400; opacity: .7; }
+
+/* Admin tools. */
+.admin-tools { margin-top: 1rem; }
+.admin-tabs { gap: .35rem; margin-bottom: .75rem; }
+.admin-player { padding: .6rem 0; border-bottom: 1.5px dashed var(--page-line); }
+.admin-player-head { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.admin-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .55rem; margin-bottom: .8rem; }
+.admin-form label { display: flex; flex-direction: column; gap: .15rem; font-weight: 600; }
+.admin-tools td input { width: 6rem; }
+.pill { display: inline-block; padding: .05rem .5rem; border: 2px solid var(--ink); border-radius: 999px; font-size: .8rem; font-weight: 700; }
+.pill.ban { background: color-mix(in srgb, #ff5d7e 35%, var(--card)); }
+.pill.mute { background: color-mix(in srgb, var(--yellow) 40%, var(--card)); }
+.watch-friend { display: inline-flex; align-items: center; gap: .3rem; }
+
+/* With many abilities the menu scrolls instead of running off the field. */
+.ability-menu { max-height: min(68vh, 30rem); overflow-y: auto; overscroll-behavior: contain; }
+.ability-menu .ability-menu-head { position: sticky; top: 0; z-index: 1; background: var(--card); }

@@ -1,4 +1,5 @@
 import { START_RATING, cleanMap } from '@mathbattles/sim';
+import { activeSanction, handleAdminTools, sanctionText } from './admin';
 import { overLimit } from './limits';
 import { checkCode, decryptSecret, encryptSecret, newSecret, newSessionToken } from './mfa';
 import { newId, sha256Hex } from './security';
@@ -18,6 +19,8 @@ export interface ApiContext {
   mfaKey?: string;
   newCode: () => string;
   ip: string | null;
+  /** Closes a live room (admin only). */
+  closeRoom?: (code: string) => Promise<boolean>;
 }
 
 const ONLINE_MS = 45_000;
@@ -250,6 +253,8 @@ export async function handleSocial(ctx: ApiContext): Promise<Response | null> {
       if (await overLimit(db, `dm-burst:${uid}`, 15, 60_000)) return json({ error: 'Slow down a little, then try again.' }, 429);
       if (await overLimit(db, `dm-hour:${uid}`, 400, 3_600_000)) return tooMany();
       const b = await body<{ to?: string; text?: string }>(req);
+      const muted = await activeSanction(db, uid, 'mute');
+      if (muted) return json({ error: sanctionText(muted) }, 403);
       const other = await byName(db, b?.to);
       if (!other || !(await areFriends(db, uid, other.uid))) return json({ error: 'You can only message friends.' }, 403);
       const text = cleanChat(String(b?.text ?? ''), MESSAGE_MAX);
@@ -464,6 +469,10 @@ export async function handleSocial(ctx: ApiContext): Promise<Response | null> {
     const valid = session.length >= 32 && !!(await db.prepare('SELECT 1 AS x FROM admin_sessions WHERE token_hash = ? AND uid = ? AND expires_at > ?')
       .bind(await sha256Hex(session), owner, now).first());
     if (!valid) return json({ error: 'Enter a code from your authenticator app.', mfa: true }, 401);
+
+    // Player tools, bans and mutes, the live room list, and game settings.
+    const tools = await handleAdminTools({ db, req, parts, json, closeRoom: ctx.closeRoom ?? (async () => false) });
+    if (tools) return tools;
 
     if (parts[2] === 'logout' && req.method === 'POST') {
       await db.prepare('DELETE FROM admin_sessions WHERE uid = ?').bind(owner).run();

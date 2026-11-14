@@ -7,6 +7,8 @@ import { adminData, adminDeleteReport, adminLogout, adminMfaSetup, adminMfaStatu
 import { signOutUser } from '../auth';
 import { addSeasonXp, profile, saveProfile } from '../store';
 import { TopBar, useProfile } from './Shared';
+import { AdminTools, sanction } from './AdminTools';
+import { Icon } from './Icons';
 
 export const ADMIN_USERNAME = 'bobblyionized';
 
@@ -211,7 +213,11 @@ export function Admin() {
                         <td>{r.code}</td>
                         <td>{r.reported}</td>
                         <td>{r.text}</td>
-                        <td><button class="small" onClick={() => void adminDeleteReport(r.id).then(load)}>Clear</button></td>
+                        <td class="row">
+                          <button class="small" onClick={() => void adminDeleteReport(r.id).then(load)}>Clear</button>
+                          {r.reported && <button class="small" onClick={() => void sanction(r.reported!, 'mute', `Chat report: ${String(r.text ?? '').slice(0, 80)}`, 1).then((x) => setNote(x.error ?? `${r.reported} muted for a day.`))}><Icon name="mute" /> Mute 1 day</button>}
+                          {r.reported && <button class="small" onClick={() => void sanction(r.reported!, 'ban', `Chat report: ${String(r.text ?? '').slice(0, 80)}`, 7).then((x) => setNote(x.error ?? `${r.reported} banned for a week.`))}><Icon name="ban" /> Ban 7 days</button>}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -221,6 +227,7 @@ export function Admin() {
           </>
         )}
       </div>
+      <AdminTools />
     </div>
   );
 }

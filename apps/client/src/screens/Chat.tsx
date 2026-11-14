@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { closeChat, openChats, subscribeChats, toggleMinimized, type OpenChat } from '../dms';
 import { fetchMessages, reportMessage, sendMessage, type DirectMessage } from '../net/api';
-import { refreshSocial } from '../social';
+import { refreshSocial, social } from '../social';
 import { profile } from '../store';
 import { sound } from '../util';
 import { t } from '../i18n';
@@ -132,6 +132,8 @@ export function ChatWindow({ chat, online }: { chat: OpenChat; online: boolean }
   };
 
   const lastMine = [...messages].reverse().find((m) => m.mine);
+  // A friend in a match can be watched straight from the chat.
+  const friend = social.state?.friends.find((f) => f.name === chat.name);
   let lastDay = '';
   return (
     <section class={`chat-window ${chat.minimized ? 'min' : ''}`} aria-label={`Chat with ${chat.name}`}>
@@ -142,6 +144,9 @@ export function ChatWindow({ chat, online }: { chat: OpenChat; online: boolean }
           <small class="muted">{online ? 'Online' : 'Offline'}</small>
         </span>
         <span class="chat-controls">
+          {friend?.online && friend.room && friend.inMatch && (
+            <a class="btn small plain watch-friend" href={`#/watch/${friend.room}`} aria-label={t('friends.watchName', { name: chat.name })} title={t('friends.watchName', { name: chat.name })}><Icon name="eye" /></a>
+          )}
           <button class="small plain" aria-label={chat.minimized ? `Open chat with ${chat.name}` : `Minimize chat with ${chat.name}`} aria-expanded={!chat.minimized} onClick={() => toggleMinimized(chat.name)}>
             <Icon name={chat.minimized ? 'chevronUp' : 'chevronDown'} />
           </button>

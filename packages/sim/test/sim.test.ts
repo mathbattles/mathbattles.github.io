@@ -51,6 +51,9 @@ import {
   rockTouches,
   generateCircles,
   cleanMap,
+  cleanLoadout,
+  terrainOf,
+  NEAR_MISS_ENERGY,
   type MatchConfig,
   type PlayerSetup,
 } from '../src';
@@ -486,7 +489,7 @@ describe('replays', () => {
     removePlayer(m, 'b');
     const code = encodeReplay(makeReplay(m, setups));
     const back = decodeReplay(code)!;
-    expect(back.v).toBe(5);
+    expect(back.v).toBe(6);
     const again = replayStart(back);
     for (const a of back.actions) if (!again.over) applyAction(again, a);
     expect(again.soldiers.map((s) => s.alive)).toEqual(m.soldiers.map((s) => s.alive));
@@ -815,7 +818,7 @@ describe('replays with rock shapes', () => {
     const m = createMatch(cfg({ seed: 19, rockShapes: 'mixed' }), setups);
     resolveRound(m, [{ playerId: 'a', expr: 'x/4' }, { playerId: 'b', expr: 'x/6' }]);
     const back = decodeReplay(encodeReplay(makeReplay(m, setups)))!;
-    expect(back.v).toBe(5);
+    expect(back.v).toBe(6);
     expect(back.config.rockShapes).toBe('mixed');
     expect(replayStart(back).circles).toEqual(createMatch(cfg({ seed: 19, rockShapes: 'mixed' }), setups).circles);
   });
@@ -832,14 +835,17 @@ describe('replays with rock shapes', () => {
     const m = createMatch(cfg({ seed: 8 }), setups);
     resolveRound(m, [{ playerId: 'a', expr: 'x/4' }]);
     const code = encodeReplay(makeReplay(m, setups));
-    const bytes = Uint8Array.from(atob(code.replaceAll('-', '+').replaceAll('_', '/')), (c) => c.charCodeAt(0));
-    bytes[0] = 4;
+    const v6 = Uint8Array.from(atob(code.replaceAll('-', '+').replaceAll('_', '/')), (c) => c.charCodeAt(0));
+    // Version 6 added a rules byte after the seed (seed 8 is one byte), so drop it to get version 4's layout.
+    const bytes = Uint8Array.from([4, v6[1]!, v6[2]!, ...v6.slice(4)]);
     let bin = '';
     bytes.forEach((b) => (bin += String.fromCharCode(b)));
     const old = btoa(bin).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
     const back = decodeReplay(old)!;
     expect(back.v).toBe(4);
     expect(back.config.rockShapes).toBeUndefined();
+    // Matches from before solid lines replay without them.
+    expect(back.config.solidLines).toBe(false);
     expect(replayStart(back).circles).toEqual(createMatch(cfg({ seed: 8 }), setups).circles);
   });
 });
@@ -872,5 +878,138 @@ describe('ranks', () => {
     expect(eloK(2)).toBe(64);
     expect(eloK(3)).toBe(32);
     expect(eloDelta(100, 100, eloK(0))).toBe(32);
+  });
+});
+
+describe('solid lines', () => {
+  const trio = () => board(createMatch(cfg({ kind: 'ffa' }), [
+    { id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 1 }, { id: 'c', name: 'C', team: 1 },
+  ]), { a: [100, 200], b: [300, 100], c: [700, 420] });
+  it('a tip that runs into a line already drawn explodes there, and that line flies on', () => {
+    const m = trio();
+    // B's steep line crosses y = 200 near x = 333 early; A's flat line gets there later.
+    const round = resolveRound(m, [{ playerId: 'a', expr: '0', dir: 1 }, { playerId: 'b', expr: '-3*x', dir: 1 }]);
+    const a = round.shots.find((s) => s.playerId === 'a')!;
+    const b = round.shots.find((s) => s.playerId === 'b')!;
+    expect(a.reason).toBe('line');
+    expect(Math.abs(a.end.x - 333)).toBeLessThan(10);
+    expect(b.reason).not.toBe('line');
+  });
+  it('replays from before the rule keep lines see-through', () => {
+    const m = board(createMatch(cfg({ kind: 'ffa', solidLines: false }), [
+      { id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 1 }, { id: 'c', name: 'C', team: 1 },
+    ]), { a: [100, 200], b: [300, 100], c: [700, 420] });
+    const round = resolveRound(m, [{ playerId: 'a', expr: '0', dir: 1 }, { playerId: 'b', expr: '-3*x', dir: 1 }]);
+    expect(round.shots.find((s) => s.playerId === 'a')!.reason).not.toBe('line');
+  });
+  it('tips meeting head on still make a beam', () => {
+    const m = board(createMatch(cfg({ kind: 'ffa' }), [
+      { id: 'c', name: 'C', team: 1 }, { id: 'd', name: 'D', team: 1 }, { id: 'e', name: 'E', team: 1 },
+    ]), { c: [185, 225], d: [585, 225], e: [100, 60] });
+    const round = resolveRound(m, [{ playerId: 'c', expr: '0', dir: 1 }, { playerId: 'd', expr: '0', dir: -1 }]);
+    expect(round.beams.length).toBe(1);
+  });
+});
+
+describe('new abilities', () => {
+  const pair = (kind: 'ffa' | 'teams' = 'ffa') => createMatch(cfg({ kind }), [
+    { id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: kind === 'ffa' ? 1 : 2 }, { id: 'c', name: 'C', team: kind === 'ffa' ? 1 : 2 },
+  ]);
+  const owns = (m: ReturnType<typeof createMatch>) => m.players.forEach((p) => {
+    p.abilities = ['hop', 'pierce', 'wall', 'fill', 'shield'];
+    p.energy = 100;
+  });
+  it('Piercing Shot passes through the first rock and hits who hides behind it, then stops at the next rock', () => {
+    const m = board(pair(), { a: [100, 300], b: [440, 300], c: [700, 40] });
+    m.circles.push({ x: 320, y: 300, r: 40 }, { x: 620, y: 300, r: 40 });
+    owns(m);
+    const round = resolveRound(m, [{ playerId: 'a', expr: '0', dir: 1, ability: 'pierce' }]);
+    const shot = round.shots[0]!;
+    expect(shot.pierced).toBeDefined();
+    expect(shot.reason).toBe('obstacle');
+    expect(Math.abs(shot.end.x - 580)).toBeLessThan(6);
+    const bSoldier = m.players.find((p) => p.id === 'b')!.soldierId;
+    expect(round.kills.some((k) => k.id === bSoldier)).toBe(true);
+  });
+  it('Rock Wall hurts nobody and leaves new rock where it stops', () => {
+    const m = board(pair(), { a: [100, 300], b: [352, 300], c: [700, 40] });
+    m.circles.push({ x: 440, y: 300, r: 40 });
+    owns(m);
+    const round = resolveRound(m, [{ playerId: 'a', expr: '0', dir: 1, ability: 'wall' }]);
+    expect(round.kills.length).toBe(0);
+    const rock = m.holes.at(-1)!;
+    expect(rock.kind).toBe('rock');
+    expect(terrainOf(m).solidAt(Math.round(rock.x), Math.round(rock.y))).toBe(true);
+  });
+  it('Rock Wall never rises on top of a soldier', () => {
+    const m = board(pair(), { a: [100, 300], b: [395, 300], c: [700, 40] });
+    m.circles.push({ x: 440, y: 300, r: 40 });
+    owns(m);
+    // B stands right where the line stops; it can't be buried.
+    resolveRound(m, [{ playerId: 'a', expr: '0', dir: 1, ability: 'wall' }]);
+    expect(m.holes.some((h) => h.kind === 'rock')).toBe(false);
+  });
+  it('Fill pours rock back into a crater', () => {
+    const m = board(pair(), { a: [100, 300], b: [700, 420], c: [700, 40] });
+    m.circles.push({ x: 420, y: 300, r: 70 });
+    m.holes.push({ x: 360, y: 300, r: 22 });
+    owns(m);
+    expect(terrainOf(m).solidAt(360, 300)).toBe(false);
+    resolveRound(m, [{ playerId: 'a', expr: '0', dir: 1, ability: 'fill' }]);
+    expect(m.holes.at(-1)!.kind).toBe('fill');
+    expect(terrainOf(m).solidAt(360, 300)).toBe(true);
+    // Fill only restores rock the map had: open air stays open.
+    expect(terrainOf(m).solidAt(330, 260)).toBe(false);
+  });
+  it('Shield uses the turn and stops the first hit', () => {
+    const m = board(pair(), { a: [150, 300], b: [600, 300], c: [700, 40] });
+    owns(m);
+    const round = resolveRound(m, [{ playerId: 'a', expr: '', ability: 'shield' }, { playerId: 'b', expr: '0', dir: -1 }]);
+    const aSoldier = m.soldiers[m.players.find((p) => p.id === 'a')!.soldierId]!;
+    expect(aSoldier.alive).toBe(true);
+    expect(round.shots.some((s) => s.playerId === 'a')).toBe(false);
+    expect(round.shields?.[0]?.blocked?.by).toEqual(['b']);
+    expect(m.players.find((p) => p.id === 'a')!.energy).toBe(100 - 60);
+  });
+  it('a near miss earns a little energy, once', () => {
+    const m = board(pair(), { a: [100, 300], b: [400, 325], c: [700, 40] });
+    m.players.forEach((p) => (p.energy = 0));
+    const round = resolveRound(m, [{ playerId: 'a', expr: '0', dir: 1 }]);
+    expect(round.kills.length).toBe(0);
+    expect(round.nearMiss).toEqual(['a']);
+    expect(m.players.find((p) => p.id === 'a')!.energy).toBe(energyGain(1) + NEAR_MISS_ENERGY);
+  });
+  it('admin energy costs stored in the match are what abilities cost', () => {
+    const m = board(createMatch(cfg({ kind: 'ffa', energyCosts: { shield: 10 } }), [
+      { id: 'a', name: 'A', team: 1 }, { id: 'b', name: 'B', team: 1 },
+    ]), { a: [150, 300], b: [600, 100] });
+    owns(m);
+    resolveRound(m, [{ playerId: 'a', expr: '', ability: 'shield' }]);
+    expect(m.players.find((p) => p.id === 'a')!.energy).toBe(90);
+  });
+});
+
+describe('loadouts', () => {
+  it('Hop always comes, plus up to three others', () => {
+    expect(cleanLoadout(['ricochet', 'heavy', 'pierce', 'wall'])).toEqual(['hop', 'ricochet', 'heavy', 'pierce']);
+    expect(cleanLoadout([])).toEqual(['hop']);
+    expect(cleanLoadout(['nope', 'shield', 'shield'])).toEqual(['hop', 'shield']);
+  });
+});
+
+describe('replay version 6', () => {
+  it('keeps the solid-lines rule and admin energy costs', () => {
+    const setups: PlayerSetup[] = [{ id: 'a', name: 'A', team: 1, abilities: ['hop', 'shield'] }, { id: 'b', name: 'B', team: 2 }];
+    const m = createMatch(cfg({ seed: 5, energyCosts: { shield: 20 } }), setups);
+    resolveRound(m, [{ playerId: 'a', expr: '', ability: 'shield' }, { playerId: 'b', expr: 'x/3' }]);
+    const back = decodeReplay(encodeReplay(makeReplay(m, setups)))!;
+    expect(back.v).toBe(6);
+    expect(back.config.energyCosts).toEqual({ shield: 20 });
+    expect(back.config.solidLines).toBeUndefined();
+    const again = replayStart(back);
+    for (const a of back.actions) if (!again.over) applyAction(again, a);
+    expect(again.players.map((p) => p.energy)).toEqual(m.players.map((p) => p.energy));
+    const off = createMatch(cfg({ seed: 5, solidLines: false }), setups);
+    expect(decodeReplay(encodeReplay(makeReplay(off, setups)))!.config.solidLines).toBe(false);
   });
 });

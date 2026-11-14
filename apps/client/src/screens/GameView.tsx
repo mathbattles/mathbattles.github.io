@@ -10,8 +10,12 @@ import {
   isOnWinningSide,
   historyOf,
   hopLanding,
-  abilityDef,
+  abilityCost,
+  isNoShot,
   energyGain,
+  WALL_R,
+  FILL_R,
+  NEAR_MISS_ENERGY,
   BLAST_R,
   HEAVY_BLAST_MULT,
   MAX_ENERGY,
@@ -63,7 +67,7 @@ export function Tex({ expr, prefix }: { expr: string; prefix: string }) {
   return <div class="preview" ref={ref} aria-hidden="true" />;
 }
 
-export const ABILITY_ICON: Record<AbilityId, IconName> = { hop: 'hop', ricochet: 'ricochet', heavy: 'heavy' };
+export const ABILITY_ICON: Record<AbilityId, IconName> = { hop: 'hop', ricochet: 'ricochet', heavy: 'heavy', pierce: 'pierce', wall: 'wall', fill: 'fill', shield: 'shield' };
 
 /** A plain hand-drawn energy bar, with next round's gain shown faintly and the chosen ability's cost hatched. */
 function EnergyBar({ energy, gain, cost, flash, free }: { energy: number; gain: number; cost: number; flash: boolean; free: boolean }) {
@@ -84,8 +88,9 @@ function EnergyBar({ energy, gain, cost, flash, free }: { energy: number; gain: 
 }
 
 /** The ability menu: every owned ability, favourites first, greyed out when there isn't enough energy. */
-function AbilityMenu({ energy, free, chosen, onPick, onClose }: { energy: number; free: boolean; chosen: AbilityId | null; onPick: (a: AbilityId) => void; onClose: () => void }) {
-  const list = abilityMenu();
+function AbilityMenu({ energy, free, chosen, onPick, onClose, available, costs }: { energy: number; free: boolean; chosen: AbilityId | null; onPick: (a: AbilityId) => void; onClose: () => void; available: readonly AbilityId[]; costs?: MatchState['config']['energyCosts'] }) {
+  // Only what this player brought into the match, favourites first.
+  const list = abilityMenu().filter((a) => available.includes(a));
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -98,8 +103,8 @@ function AbilityMenu({ energy, free, chosen, onPick, onClose }: { energy: number
         <button class="small plain" aria-label={t('ability.close')} onClick={onClose}><Icon name="close" /></button>
       </div>
       {list.map((id) => {
-        const def = abilityDef(id)!;
-        const short = !free && energy < def.energy;
+        const cost = abilityCost(id, costs);
+        const short = !free && energy < cost;
         return (
           <button class={`ability-choice ${chosen === id ? 'on' : ''}`} disabled={short} onClick={() => onPick(id)} aria-pressed={chosen === id}>
             <Icon name={ABILITY_ICON[id]} size="1.8em" />
@@ -107,8 +112,8 @@ function AbilityMenu({ energy, free, chosen, onPick, onClose }: { energy: number
               <strong>{t(`ability.${id}.name`)}</strong>
               <small>{t(`ability.${id}.short`)}</small>
             </span>
-            <span class="ability-cost"><Icon name="energy" />{def.energy}</span>
-            {short && <small class="ability-need">{t('ability.need', { n: def.energy - energy })}</small>}
+            <span class="ability-cost"><Icon name="energy" />{cost}</span>
+            {short && <small class="ability-need">{t('ability.need', { n: cost - energy })}</small>}
           </button>
         );
       })}
@@ -321,6 +326,7 @@ export function GameView(props: {
       stage.clearPast();
       setViewing(null);
       if (r.shots.length) sound('fire', profile.muted);
+      if (r.shields?.length) sound('shieldUp', profile.muted);
       const me = session.viewerId();
       for (const s of r.shots) if (s.hits.length && s.playerId === me) noteKillExpression(s.expr);
       // Everyone sees who used which ability.
@@ -340,6 +346,14 @@ export function GameView(props: {
           if (s.ability === 'hop' && r.kills.some((k) => k.kind === 'hop' && k.by.includes(me)) && grantAchievement('leap-of-faith')) setAward(t('award.leap'));
           if (s.ability === 'ricochet' && s.hits.length && s.bounce && s.hits.some((h) => h.step > s.bounce!.step) && grantAchievement('bank-shot')) setAward(t('award.bank'));
           if (s.ability === 'heavy' && r.kills.filter((k) => k.kind === 'heavy' && k.by.includes(me)).length >= 2 && grantAchievement('crater-maker')) setAward(t('award.crater'));
+        }
+        if (r.shields?.some((sh) => sh.playerId === me && sh.blocked) && grantAchievement('unbreakable')) setAward(t('award.unbreakable'));
+        for (const s of r.shots) {
+          if (s.playerId === me && s.ability === 'pierce' && s.pierced && s.hits.some((h) => h.step > s.pierced!.step) && grantAchievement('through-and-through')) setAward(t('award.pierce'));
+        }
+        if (r.nearMiss?.includes(me)) {
+          sound('nearMiss', profile.muted);
+          notify(t('energy.nearMiss', { n: NEAR_MISS_ENERGY }), 'info');
         }
         // A beam cut off a shot that would have hit you.
         const mine = session.state.players.find((p) => p.id === me);
@@ -514,15 +528,20 @@ export function GameView(props: {
     stage.previewPath = null;
     stage.previewBlast = null;
     stage.previewLanding = null;
+    stage.previewPatch = null;
+    stage.previewShield = ability === 'shield' && canAim && mySoldier?.alive ? mySoldier.id : null;
+    if (ability === 'shield') return;
     if (!canAim || session.handoff || !expr.trim() || check || !mySoldier?.alive) return;
     const terrain = new Terrain(state.circles, state.holes);
     // The preview shows what the chosen ability really does: the bounce, the blast, or the landing.
     const path = simulateShot({
       mode, expr, angle, dir, from: { x: mySoldier.x, y: mySoldier.y }, mirrored: isMirrored(state, viewer),
-      terrain, targets: [], ricochet: ability === 'ricochet',
+      terrain, targets: [], ricochet: ability === 'ricochet', pierce: ability === 'pierce',
     });
     stage.previewPath = { xs: path.xs, ys: path.ys, steps: path.steps };
     if (ability === 'heavy') stage.previewBlast = { x: path.end.x, y: path.end.y, r: BLAST_R * HEAVY_BLAST_MULT };
+    if (ability === 'wall') stage.previewPatch = { x: path.end.x, y: path.end.y, r: WALL_R, kind: 'rock' };
+    if (ability === 'fill') stage.previewPatch = { x: path.end.x, y: path.end.y, r: FILL_R, kind: 'fill' };
     if (ability === 'hop') stage.previewLanding = hopLanding(terrain, path);
   }, [expr, angle, dir, check, canAim, state.round, viewer, session.handoff, ability]);
 
@@ -559,13 +578,15 @@ export function GameView(props: {
   const me0 = playerById(state, viewer);
   const free = !!state.config.freeEnergy;
   const energy = me0?.energy ?? 0;
-  const chosenDef = ability ? abilityDef(ability) : undefined;
+  const costs = state.config.energyCosts;
+  const chosenCost = ability ? abilityCost(ability, costs) : 0;
   const abilitiesHere = session.abilitiesOn && !props.spectator && (me0?.abilities?.length ?? 0) > 0;
+  const noShot = isNoShot(ability);
   const pickAbility = (a: AbilityId) => {
-    const def = abilityDef(a)!;
-    if (!free && energy < def.energy) {
+    const cost = abilityCost(a, costs);
+    if (!free && energy < cost) {
       sound('noEnergy', profile.muted);
-      notify(t('ability.needEnergy', { name: def.name, n: def.energy - energy }), 'info');
+      notify(t('ability.needEnergy', { name: t(`ability.${a}.name`), n: cost - energy }), 'info');
       return;
     }
     setAbility(a);
@@ -581,11 +602,12 @@ export function GameView(props: {
       sound('unlock', profile.muted);
       return;
     }
-    if (!expr.trim()) {
+    // Shield uses the turn, so it locks in without a function.
+    if (!noShot && !expr.trim()) {
       setError(t('game.typeFirst'));
       return;
     }
-    if (check) return;
+    if (!noShot && check) return;
     try {
       session.lock({ expr, angle: mode === 'ode2' ? angle : undefined, dir, ...(ability ? { ability } : {}) });
       sound('lock', profile.muted);
@@ -688,7 +710,7 @@ export function GameView(props: {
         {!props.spectator && !('replay' in session) && !state.over && !props.result && (
           <div class={`shotbar ${locked ? 'is-locked' : ''}`}>
             {abilitiesHere && me0 && (
-              <EnergyBar energy={energy} gain={energyGain(state.round)} cost={chosenDef?.energy ?? 0} flash={energyFlash} free={free} />
+              <EnergyBar energy={energy} gain={energyGain(state.round)} cost={chosenCost} flash={energyFlash} free={free} />
             )}
             <div class="shotrow">
               <label for="fn-input" style={me ? { color: colorOf(me.id) } : undefined}>{modeLabel(mode)}</label>
@@ -760,10 +782,10 @@ export function GameView(props: {
                   >
                     <Icon name={ability ? ABILITY_ICON[ability] : 'ability'} /> {t('ability.button')}
                   </button>
-                  {menuOpen && <AbilityMenu energy={energy} free={free} chosen={ability} onPick={pickAbility} onClose={() => setMenuOpen(false)} />}
+                  {menuOpen && <AbilityMenu energy={energy} free={free} chosen={ability} onPick={pickAbility} onClose={() => setMenuOpen(false)} available={me0?.abilities ?? []} costs={costs} />}
                 </span>
               )}
-              <button class={`primary fire lock ${locked ? 'locked' : ''} ${ability ? 'with-ability' : ''}`} data-sfx="none" onClick={toggleLock} disabled={!canAim || (!locked && !!check)} aria-pressed={locked}>
+              <button class={`primary fire lock ${locked ? 'locked' : ''} ${ability ? 'with-ability' : ''}`} data-sfx="none" onClick={toggleLock} disabled={!canAim || (!locked && !noShot && !!check)} aria-pressed={locked}>
                 {ability && !locked && <Icon name={ABILITY_ICON[ability]} />}
                 {locked ? t('game.unlock') : `${session.instantFire ? t('game.fire') : t('game.lockIn')}${ability ? ` (${t(`ability.${ability}.name`)})` : ''}`}
               </button>

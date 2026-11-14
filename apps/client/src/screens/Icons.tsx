@@ -10,7 +10,8 @@ export type IconName =
   | 'up' | 'down' | 'left' | 'right' | 'check' | 'close' | 'chevronUp' | 'chevronDown'
   | 'star' | 'starEmpty' | 'spark' | 'energy' | 'ability' | 'hop' | 'ricochet' | 'heavy'
   | 'backspace' | 'shop' | 'flag' | 'lock' | 'unlock' | 'clock' | 'skull' | 'beam' | 'out' | 'replay' | 'share' | 'download' | 'heart'
-  | 'rotateLeft' | 'rotateRight' | 'code' | 'search' | 'badge';
+  | 'rotateLeft' | 'rotateRight' | 'code' | 'search' | 'badge'
+  | 'pierce' | 'wall' | 'fill' | 'shield' | 'eye' | 'ban' | 'mute' | 'gear' | 'users' | 'door' | 'megaphone';
 
 const PATHS: Record<IconName, JSX.Element> = {
   first: <><path d="M5.2 4.8v14.4" /><path d="M18.6 5.4 8.4 12.1l10.4 6.6z" fill="currentColor" /></>,
@@ -55,6 +56,17 @@ const PATHS: Record<IconName, JSX.Element> = {
   code: <><rect x="3.8" y="5.4" width="16.4" height="13.2" rx="2.4" /><path d="M8.4 10.2 6.4 12l2 1.8M15.6 10.2l2 1.8-2 1.8M12.8 9.6l-1.6 4.8" /></>,
   search: <><circle cx="10.6" cy="10.6" r="5.8" /><path d="M15 15l4.6 4.6" /></>,
   badge: <><path d="M12 3.4l7 2.8v5.6c0 4.4-3 7.4-7 8.8-4-1.4-7-4.4-7-8.8V6.2z" /><path d="M8.8 12l2.2 2.2 4.2-4.4" /></>,
+  pierce: <><path d="M3.4 12h13.2" /><path d="M13.6 8.2 17.6 12l-4 3.8" /><path d="M8.4 5.6c2.2 1.4 2.4 11.4 0 12.8" strokeDasharray="1.8 2" /><circle cx="19.8" cy="12" r="1.3" fill="currentColor" /></>,
+  wall: <><path d="M4.2 19.4c-.2-4.6 2.6-8.8 7.8-9 5.2.2 8 4.4 7.8 9z" fill="currentColor" fill-opacity="0.25" /><path d="M8.2 14.8h3M13.4 16.6h2.6M10.2 18h1.8" /><path d="M12 7.4V3.6M10.2 5.2 12 3.4l1.8 1.8" /></>,
+  fill: <><path d="M4 18.6c2.6-.2 3.4-4.6 8-4.6s5.4 4.4 8 4.6" /><path d="M7.4 14.2c1.2-3.4 2.8-5 4.6-5s3.4 1.6 4.6 5" strokeDasharray="1.8 2" /><path d="M12 3.6v4M10.4 6.2 12 7.8l1.6-1.6" /></>,
+  shield: <><path d="M12 3.2c2.6 1.6 4.8 2.2 7.2 2.3.2 6.8-2.2 11.4-7.2 13.9C7 16.9 4.6 12.3 4.8 5.5c2.4-.1 4.6-.7 7.2-2.3z" /><path d="M12 6.4v9.8" strokeDasharray="1.6 1.8" /></>,
+  eye: <><path d="M2.8 12.2c2.4-4 5.6-6 9.2-6s6.8 2 9.2 6c-2.4 4-5.6 6-9.2 6s-6.8-2-9.2-6z" /><circle cx="12" cy="12.2" r="2.8" fill="currentColor" /></>,
+  ban: <><circle cx="12" cy="12" r="7.8" /><path d="M6.6 6.8l10.8 10.6" /></>,
+  mute: <><path d="M4.2 9.6h3.4l4.6-3.8v12.6l-4.6-3.8H4.2z" /><path d="M15.6 9.4l4.6 5.4M20.2 9.4l-4.6 5.4" /></>,
+  gear: <><circle cx="12" cy="12" r="3.2" /><path d="M12 3.6v2.6M12 17.8v2.6M3.6 12h2.6M17.8 12h2.6M6.1 6.1l1.9 1.9M16 16l1.9 1.9M6.1 17.9 8 16M16 8l1.9-1.9" /></>,
+  users: <><circle cx="9" cy="8.6" r="3" /><path d="M3.4 19c.4-3.4 2.6-5.4 5.6-5.4s5.2 2 5.6 5.4" /><circle cx="16.6" cy="9.4" r="2.4" /><path d="M15.6 13.8c2.6-.2 4.6 1.6 5 4.6" /></>,
+  door: <><path d="M5.4 20V4.4h9.2V20" /><path d="M3.4 20h17" /><circle cx="12" cy="12.4" r="0.9" fill="currentColor" /><path d="M17.4 9.4l2.8 2.8-2.8 2.8M20 12.2h-5" /></>,
+  megaphone: <><path d="M4 10.2v3.6l2.6.4 9.8 4.4V5.4L6.6 9.8z" /><path d="M7 14.4l1.4 4.4h2.4l-1-3.6" /><path d="M19 9.6c1 .7 1 4.1 0 4.8" /></>,
 };
 
 export function Icon({ name, size = '1.1em', label, class: cls }: { name: IconName; size?: string | number; label?: string; class?: string }) {

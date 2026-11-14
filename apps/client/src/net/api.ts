@@ -193,7 +193,7 @@ const adminHeaders = (): Record<string, string> => {
   const s = adminSession();
   return s ? { 'x-admin-session': s } : {};
 };
-async function adminCall<T>(path: string, init: RequestInit = {}): Promise<{ data?: T; error?: string; mfa?: boolean; reauth?: boolean }> {
+export async function adminCall<T>(path: string, init: RequestInit = {}): Promise<{ data?: T; error?: string; mfa?: boolean; reauth?: boolean }> {
   const { authState } = await import('../auth');
   if (!authState.token) return { error: 'Sign in first.' };
   try {

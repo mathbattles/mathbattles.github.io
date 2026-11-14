@@ -1,4 +1,5 @@
 import { authState, subscribeAuth } from './auth';
+import { heldRoom, subscribeRoom } from './game/roomHolder';
 import { pingSocial, type SocialState } from './net/api';
 
 /**
@@ -15,8 +16,10 @@ export function subscribeSocial(fn: () => void): () => void {
   return () => listeners.delete(fn);
 }
 
-/** The room in the address bar, if this player is sitting in one. Watching doesn't count. */
+/** The room this player is sitting in: the one kept open while browsing, or the one in the address bar. Watching doesn't count. */
 export function currentRoom(): string | null {
+  const h = heldRoom();
+  if (h && !h.watch && h.session.status !== 'closed') return h.code;
   const m = location.hash.match(/^#\/(?:room|ranked)\/([A-Za-z0-9-]{4,24})/);
   return m ? m[1]!.toUpperCase() : null;
 }
@@ -51,6 +54,10 @@ export function initSocial(): void {
   timer = window.setInterval(tick, POLL_MS);
   // Moving into or out of a room tells friends right away.
   window.addEventListener('hashchange', () => {
+    if (currentRoom() !== lastRoom) void refreshSocial();
+  });
+  // Joining or leaving a room you're keeping open tells friends right away too.
+  subscribeRoom(() => {
     if (currentRoom() !== lastRoom) void refreshSocial();
   });
   document.addEventListener('visibilitychange', tick);

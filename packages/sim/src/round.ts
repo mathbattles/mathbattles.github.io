@@ -17,6 +17,14 @@ import {
   HOP_OUT_STEPS,
   HOP_SIDE_PX,
   MAX_ENERGY,
+  FILL_R,
+  HARMLESS_ABILITIES,
+  NEAR_MISS_ENERGY,
+  NEAR_MISS_PX,
+  NO_SHOT_ABILITIES,
+  SHIELD_GRACE_STEPS,
+  WALL_R,
+  abilityCost,
   abilityDef,
   clampEnergy,
   energyGain,
@@ -37,6 +45,7 @@ import {
   type MatchState,
   type Player,
   type RoundRecord,
+  type ShieldRecord,
   type ShotEnd,
   type ShotRecord,
   type Soldier,
@@ -44,6 +53,9 @@ import {
 import type { Terrain } from './terrain';
 import { simulateShot, type ShotResult } from './trajectory';
 import { terrainOf } from './rules';
+
+/** A tip this close to a line already drawn has run into it (solid lines). */
+const LINE_HIT_R2 = 3.5 * 3.5;
 
 /** One player's shot for a round. */
 export interface RoundShot {
@@ -71,6 +83,12 @@ interface Flight {
   cutReason: ShotEnd | null;
   hits: { id: number; step: number }[];
   blasted: boolean;
+  /** Piercing Shot: whether its one pass-through is spent, where, and a moment of grace after. */
+  pierceUsed: boolean;
+  piercedAt: { x: number; y: number; step: number } | null;
+  lineGrace: number;
+  /** A pierce spent on a line means the rock it planned to pass through now stops it here. */
+  rockStop: number | null;
 }
 
 interface Rider {
@@ -180,6 +198,7 @@ export function resolveRound(state: MatchState, inputs: RoundShot[], terrain: Te
   const free = !!state.config.freeEnergy;
   const energyBefore = new Map(state.players.map((p) => [p.id, p.energy]));
   const flights: Flight[] = [];
+  const shields: ShieldRecord[] = [];
   const seen = new Set<string>();
   for (const input of inputs) {
     const player = playerById(state, input.playerId);
@@ -191,7 +210,14 @@ export function resolveRound(state: MatchState, inputs: RoundShot[], terrain: Te
     const mirrored = isMirrored(state, player.id);
     // An ability needs to be owned and paid for. Otherwise the shot fires plainly.
     const def = abilityDef(input.ability);
-    const ability = def && (player.abilities ?? []).includes(def.id) && (free || player.energy >= def.energy) ? def.id : undefined;
+    const cost = def ? abilityCost(def.id, state.config.energyCosts) : 0;
+    const ability = def && (player.abilities ?? []).includes(def.id) && (free || player.energy >= cost) ? def.id : undefined;
+    // Shield uses the turn: no line, just a bubble that stops the first hit this round.
+    if (ability && NO_SHOT_ABILITIES.includes(ability)) {
+      if (!free) player.energy = clampEnergy(player.energy - cost);
+      shields.push({ playerId: player.id, soldierId: shooter.id });
+      continue;
+    }
     let result: ShotResult;
     try {
       result = simulateShot({
@@ -204,19 +230,21 @@ export function resolveRound(state: MatchState, inputs: RoundShot[], terrain: Te
         terrain,
         targets: [],
         ricochet: ability === 'ricochet',
+        pierce: ability === 'pierce',
       });
     } catch (e) {
       // A broken function is no shot at all.
       if (e instanceof ParseError) continue;
       throw e;
     }
-    if (ability && !free) player.energy = clampEnergy(player.energy - def!.energy);
+    if (ability && !free) player.energy = clampEnergy(player.energy - cost);
     const written = result.reason === 'edge' || result.reason === 'obstacle';
     flights.push({
       player, shooter, expr: input.expr, dir, mirrored, ability, result,
       last: Math.max(0, result.steps - 1),
       hitIdx: written ? result.steps : Math.max(0, result.steps - 1),
       cut: null, cutReason: null, hits: [], blasted: false,
+      pierceUsed: !!result.pierced, piercedAt: null, lineGrace: 0, rockStop: null,
     });
   }
 
@@ -235,7 +263,8 @@ export function resolveRound(state: MatchState, inputs: RoundShot[], terrain: Te
   });
   const CELL = 8;
   const grid = new Map<number, [number, number][]>();
-  if (riders.length) {
+  const solid = state.config.solidLines !== false;
+  if (riders.length || solid) {
     flights.forEach((f, fi) => {
       if (f.ability === 'hop') return;
       for (let i = 0; i <= f.last; i += 2) {
@@ -255,6 +284,9 @@ export function resolveRound(state: MatchState, inputs: RoundShot[], terrain: Te
     return !!r && (r.phase === 'jump' || t < r.airborneUntil);
   };
   const posOf = (s: Soldier) => riderOf.get(s.id)?.pos ?? s;
+  const shieldOf = new Map(shields.map((sh) => [sh.soldierId, sh]));
+  const graceUntil = new Map<number, number>();
+  const protectedAt = (id: number, t: number) => t < (graceUntil.get(id) ?? 0);
   const endStep = (f: Flight) => f.cut ?? f.result.steps;
   const flying = (f: Flight, t: number) => (f.cut === null || f.cut === t) && t <= f.hitIdx;
 
@@ -419,11 +451,60 @@ export function resolveRound(state: MatchState, inputs: RoundShot[], terrain: Te
       }
     }
 
+    for (const f of flights) {
+      if (f.rockStop !== null && f.cut === null && t === f.rockStop) {
+        f.cut = t;
+        f.cutReason = 'obstacle';
+      }
+    }
+
+    // Solid lines: a tip running into a line already drawn explodes there. Tips meeting tip to
+    // tip were handled above as beams; Hop lines are only paths and never block.
+    if (solid && grid.size) {
+      flights.forEach((f, fi) => {
+        // A Hop line is only a path for its rider, who hops over other lines, so it is never cut.
+        if (f.ability === 'hop' || f.cut !== null || t > f.last || t < 3 || t < f.lineGrace) return;
+        const x = f.result.xs[t]!;
+        const y = f.result.ys[t]!;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        const cx = Math.floor(x / CELL);
+        const cy = Math.floor(y / CELL);
+        let hit = false;
+        for (let gx = cx - 1; gx <= cx + 1 && !hit; gx++) {
+          for (let gy = cy - 1; gy <= cy + 1 && !hit; gy++) {
+            for (const [gi, idx] of grid.get(gx * 1024 + gy) ?? []) {
+              if (gi === fi) continue;
+              const other = flights[gi]!;
+              // Only what is already drawn, before this moment, and not past where it stopped.
+              if (idx >= t || idx > endStep(other)) continue;
+              const dx = other.result.xs[idx]! - x;
+              const dy = other.result.ys[idx]! - y;
+              if (dx * dx + dy * dy < LINE_HIT_R2) {
+                hit = true;
+                break;
+              }
+            }
+          }
+        }
+        if (!hit) return;
+        if (f.ability === 'pierce' && !f.pierceUsed) {
+          // Piercing passes the first line it meets; if it planned to pass a rock, it no longer can.
+          f.pierceUsed = true;
+          f.piercedAt = { x, y, step: t };
+          f.lineGrace = t + 10;
+          return;
+        }
+        f.cut = t;
+        f.cutReason = 'line';
+      });
+    }
+
     // Who dies this step, and to whom.
     const killers = new Map<number, Set<string>>();
     const kindOf = new Map<number, KillKind>();
     const byFlight = new Map<number, number[]>();
     const mark = (id: number, who: string[], kind: KillKind) => {
+      if (protectedAt(id, t)) return;
       if (!killers.has(id)) killers.set(id, new Set());
       for (const w of who) killers.get(id)!.add(w);
       // The most dramatic way wins the label.
@@ -433,7 +514,7 @@ export function resolveRound(state: MatchState, inputs: RoundShot[], terrain: Te
     };
     flights.forEach((f, fi) => {
       if (f.cut === null && t <= f.result.steps) active = true;
-      if (f.ability === 'hop' || !flying(f, t)) return;
+      if (f.ability === 'hop' || (f.ability && HARMLESS_ABILITIES.includes(f.ability)) || !flying(f, t)) return;
       const p = tip(f, t);
       if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
       for (const s of state.soldiers) {
@@ -497,6 +578,13 @@ export function resolveRound(state: MatchState, inputs: RoundShot[], terrain: Te
       }
     }
 
+    for (const [id, by] of [...killers]) {
+      const sh = shieldOf.get(id);
+      if (!sh || sh.blocked) continue;
+      sh.blocked = { step: t, by: [...by] };
+      graceUntil.set(id, t + SHIELD_GRACE_STEPS);
+      killers.delete(id);
+    }
     for (const [fi, ids] of byFlight) {
       for (const id of ids) if (killers.has(id)) flights[fi]!.hits.push({ id, step: t });
     }
@@ -558,9 +646,23 @@ export function resolveRound(state: MatchState, inputs: RoundShot[], terrain: Te
     f.shooter.angle = r.angle;
     f.player.shots++;
     if (f.ability !== 'hop' && Number.isFinite(end.x) && Number.isFinite(end.y)) {
-      const hole = { x: end.x, y: end.y, r: f.ability === 'heavy' ? BLAST_R * HEAVY_BLAST_MULT : BLAST_R };
-      state.holes.push(hole);
-      terrain.carve(hole.x, hole.y, hole.r);
+      if (f.ability === 'wall') {
+        // New rock, unless it would bury someone.
+        const clear = state.soldiers.every((q) => !q.alive || Math.hypot(q.x - end.x, q.y - end.y) > WALL_R + SOLDIER_R);
+        if (clear) {
+          const rock = { x: Math.round(end.x), y: Math.round(end.y), r: WALL_R, kind: 'rock' as const };
+          state.holes.push(rock);
+          terrain.patch(rock);
+        }
+      } else if (f.ability === 'fill') {
+        const fill = { x: Math.round(end.x), y: Math.round(end.y), r: FILL_R, kind: 'fill' as const };
+        state.holes.push(fill);
+        terrain.patch(fill);
+      } else {
+        const hole = { x: end.x, y: end.y, r: f.ability === 'heavy' ? BLAST_R * HEAVY_BLAST_MULT : BLAST_R };
+        state.holes.push(hole);
+        terrain.carve(hole.x, hole.y, hole.r);
+      }
     }
     return {
       playerId: f.player.id,
@@ -577,6 +679,7 @@ export function resolveRound(state: MatchState, inputs: RoundShot[], terrain: Te
       hits: f.hits,
       ...(f.ability ? { ability: f.ability } : {}),
       ...(r.bounce && r.bounce.step <= steps ? { bounce: r.bounce } : {}),
+      ...(f.piercedAt ? { pierced: f.piercedAt } : r.pierced && r.pierced.in.step <= steps ? { pierced: r.pierced.in } : {}),
     };
   });
   for (const b of beams) {
@@ -608,12 +711,40 @@ export function resolveRound(state: MatchState, inputs: RoundShot[], terrain: Te
     if (to.x !== from.x || to.y !== from.y) moves.push({ id: r.soldier.id, from, to });
   }
 
+  // Near misses: a damaging line that came close to a living enemy without a kill.
+  const nearMiss: string[] = [];
+  const reach2 = (SOLDIER_R + NEAR_MISS_PX) ** 2;
+  for (const f of flights) {
+    if (killed.has(f.player.id) || nearMiss.includes(f.player.id) || f.ability === 'hop' || (f.ability && HARMLESS_ABILITIES.includes(f.ability))) continue;
+    const enemies = state.soldiers.filter((q) => {
+      if (!q.alive || q.id === f.shooter.id) return false;
+      const owner = playerById(state, q.playerId);
+      return !!owner && (state.config.kind === 'ffa' || owner.team !== f.player.team);
+    });
+    if (!enemies.length) continue;
+    const stop = Math.min(endStep(f), f.last);
+    let close = false;
+    for (let i = 0; i <= stop && !close; i += 2) {
+      const x = f.result.xs[i]!;
+      const y = f.result.ys[i]!;
+      for (const q of enemies) {
+        const dx = q.x - x;
+        const dy = q.y - y;
+        if (dx * dx + dy * dy < reach2) {
+          close = true;
+          break;
+        }
+      }
+    }
+    if (close) nearMiss.push(f.player.id);
+  }
+
   // Energy: every line fired earns more the longer the match runs. A kill fills you up.
   const gain = energyGain(state.round);
   for (const p of state.players) {
     if (free) p.energy = MAX_ENERGY;
     else if (killed.has(p.id)) p.energy = MAX_ENERGY;
-    else if (flights.some((f) => f.player.id === p.id)) p.energy = clampEnergy(p.energy + gain);
+    else if (flights.some((f) => f.player.id === p.id)) p.energy = clampEnergy(p.energy + gain + (nearMiss.includes(p.id) ? NEAR_MISS_ENERGY : 0));
   }
 
   let steps = lastActive;
@@ -631,6 +762,8 @@ export function resolveRound(state: MatchState, inputs: RoundShot[], terrain: Te
     hops: riders.map((r) => r.record),
     moves,
     energy: state.players.filter((p) => !p.passive).map((p) => ({ playerId: p.id, before: energyBefore.get(p.id) ?? p.energy, after: p.energy })),
+    ...(shields.length ? { shields } : {}),
+    ...(nearMiss.length ? { nearMiss } : {}),
   };
   state.log.push({ type: 'round', round: record });
   state.round++;

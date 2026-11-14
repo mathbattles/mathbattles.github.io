@@ -67,7 +67,8 @@ export type SoundKind =
   | 'hopLaunch' | 'hopOver' | 'hopLand' | 'hopKill' | 'hopOut' | 'ricochet' | 'heavy' | 'beamCut'
   | 'energyFull' | 'energyTick' | 'abilityOpen' | 'abilitySelect' | 'noEnergy'
   | 'nav' | 'press' | 'tap' | 'dropdown' | 'choose' | 'mathkey' | 'chatSend' | 'chatReceive' | 'claim'
-  | 'rankUp' | 'rankDown' | 'place' | 'rotate';
+  | 'rankUp' | 'rankDown' | 'place' | 'rotate'
+  | 'shieldUp' | 'shieldBlock' | 'wallRise' | 'fill' | 'pierce' | 'lineClash' | 'nearMiss';
 
 /**
  * Every sound plays with a little natural variation: a random pitch nudge, and for the most
@@ -307,6 +308,40 @@ export function sound(kind: SoundKind, muted: boolean): void {
         tone(c, 'sine', 110, 28, 0.7, 0.34);
         noise(c, 0.7, 0.32, 700);
         tone(c, 'square', 70, 40, 0.4, 0.06, 0.05);
+        break;
+      case 'shieldUp':
+        // A soft rising shimmer as the bubble forms.
+        tone(c, 'sine', 420 + variant * 30, 980, 0.32, 0.06);
+        tone(c, 'triangle', 840, 1460, 0.28, 0.03, 0.08);
+        break;
+      case 'shieldBlock':
+        // A glassy clang, then the bubble pops.
+        tone(c, 'triangle', 1500 + variant * 80, 900, 0.16, 0.1);
+        tone(c, 'sine', 3000, 2400, 0.12, 0.05, 0.02);
+        noise(c, 0.12, 0.12, 6200, 0.12);
+        break;
+      case 'wallRise':
+        // A low rumble as rock grows out of the paper.
+        tone(c, 'sine', 70 + variant * 6, 140, 0.45, 0.22);
+        noise(c, 0.4, 0.14, 500 + variant * 80);
+        break;
+      case 'fill':
+        // Sand pouring back in.
+        noise(c, 0.5, 0.1, 1800 + variant * 200);
+        tone(c, 'sine', 260, 180, 0.3, 0.06);
+        break;
+      case 'pierce':
+        // A quick zip through stone.
+        tone(c, 'sawtooth', 600 + variant * 50, 2400, 0.12, 0.06);
+        noise(c, 0.08, 0.1, 4200);
+        break;
+      case 'lineClash':
+        // Two lines meeting: a dry crack.
+        noise(c, 0.06, 0.14, 4800 + variant * 300);
+        tone(c, 'square', 1200, 500, 0.08, 0.05);
+        break;
+      case 'nearMiss':
+        tone(c, 'sine', 980 + variant * 40, 1240, 0.09, 0.04);
         break;
       case 'beamCut':
         noise(c, 0.1, 0.14, 5200);

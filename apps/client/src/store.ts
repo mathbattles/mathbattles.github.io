@@ -1,3 +1,4 @@
+import { abilityPrice } from './gameConfig';
 import {
   ACHIEVEMENTS,
   COSMETICS,
@@ -16,8 +17,7 @@ import {
   type ShotMode,
   ABILITIES,
   cleanAbilities,
-  type AbilityId,
-} from '@mathbattles/sim';
+  type AbilityId, FREE_ABILITIES, LOADOUT_SIZE, cleanLoadout } from '@mathbattles/sim';
 import { mergeProgress } from './profileMerge';
 import type { ThemeId } from './render/stage';
 
@@ -41,6 +41,8 @@ export interface Profile {
   abilitiesOwned: AbilityId[];
   /** Abilities marked as favourites, listed first in a match. */
   abilityFavs: AbilityId[];
+  /** The abilities taken into matches (Hop always comes too). Empty means pick automatically. */
+  loadout: AbilityId[];
   /** How often each ability was used, and the knockouts it got. */
   abilityStats: Record<string, { uses: number; kills: number }>;
   /** The season these numbers belong to. A new season starts them again. */
@@ -123,6 +125,7 @@ function fresh(): Profile {
     learnDone: [],
     abilitiesOwned: ['hop'],
     abilityFavs: [],
+    loadout: [],
     abilityStats: {},
     seasonId: SEASON.id,
     seasonXp: 0,
@@ -303,11 +306,37 @@ export function buyAbility(id: AbilityId): string | null {
   const a = ABILITIES.find((x) => x.id === id);
   if (!a) return 'That ability no longer exists';
   if (ownedAbilities().includes(id)) return null;
-  if (profile.sparks < a.price) return `You need ${a.price - profile.sparks} more Sparks`;
-  profile.sparks -= a.price;
+  const price = abilityPrice(id);
+  if (profile.sparks < price) return `You need ${price - profile.sparks} more Sparks`;
+  profile.sparks -= price;
   profile.abilitiesOwned = cleanAbilities([...profile.abilitiesOwned, id]);
+  // A new ability goes straight into the loadout when there's room.
+  const picks = loadoutPicks();
+  if (picks.length < LOADOUT_SIZE && !picks.includes(id)) profile.loadout = [...picks, id];
   saveProfile();
   return null;
+}
+
+/** The chosen abilities (not counting free Hop), only ones still owned; filled in automatically when empty. */
+export function loadoutPicks(): AbilityId[] {
+  const owned = ownedAbilities().filter((a) => !FREE_ABILITIES.includes(a));
+  const chosen = (profile.loadout ?? []).filter((a) => owned.includes(a)).slice(0, LOADOUT_SIZE);
+  return chosen.length || (profile.loadout ?? []).length ? chosen : owned.slice(0, LOADOUT_SIZE);
+}
+
+/** What a player takes into a match: Hop plus up to three chosen abilities. */
+export function matchLoadout(): AbilityId[] {
+  return cleanLoadout(loadoutPicks());
+}
+
+/** Adds or removes an ability from the loadout. Returns false when the loadout is already full. */
+export function toggleLoadout(id: AbilityId): boolean {
+  const picks = loadoutPicks();
+  if (picks.includes(id)) profile.loadout = picks.filter((a) => a !== id);
+  else if (picks.length >= LOADOUT_SIZE) return false;
+  else profile.loadout = [...picks, id];
+  saveProfile();
+  return true;
 }
 
 export function toggleAbilityFav(id: AbilityId): void {

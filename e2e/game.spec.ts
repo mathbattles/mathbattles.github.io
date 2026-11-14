@@ -427,7 +427,9 @@ test('two brand-new level 1 accounts can play ranked, and ratings change', async
     await expect(a.locator('.who')).toBeVisible();
     await b.close();
     await expect(a.getByRole('heading', { name: 'You win' })).toBeVisible({ timeout: 60_000 });
-    await expect(a.getByText(/Rating \+\d+/)).toBeVisible();
+    // The rank card shows the gain; a first (placement) match counts double.
+    await expect(a.locator('.rank-change')).toContainText(/\+\d+/);
+    await expect(a.locator('.rank-change')).toContainText('Placement 1 / 3');
 
     // The server saved it: it's in match history, watchable, and on the public player page.
     await a.goto('/#/profile');
@@ -1279,7 +1281,7 @@ test('abilities: the shop, the in-match menu, the energy bar, and history cyclin
   const page = await newPlayer(browser, 'Hopper');
   await page.goto('/#/abilities');
   await expect(page.getByRole('heading', { name: 'Abilities' })).toBeVisible();
-  await expect(page.locator('.ability-card')).toHaveCount(3);
+  await expect(page.locator('.ability-card')).toHaveCount(7);
   await expect(page.locator('.ability-card').first()).toContainText('Free for everyone');
   await page.goto('/#/practice');
   await expect(page.locator('.energy')).toContainText('Unlimited');
@@ -1390,4 +1392,89 @@ test('the Ranked page shows the six new tiers, starting at 100', async ({ browse
   }
   await expect(page.locator('.rank-ladder')).toContainText('Start (100)');
   await expect(page.locator('.rank-ladder')).toContainText('500+');
+});
+
+test('a room lobby stays open while you browse, and the match pulls you back', async ({ browser }) => {
+  test.setTimeout(90_000);
+  const a = await newPlayer(browser, 'Ana');
+  const b = await newPlayer(browser, 'Bo');
+  await a.goto('/#/online');
+  await a.getByRole('button', { name: 'Create private room' }).click();
+  await expect(a).toHaveURL(/#\/room\//);
+  const code = a.url().split('/').pop()!.toUpperCase();
+  await b.goto(`/#/room/${code}`);
+  await expect(a.getByText('Bo', { exact: true })).toBeVisible();
+  await b.getByRole('button', { name: 'Mark ready' }).click();
+  // Bo looks at the shop: still in the room, with a bar to get back.
+  await b.goto('/#/shop');
+  const bar = b.locator('.room-bar');
+  await expect(bar).toContainText(code);
+  await expect(a.getByText('Bo', { exact: true })).toBeVisible();
+  await bar.getByRole('button', { name: 'Back to room' }).click();
+  await expect(b).toHaveURL(new RegExp(`#/room/${code}`, 'i'));
+  await b.goto('/#/abilities');
+  await expect(b.locator('.room-bar')).toBeVisible();
+  // The host starts: Bo is brought back to the match.
+  await a.getByRole('button', { name: 'Start match' }).click();
+  await expect(b).toHaveURL(new RegExp(`#/room/${code}`, 'i'), { timeout: 15_000 });
+  await expect(b.locator('.game canvas')).toBeVisible();
+});
+
+test('leaving from the room bar really leaves the room', async ({ browser }) => {
+  const a = await newPlayer(browser, 'Ana');
+  const b = await newPlayer(browser, 'Bo');
+  await a.goto('/#/online');
+  await a.getByRole('button', { name: 'Create private room' }).click();
+  await expect(a).toHaveURL(/#\/room\//);
+  const code = a.url().split('/').pop()!;
+  await b.goto(`/#/room/${code}`);
+  await expect(a.getByText('Bo', { exact: true })).toBeVisible();
+  await b.goto('/#/season');
+  await b.locator('.room-bar').getByRole('button', { name: 'Leave room' }).click();
+  await expect(b.locator('.room-bar')).toHaveCount(0);
+  await expect(a.getByText('Bo', { exact: true })).toHaveCount(0, { timeout: 10_000 });
+});
+
+test('loadout: pick up to three abilities to take into matches', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.addInitScript(() => {
+    localStorage.setItem('mathbattles.profile.v1', JSON.stringify({ name: 'Packer', analytics: 'no', ageBand: 'adult', abilitiesOwned: ['hop', 'ricochet', 'heavy', 'pierce', 'wall'] }));
+  });
+  await page.goto('/#/abilities');
+  const slots = page.locator('.loadout-slot');
+  // Hop, plus three picked automatically.
+  await expect(slots).toHaveCount(4);
+  await expect(page.locator('.loadout-slot.empty')).toHaveCount(0);
+  const card = (name: string) => page.locator('.ability-card').filter({ has: page.getByRole('heading', { name, exact: true }) });
+  await expect(card('Rock Wall').getByRole('button', { name: 'Add to loadout' })).toBeVisible();
+  await card('Rock Wall').getByRole('button', { name: 'Add to loadout' }).click();
+  await expect(page.getByRole('alert')).toContainText('full');
+  await card('Ricochet').getByRole('button', { name: 'In loadout' }).click();
+  await expect(page.locator('.loadout-slot.empty')).toHaveCount(1);
+  await card('Rock Wall').getByRole('button', { name: 'Add to loadout' }).click();
+  await expect(card('Rock Wall').getByRole('button', { name: 'In loadout' })).toBeVisible();
+  await expect(page.locator('.loadout-bar')).toContainText('Rock Wall');
+});
+
+test('Shield fires with no function, and the new abilities have demos', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => {
+    throw e;
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem('mathbattles.profile.v1', JSON.stringify({ name: 'Guard', analytics: 'no', ageBand: 'adult', abilitiesOwned: ['hop', 'shield', 'pierce', 'wall', 'fill'] }));
+  });
+  await page.goto('/#/abilities');
+  await expect(page.locator('.ability-demo')).toHaveCount(7);
+  await page.goto('/#/practice');
+  await page.locator('#fn-input').fill('');
+  await page.getByRole('button', { name: 'Ability', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Choose an ability' }).getByRole('button', { name: /Shield/ }).click();
+  const fire = page.getByRole('button', { name: 'Fire (Shield)' });
+  await expect(fire).toBeEnabled();
+  await fire.click();
+  await expect(page.getByText('Type a function first')).toHaveCount(0);
+  await expect(page.locator('#fn-input')).toBeEnabled({ timeout: 30_000 });
 });

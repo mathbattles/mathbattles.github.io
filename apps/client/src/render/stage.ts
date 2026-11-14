@@ -5,6 +5,8 @@ import {
   BLAST_R,
   DRAW_STEPS_PER_SEC,
   HEAVY_BLAST_MULT,
+  WALL_R,
+  FILL_R,
   NEXT_ROUND_DELAY_MS,
   PLANE_H,
   PLANE_W,
@@ -103,6 +105,10 @@ interface ActiveRound {
   hops: ActiveHop[];
   /** Ricochet bounces already shown, by shot index. */
   bounced: Set<number>;
+  /** Piercing pass-throughs already shown, by shot index. */
+  pierced: Set<number>;
+  /** Shield pops already shown, by soldier id. */
+  blocked: Set<number>;
   /** Kills already shown, by index in round.kills. */
   shown: Set<number>;
   /** Kills so far this round, by shooter, for DOUBLE! and TRIPLE!. */
@@ -576,6 +582,12 @@ export class Stage {
   previewBlast: { x: number; y: number; r: number } | null = null;
   /** Hop preview: where you'd land, or 'out' if you'd leave the field. */
   previewLanding: { x: number; y: number } | 'out' | null = null;
+  /** Rock Wall and Fill preview: the rock that would rise, or the crater that would fill. */
+  previewPatch: { x: number; y: number; r: number; kind: 'rock' | 'fill' } | null = null;
+  /** Shield preview: a faint bubble on your own soldier. */
+  previewShield: number | null = null;
+  /** Shields up during the round being drawn, and whether each has popped yet. */
+  private shieldsUp: { soldierId: number; popped: boolean }[] = [];
   /** Plays a named sound effect. */
   onSfx?: (name: string) => void;
   /**
@@ -795,6 +807,8 @@ export class Stage {
         beams,
         hops,
         bounced: new Set(),
+        pierced: new Set(),
+        blocked: new Set(),
         shown: new Set(),
         combo: new Map(),
         luckShown: new Set(),
@@ -837,7 +851,10 @@ export class Stage {
     this.holes = r.holesStart.slice();
     for (const shot of r.shots) {
       shot.exploded = reached >= shot.steps;
-      if (shot.exploded) this.holes.push({ x: shot.record.end.x, y: shot.record.end.y, r: BLAST_R });
+      if (shot.exploded) {
+        const patch = this.groundChange(shot.record);
+        if (patch) this.holes.push(patch);
+      }
     }
     for (const beam of r.beams) {
       beam.started = reached >= beam.rec.step;
@@ -928,22 +945,43 @@ export class Stage {
     // A mirrored view flips each shape too, which for these symmetric shapes means turning it the other way.
     this.circles.forEach((o, i) => drawObstacle(c, this.rockStyle, this.px(o.x), o.y, o.r, i, o.shape, this.mirror ? -(o.rot ?? 0) : o.rot ?? 0));
     const holes = this.past?.holes ?? this.holes;
-    c.globalCompositeOperation = 'destination-out';
-    c.fillStyle = '#000';
-    for (const h of holes) {
-      c.beginPath();
-      c.arc(this.px(h.x), h.y, h.r, 0, Math.PI * 2);
-      c.fill();
-    }
-    // Scorched edge around each bite, drawn only where rock remains.
+    const rot = (o: Circle) => (this.mirror ? -(o.rot ?? 0) : o.rot ?? 0);
+    holes.forEach((h, k) => {
+      if (h.kind === 'rock') {
+        // Rock Wall: a new rock in the board's own obstacle design.
+        c.globalCompositeOperation = 'source-over';
+        drawObstacle(c, this.rockStyle, this.px(h.x), h.y, h.r, this.circles.length + k);
+      } else if (h.kind === 'fill') {
+        // Fill: the map's own rock drawn back in, only inside the filled circle.
+        c.globalCompositeOperation = 'source-over';
+        c.save();
+        c.beginPath();
+        c.arc(this.px(h.x), h.y, h.r, 0, Math.PI * 2);
+        c.clip();
+        this.circles.forEach((o, i) => {
+          if (Math.hypot(o.x - h.x, o.y - h.y) <= o.r + h.r) drawObstacle(c, this.rockStyle, this.px(o.x), o.y, o.r, i, o.shape, rot(o));
+        });
+        c.restore();
+      } else {
+        c.globalCompositeOperation = 'destination-out';
+        c.fillStyle = '#000';
+        c.beginPath();
+        c.arc(this.px(h.x), h.y, h.r, 0, Math.PI * 2);
+        c.fill();
+      }
+    });
+    // Scorched edge around each bite, drawn only where rock remains, and not on rock poured back later.
     c.globalCompositeOperation = 'source-atop';
     c.strokeStyle = theme.biteEdge;
     c.lineWidth = 4;
-    for (const h of holes) {
+    holes.forEach((h, k) => {
+      if (h.kind) return;
+      const coveredLater = holes.some((o, j) => j > k && o.kind && Math.hypot(o.x - h.x, o.y - h.y) + h.r <= o.r + 2);
+      if (coveredLater) return;
       c.beginPath();
       c.arc(this.px(h.x), h.y, h.r + 1.5, 0, Math.PI * 2);
       c.stroke();
-    }
+    });
     c.globalCompositeOperation = 'source-over';
     this.terrainDirty = false;
     const base = this.baseLayer.getContext('2d')!;
@@ -1124,6 +1162,44 @@ export class Stage {
     }
   }
 
+  /** Shield bubbles: solid while up during a round, and a faint dashed one as an aiming preview. */
+  private drawShields(c: CanvasRenderingContext2D, now: number): void {
+    const bubble = (id: number, preview: boolean) => {
+      const q = this.soldiers.find((x) => x.id === id);
+      if (!q || !q.alive) return;
+      const pos = this.riderPos.get(id) ?? q;
+      const color = this.colorOf(q.playerId);
+      const pulse = reducedMotion() ? 0 : Math.sin(now / 260) * 1.5;
+      c.save();
+      c.translate(this.px(pos.x), pos.y);
+      c.beginPath();
+      c.arc(0, 0, SOLDIER_R * 2 + pulse, 0, Math.PI * 2);
+      if (preview) {
+        c.setLineDash([4, 4]);
+        c.globalAlpha = 0.8;
+      } else {
+        c.fillStyle = color;
+        c.globalAlpha = 0.14;
+        c.fill();
+        c.globalAlpha = 0.9;
+      }
+      c.strokeStyle = color;
+      c.lineWidth = 2.2;
+      c.stroke();
+      if (!preview) {
+        // A small highlight, like light on a bubble.
+        c.beginPath();
+        c.arc(-SOLDIER_R * 0.7, -SOLDIER_R * 0.8, SOLDIER_R * 0.55, Math.PI * 1.05, Math.PI * 1.6);
+        c.strokeStyle = '#ffffff';
+        c.lineWidth = 2;
+        c.stroke();
+      }
+      c.restore();
+    };
+    if (this.shot && !this.past) for (const sh of this.shieldsUp) if (!sh.popped) bubble(sh.soldierId, false);
+    if (!this.shot && !this.past && this.previewShield !== null) bubble(this.previewShield, true);
+  }
+
   /** Removes the escaping soldier and its window layer. */
   private endEscape(): void {
     this.cutscene = null;
@@ -1254,10 +1330,43 @@ export class Stage {
     this.float(word, this.px(s.x), s.y - 16, by.kills > 1 ? 34 : 26, by.kills > 1 ? '#ff4d7e' : color, now);
   }
 
+  /** What a finished shot does to the ground: a crater, new rock, or poured-back rock. */
+  private groundChange(rec: ShotRecord): Circle | null {
+    const { x, y } = rec.end;
+    if (rec.ability === 'hop' || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+    if (rec.ability === 'wall') return { x: Math.round(x), y: Math.round(y), r: WALL_R, kind: 'rock' };
+    if (rec.ability === 'fill') return { x: Math.round(x), y: Math.round(y), r: FILL_R, kind: 'fill' };
+    return { x, y, r: rec.ability === 'heavy' ? BLAST_R * HEAVY_BLAST_MULT : BLAST_R };
+  }
+
   private explode(shot: ActiveShot, now: number, kills: number): void {
     if (shot.record.ability === 'hop') return;
+    if (shot.record.ability === 'wall' || shot.record.ability === 'fill') {
+      // No blast: the ground changes where the line stops, with a puff of dust and a soft thud.
+      const patch = this.groundChange(shot.record)!;
+      const { x, y } = shot.record.end;
+      const wall = shot.record.ability === 'wall';
+      // New rock never buries anyone; the round result already checked, so only show it if it happened.
+      const buried = wall && this.soldiers.some((q) => q.alive && Math.hypot(q.x - x, q.y - y) <= WALL_R + SOLDIER_R);
+      if (!buried) {
+        this.holes.push(patch);
+        this.terrainDirty = true;
+      }
+      this.burst(x, y, wall ? 26 : 18, this.rockColorAt(x, y), 'chunk', wall ? 2.6 : 1.6);
+      this.burst(x, y, 14, THEMES[this.themeId].smoke, 'smoke', 0.6);
+      this.rings.push({ x, y, r: patch.r, at: now, color: shot.color, style: 'ring' });
+      this.shake = Math.max(this.shake, wall ? 6 : 3);
+      this.onSfx?.(wall ? 'wallRise' : 'fill');
+      return;
+    }
     const heavy = shot.record.ability === 'heavy';
     const r = heavy ? BLAST_R * HEAVY_BLAST_MULT : BLAST_R;
+    if (shot.record.reason === 'line') {
+      // Ran into a line already drawn: a sharp spark where they met.
+      this.rings.push({ x: shot.record.end.x, y: shot.record.end.y, r: 8, at: now, color: '#ffffff', style: 'shock' });
+      this.burst(shot.record.end.x, shot.record.end.y, 10, shot.color, 'spark', 2.8);
+      this.onSfx?.('lineClash');
+    }
     if (shot.record.reason === 'beamcut') {
       // Cut off by a beam: a white flash where it stopped.
       this.rings.push({ x: shot.record.end.x, y: shot.record.end.y, r: 10, at: now, color: '#ffffff', style: 'shock' });
@@ -1568,6 +1677,30 @@ export class Stage {
       this.onSfx?.('ricochet');
     });
 
+    // Piercing: a glow where the line went through rock (or another line).
+    round.shots.forEach((shot, i) => {
+      const pc = shot.record.pierced;
+      if (!pc || round.pierced.has(i) || reached < pc.step) return;
+      round.pierced.add(i);
+      this.rings.push({ x: pc.x, y: pc.y, r: 11, at: now, color: shot.color, style: 'shock' });
+      this.burst(pc.x, pc.y, 14, this.rockColorAt(pc.x, pc.y), 'chunk', 2);
+      this.onSfx?.('pierce');
+    });
+
+    // Shields: up from the start of the round, and popping on the hit they stop.
+    this.shieldsUp = (rec.shields ?? []).map((sh) => ({ soldierId: sh.soldierId, popped: !!sh.blocked && reached >= sh.blocked.step }));
+    for (const sh of rec.shields ?? []) {
+      if (!sh.blocked || round.blocked.has(sh.soldierId) || reached < sh.blocked.step) continue;
+      round.blocked.add(sh.soldierId);
+      const q = this.soldiers.find((x) => x.id === sh.soldierId);
+      if (!q) continue;
+      const color = this.colorOf(sh.playerId);
+      this.rings.push({ x: q.x, y: q.y, r: SOLDIER_R * 2.4, at: now, color: '#ffffff', style: 'shock' });
+      this.burst(q.x, q.y, 22, color, 'spark', 3);
+      this.float('BLOCKED!', this.px(q.x), q.y - 30, 30, color, now, 1500);
+      this.onSfx?.('shieldBlock');
+    }
+
     // Hop riders follow their own lines, hop over things, and jump at the end.
     this.riderPos.clear();
     for (const h of round.hops) {
@@ -1735,6 +1868,24 @@ export class Stage {
       c.stroke();
       c.restore();
     }
+    if (!this.past && this.previewPatch) {
+      const b = this.previewPatch;
+      c.save();
+      c.setLineDash(b.kind === 'rock' ? [] : [3, 4]);
+      const color = this.youId ? this.colorOf(this.youId) : theme.axis;
+      c.strokeStyle = color;
+      c.lineWidth = 2;
+      c.beginPath();
+      c.arc(this.px(b.x), b.y, b.r, 0, Math.PI * 2);
+      if (b.kind === 'rock') {
+        c.fillStyle = color;
+        c.globalAlpha = 0.18;
+        c.fill();
+        c.globalAlpha = 1;
+      }
+      c.stroke();
+      c.restore();
+    }
     if (!this.past && this.previewLanding) {
       const color = this.youId ? this.colorOf(this.youId) : theme.axis;
       c.save();
@@ -1786,6 +1937,7 @@ export class Stage {
     } else {
       // A soldier leaving in the cutscene is drawn only by the cutscene.
       for (const s of this.soldiers) if (s.id !== this.cutscene?.id) this.drawSoldier(c, s, now, theme);
+      this.drawShields(c, now);
       this.drawEscape(now, theme);
     }
 

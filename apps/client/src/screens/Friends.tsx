@@ -5,6 +5,7 @@ import { currentRoom, refreshSocial, social, subscribeSocial } from '../social';
 import { go, sound } from '../util';
 import { profile } from '../store';
 import { TopBar } from './Shared';
+import { Icon } from './Icons';
 import { ChatWindow, useOpenChats } from './Chat';
 import { MAX_OPEN_CHATS, openChat } from '../dms';
 import { t } from '../i18n';
@@ -128,7 +129,7 @@ export function Friends() {
                     </span>
                     <span class="row">
                       {f.online && f.room && !f.inMatch && !f.room.startsWith('R-') && <a class="btn small primary" href={`#/room/${f.room}`}>{t('ui.join')}</a>}
-                      {f.online && f.room && f.inMatch && <a class="btn small" href={`#/watch/${f.room}`}>{t('ui.watch')}</a>}
+                      {f.online && f.room && f.inMatch && <a class="btn small watch-friend" href={`#/watch/${f.room}`} aria-label={t('friends.watchName', { name: f.name })}><Icon name="eye" /> {t('ui.watch')}</a>}
                       {room && f.online && f.room !== room && <button class="small" onClick={() => void run(inviteToRoom(f.name, room))}>{t('ui.invite')}</button>}
                       {party?.isLeader !== false && f.online && !party?.members.some((m) => m.name === f.name) && (
                         <button class="small" onClick={() => void run(party ? partyAction('invite', { name: f.name }) : partyAction('create').then(() => partyAction('invite', { name: f.name })))}>{t('ui.partyUp')}</button>

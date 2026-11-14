@@ -37,6 +37,9 @@ import {
   type Seat,
   type ServerMsg,
   type ShotMode,
+  isNoShot,
+  botUsesAbilities,
+  cleanLoadout,
 } from '@mathbattles/sim';
 import { cleanChat, cleanName } from './moderation';
 
@@ -109,6 +112,12 @@ export class RoomCore {
   }
   private rankedPair?: [string, string];
 
+  /** Admin overrides of ability energy costs, used for the next match. */
+  private energyCosts: Partial<Record<AbilityId, number>> = {};
+  setEnergyCosts(costs: Partial<Record<AbilityId, number>>): void {
+    this.energyCosts = { ...costs };
+  }
+
   setRankedPair(pair: [string, string]): void {
     this.rankedPair = pair;
   }
@@ -175,7 +184,7 @@ export class RoomCore {
         isBot: false,
         connected: true,
         hat: typeof msg.hat === 'string' && HAT_VALUES.has(msg.hat) ? msg.hat : undefined,
-        abilities: cleanAbilities(msg.abilities),
+        abilities: cleanLoadout(msg.abilities),
         conns: new Set(),
         disconnectedAt: null,
         skip: false,
@@ -354,7 +363,7 @@ export class RoomCore {
       ready: true,
       isBot: true,
       connected: true,
-      abilities: [...ABILITY_IDS],
+      abilities: botUsesAbilities(lv) ? [...ABILITY_IDS] : [],
       conns: new Set(),
       disconnectedAt: null,
       skip: true,
@@ -392,7 +401,7 @@ export class RoomCore {
       .filter((s) => s.connected)
       .map((s) => ({ id: s.id, name: s.name, team: s.team, isBot: s.isBot, botLevel: s.isBot ? s.id.split(':')[1] : undefined, abilities: s.abilities }));
     this.state = createMatch(
-      { kind: this.settings.kind, mode: this.settings.mode, seed, roundSeconds: this.roundSeconds(), rockShapes: this.settings.rockShapes ?? 'mixed', ...(this.settings.map ? { map: this.settings.map } : {}) },
+      { kind: this.settings.kind, mode: this.settings.mode, seed, roundSeconds: this.roundSeconds(), rockShapes: this.settings.rockShapes ?? 'mixed', ...(Object.keys(this.energyCosts).length ? { energyCosts: this.energyCosts } : {}), ...(this.settings.map ? { map: this.settings.map } : {}) },
       setups,
     );
     // The exact list used here, so replay links can rebuild this same match.
@@ -471,7 +480,7 @@ export class RoomCore {
     if (!this.state || this.state.over) throw new RuleError('The match is over');
     if (!this.roundOpen()) throw new RuleError('Wait for the last round to finish');
     const draft = this.cleanDraft(msg);
-    if (!draft.expr.trim()) throw new RuleError('Type a function first');
+    if (!draft.expr.trim() && !isNoShot(draft.ability)) throw new RuleError('Type a function first');
     setLocked(this.state, seat.id, true);
     this.drafts.set(seat.id, draft);
     this.afterLockChange();
@@ -494,7 +503,7 @@ export class RoomCore {
     const state = this.state!;
     const shots = actors(state)
       .map((p) => ({ p, d: this.drafts.get(p.id) }))
-      .filter(({ d }) => !!d && d.expr.trim() !== '')
+      .filter(({ d }) => !!d && (d.expr.trim() !== '' || isNoShot(d.ability)))
       .map(({ p, d }) => ({ playerId: p.id, expr: d!.expr, angle: d!.angle, dir: d!.dir, ability: d!.ability }));
     const round = resolveRound(state, shots);
     this.drafts.clear();
@@ -577,7 +586,7 @@ export class RoomCore {
       aimError: def.aimError,
       seed: state.config.seed + state.round * 31 + p.soldierId,
       maxEvals: this.io.botMaxEvals,
-      useAbilities: true,
+      useAbilities: botUsesAbilities(lv),
     });
     this.drafts.set(id, { expr: move.expr, angle: move.angle, dir: move.dir, ...(move.ability ? { ability: move.ability } : {}) });
     setLocked(state, id, true);

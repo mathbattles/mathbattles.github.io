@@ -39,6 +39,8 @@ import {
   type RoomSettings,
   type SoloDef,
   type RatingChange,
+  isNoShot,
+  botUsesAbilities,
 } from '@mathbattles/sim';
 import type { Stage } from '../render/stage';
 import { serverText } from '../i18n';
@@ -67,6 +69,7 @@ export function roundPaths(board: { circles: Circle[]; holes: Circle[] }, round:
         terrain,
         targets: [],
         ricochet: shot.ability === 'ricochet',
+        pierce: shot.ability === 'pierce',
       });
       return { xs: path.xs, ys: path.ys, steps: Math.min(path.steps, shot.steps) };
     } catch {
@@ -86,7 +89,7 @@ export function roundMs(round: RoundRecord): number {
 }
 
 const isValid = (d: Draft | null | undefined, mode: MatchState['config']['mode']) =>
-  !!d && !!d.expr.trim() && !validate(d.expr, mode);
+  !!d && (isNoShot(d.ability) || (!!d.expr.trim() && !validate(d.expr, mode)));
 
 /** Everything the game screen needs, however the match is being run. */
 export abstract class GameSession {
@@ -189,7 +192,7 @@ export function askBot(state: MatchState, playerId: string, level: string, seed:
       resolve(e.data.move);
     };
     worker.addEventListener('message', handler);
-    worker.postMessage({ id, state, playerId, generations, aimError, seed, budgetMs: BOT_BUDGET[level] ?? 1200 });
+    worker.postMessage({ id, state, playerId, generations, aimError, seed, budgetMs: BOT_BUDGET[level] ?? 1200, useAbilities: botUsesAbilities(level) });
   });
 }
 
@@ -213,7 +216,7 @@ export class LocalSession extends GameSession {
   constructor(config: MatchConfig, setups: PlayerSetup[], opts: { noTimer?: boolean; abilities?: readonly string[] } = {}) {
     super();
     // Bots own every ability. People sharing this device use what this device owns.
-    this.setups = setups.map((s) => ({ ...s, abilities: s.isBot ? [...ABILITY_IDS] : (opts.abilities ?? ['hop']) as PlayerSetup['abilities'] }));
+    this.setups = setups.map((s) => ({ ...s, abilities: s.isBot ? (botUsesAbilities(s.botLevel) ? [...ABILITY_IDS] : []) : (opts.abilities ?? ['hop']) as PlayerSetup['abilities'] }));
     this.state = createMatch(config, this.setups);
     this.terrain = terrainOf(this.state);
     this.showTimer = !opts.noTimer;
@@ -318,7 +321,7 @@ export class LocalSession extends GameSession {
 
   lock(d: Draft): void {
     if (!this.canAim()) return;
-    if (!d.expr.trim()) throw new RuleError('Type a function first');
+    if (!d.expr.trim() && !isNoShot(d.ability)) throw new RuleError('Type a function first');
     this.drafts.set(this.aimer, d);
     setLocked(this.state, this.aimer, true);
     this.next();
@@ -434,8 +437,8 @@ export class SoloSession extends GameSession {
   unlock(): void {}
   lock(d: Draft): void {
     if (!this.canAim()) return;
-    if (!d.expr.trim()) throw new RuleError('Type a function first');
-    const err = validate(d.expr, this.state.config.mode);
+    if (!d.expr.trim() && !isNoShot(d.ability)) throw new RuleError('Type a function first');
+    const err = isNoShot(d.ability) ? null : validate(d.expr, this.state.config.mode);
     if (err) throw new RuleError(err.message);
     const board = { circles: this.state.circles, holes: this.state.holes.slice() };
     const round = resolveRound(this.state, [{ playerId: ME, expr: d.expr, angle: d.angle, dir: d.dir, ability: d.ability }], this.terrain);
@@ -665,6 +668,8 @@ export class NetSession extends GameSession {
   spectators = 0;
   /** Seats that voted for a rematch. */
   rematchVotes: string[] = [];
+  /** Counts matches played in this room, so each one gets a fresh game screen. */
+  matchNo = 0;
   error = '';
   ratingDelta: number | undefined;
   /** Each player's rating before and after a ranked match. */
@@ -766,6 +771,8 @@ export class NetSession extends GameSession {
         break;
       case 'match':
         this.clockSkew = Date.now() - msg.serverNow;
+        // A new match (including a rematch) never inherits the last one's result or messages.
+        if (!this.state || this.state.config.seed !== msg.state.config.seed) this.matchNo++;
         this.status = 'playing';
         this.state = msg.state;
         this.setups = msg.setups;
@@ -774,6 +781,9 @@ export class NetSession extends GameSession {
         this.overNotified = false;
         this.replayId = undefined;
         this.ratings = undefined;
+        this.ratingDelta = undefined;
+        this.rematchVotes = [];
+        this.error = '';
         this.restoreDraft = msg.draft ?? null;
         this.chat = this.chat.slice(-40);
         this.stage?.sync(msg.state);
@@ -857,7 +867,7 @@ export class NetSession extends GameSession {
   }
   lock(d: Draft): void {
     clearTimeout(this.draftTimer);
-    if (!d.expr.trim()) throw new RuleError('Type a function first');
+    if (!d.expr.trim() && !isNoShot(d.ability)) throw new RuleError('Type a function first');
     this.send({ t: 'lock', expr: d.expr, angle: d.angle, dir: d.dir, ability: d.ability });
   }
   unlock(): void {

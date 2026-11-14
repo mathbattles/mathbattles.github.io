@@ -1,4 +1,7 @@
 import { Component, render, type ComponentChildren } from 'preact';
+import { RoomBar } from './screens/RoomBar';
+import { Announcement } from './screens/Announcement';
+import { loadGameConfig } from './gameConfig';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import './styles.css';
 import { initAuth, setAnalyticsConsent } from './auth';
@@ -180,6 +183,8 @@ function App() {
       <div class="shell">
         <SideNav path={path} />
         <main class="content">
+          <Announcement />
+          <RoomBar />
           <div class={`route ${leaving ? 'leaving' : ''}`} key={path}>
             <ErrorBoundary>
               <Router path={path} />
@@ -201,6 +206,7 @@ applyDesign();
 subscribeProfile(applyDesign);
 initAudioUi();
 initSocial();
+void loadGameConfig();
 
 render(<App />, document.getElementById('app')!);
 void initAuth();

@@ -404,3 +404,27 @@ describe('message limits', () => {
     expect(b.take(1500)).toBe(false);
   });
 });
+
+describe('loadouts and admin energy costs', () => {
+  it('a player brings Hop plus at most three abilities, and admin costs go into the match', () => {
+    const h = harness();
+    h.room.join('a', 'g:tokA', { t: 'join', name: 'a', token: 'tokA', abilities: ['ricochet', 'heavy', 'pierce', 'wall', 'shield'] });
+    h.join('b', 'tokB');
+    expect(h.room.seats[0]!.abilities).toEqual(['hop', 'ricochet', 'heavy', 'pierce']);
+    h.room.setEnergyCosts({ heavy: 30 });
+    h.room.handle('b', { t: 'ready', ready: true });
+    h.room.handle('a', { t: 'start' });
+    h.advance(5001);
+    expect(h.room.state!.config.energyCosts).toEqual({ heavy: 30 });
+    expect(h.room.state!.players.find((p) => p.id === h.room.seats[0]!.id)!.abilities).toEqual(['hop', 'ricochet', 'heavy', 'pierce']);
+  });
+  it('easy bots bring no abilities; hard ones bring all of them', () => {
+    const h = harness();
+    h.join('a', 'tokA');
+    h.room.handle('a', { t: 'addBot', level: 'easy' });
+    h.room.handle('a', { t: 'addBot', level: 'hard' });
+    const bots = h.room.seats.filter((s) => s.isBot);
+    expect(bots[0]!.abilities).toEqual([]);
+    expect(bots[1]!.abilities.length).toBeGreaterThan(3);
+  });
+});

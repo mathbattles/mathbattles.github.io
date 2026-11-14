@@ -21,6 +21,13 @@ export interface MatchConfig {
   roundSeconds?: number;
   /** Random maps mix rock shapes, or use circles only. Missing means circles, as older matches did. */
   rockShapes?: RockShapes;
+  /**
+   * Lines are solid: a shot tip that runs into a line already drawn explodes there.
+   * On unless this is false; replays from before the rule turn it off so they replay exactly.
+   */
+  solidLines?: boolean;
+  /** Admin overrides of ability energy costs, kept in the match so replays stay exact. */
+  energyCosts?: Partial<Record<AbilityId, number>>;
 }
 
 export interface PlayerSetup {
@@ -63,7 +70,7 @@ export interface Soldier {
 }
 
 /** How a shot ended: the path's own reasons, or cut short by the round. */
-export type ShotEnd = EndReason | 'killed' | 'collision' | 'beamcut';
+export type ShotEnd = EndReason | 'killed' | 'collision' | 'beamcut' | 'line';
 
 export interface ShotRecord {
   playerId: string;
@@ -84,6 +91,16 @@ export interface ShotRecord {
   ability?: AbilityId;
   /** Where a ricochet bounced. */
   bounce?: { x: number; y: number; step: number };
+  /** Where a Piercing Shot passed through rock, or through another line. */
+  pierced?: { x: number; y: number; step: number };
+}
+
+/** A Shield raised this round, and the hit it stopped, if any. */
+export interface ShieldRecord {
+  playerId: string;
+  soldierId: number;
+  /** The hit it blocked: when, and whose. */
+  blocked?: { step: number; by: string[] };
 }
 
 /** A beam made where two shot tips met. It flies straight, through rock, until it leaves the field. */
@@ -154,6 +171,9 @@ export interface RoundRecord {
   moves: { id: number; from: { x: number; y: number }; to: { x: number; y: number } }[];
   /** Each player's energy before and after the round. */
   energy: { playerId: string; before: number; after: number }[];
+  shields?: ShieldRecord[];
+  /** Players whose shot came close to an enemy without a kill, earning near-miss energy. */
+  nearMiss?: string[];
 }
 
 export type MatchEvent =
@@ -222,7 +242,7 @@ export function createMatch(config: MatchConfig, setups: PlayerSetup[]): MatchSt
   });
 
   const state: MatchState = {
-    config: { kind: config.kind, mode: config.mode, seed: config.seed, ...(map ? { map } : {}), ...(config.freeEnergy ? { freeEnergy: true } : {}), ...(config.roundSeconds ? { roundSeconds: config.roundSeconds } : {}), ...(config.rockShapes === 'mixed' ? { rockShapes: 'mixed' as const } : {}) },
+    config: { kind: config.kind, mode: config.mode, seed: config.seed, ...(map ? { map } : {}), ...(config.freeEnergy ? { freeEnergy: true } : {}), ...(config.roundSeconds ? { roundSeconds: config.roundSeconds } : {}), ...(config.rockShapes === 'mixed' ? { rockShapes: 'mixed' as const } : {}), ...(config.solidLines === false ? { solidLines: false } : {}), ...(config.energyCosts && Object.keys(config.energyCosts).length ? { energyCosts: { ...config.energyCosts } } : {}) },
     players,
     soldiers,
     circles: placed.circles,

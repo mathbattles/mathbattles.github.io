@@ -1,5 +1,5 @@
 import { BLAST_R, MAX_STEPS, PLANE_H, PLANE_W, SOLDIER_R, type ShotMode } from './constants';
-import { ABILITIES, HEAVY_BLAST_MULT, type AbilityId } from './abilities';
+import { ABILITIES, HEAVY_BLAST_MULT, type AbilityId, abilityCost, isNoShot } from './abilities';
 import { compile, varsForMode } from './parser';
 import { Rng } from './rng';
 import { isMirrored, livingTargets, playerById, terrainOf, type MatchState } from './rules';
@@ -12,6 +12,11 @@ export const BOT_LEVELS = {
   genius: { label: 'Genius', generations: 400, aimError: 0 },
 } as const;
 export type BotLevel = keyof typeof BOT_LEVELS;
+
+/** Only the strongest bots spend energy on abilities; the others keep things simple. */
+export function botUsesAbilities(level: string | undefined): boolean {
+  return level === 'hard' || level === 'genius';
+}
 
 export const BOT_NAMES = ['Euler', 'Gauss', 'Noether', 'Ramanujan', 'Hypatia', 'Riemann', 'Lovelace', 'Turing', 'Cantor'];
 
@@ -131,8 +136,10 @@ export function chooseMove(state: MatchState, opts: ThinkOptions): BotMove {
   let evals = 0;
   const maxEvals = opts.maxEvals ?? Infinity;
   // Abilities the bot owns and can pay for this round.
+  const canPay = (id: AbilityId) => state.config.freeEnergy || me.energy >= abilityCost(id, state.config.energyCosts);
+  const owns = (id: AbilityId) => (me.abilities ?? []).includes(id);
   const usable: AbilityId[] = opts.useAbilities
-    ? ABILITIES.filter((a) => (me.abilities ?? []).includes(a.id) && (state.config.freeEnergy || me.energy >= a.energy)).map((a) => a.id)
+    ? ABILITIES.filter((a) => owns(a.id) && canPay(a.id) && !isNoShot(a.id)).map((a) => a.id)
     : [];
   const evaluate = (g: Genome): number => {
     evals++;
@@ -150,12 +157,22 @@ export function chooseMove(state: MatchState, opts: ThinkOptions): BotMove {
       dir: g.dir,
       mirrored,
       terrain,
-      targets: g.ability === 'hop' ? [] : targets,
+      targets: g.ability === 'hop' || g.ability === 'wall' || g.ability === 'fill' ? [] : targets,
       ricochet: g.ability === 'ricochet',
+      pierce: g.ability === 'pierce',
     }, { buffers });
     let score = 0;
     // Spending energy should only happen when it really helps.
     if (g.ability) score -= 60;
+    if (g.ability === 'wall' || g.ability === 'fill') {
+      // Cover: a new rock (or patched crater) between this bot and the nearest enemy, close to itself.
+      const near = enemies.reduce<typeof enemies[number] | null>((b, e) => (!b || Math.hypot(e.x - shooter.x, e.y - shooter.y) < Math.hypot(b.x - shooter.x, b.y - shooter.y) ? e : b), null);
+      if (!near || r.reason === 'edge') return score - 500;
+      const mid = { x: shooter.x + (near.x - shooter.x) * 0.25, y: shooter.y + (near.y - shooter.y) * 0.25 };
+      const d = Math.hypot(r.end.x - mid.x, r.end.y - mid.y);
+      if (Math.hypot(r.end.x - shooter.x, r.end.y - shooter.y) < 40) return score - 800;
+      return score - 300 + 500 / (1 + d / 25);
+    }
     if (g.ability === 'hop') {
       // Riding: touching an enemy is a Hop Kill; ending at the edge throws you out of the field.
       if (r.reason === 'edge') return score - 3000;
@@ -234,6 +251,10 @@ export function chooseMove(state: MatchState, opts: ThinkOptions): BotMove {
     pop = next;
   }
 
+  // Shield: when a strong bot is badly exposed and its own best shot can't kill, it can sit the round out safely.
+  if (opts.useAbilities && owns('shield') && canPay('shield') && pop[0]!.score < 900 && enemies.some((e) => Math.hypot(e.x - shooter.x, e.y - shooter.y) < 220) && rng.next() < 0.4) {
+    return { expr: '', angle: 0, dir: 1, expectedHit: false, ability: 'shield' };
+  }
   const top = pop[0]!;
   if (opts.aimError) {
     top.params = top.params.map((p) => p * (1 + rng.gaussian() * opts.aimError!));

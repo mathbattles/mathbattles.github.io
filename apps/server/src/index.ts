@@ -1,3 +1,4 @@
+import { activeSanction, readSettings, sanctionText } from './admin';
 import {
   ParseError,
   RuleError,
@@ -10,6 +11,7 @@ import {
   seasonReset,
   usernameProblem,
   cleanAbilities,
+  cleanLoadout,
   type AbilityId,
   utcDayNumber,
   type ClientMsg,
@@ -173,12 +175,26 @@ async function handleApi(req: Request, env: Env, parts: string[], json: (data: u
 
   if (['social', 'friends', 'invites', 'party', 'maps', 'cosmetics', 'ranked', 'admin', 'messages'].includes(parts[1] ?? '')) {
     const claims = await verifyClaims(env, bearer(req));
-    const handled = await handleSocial({ db: env.DB, req, parts, json, uid: claims?.uid ?? null, authTime: claims?.authTime ?? 0, mfaKey: env.ADMIN_MFA_KEY, newCode, ip });
+    const closeRoom = async (code: string) => {
+      try {
+        const r = await env.ROOM.get(env.ROOM.idFromName(code)).fetch(new Request('https://internal/close', { method: 'POST' }));
+        return r.ok;
+      } catch {
+        return false;
+      }
+    };
+    const handled = await handleSocial({ db: env.DB, req, parts, json, uid: claims?.uid ?? null, authTime: claims?.authTime ?? 0, mfaKey: env.ADMIN_MFA_KEY, newCode, ip, closeRoom });
     if (handled) return handled;
   }
   switch (parts[1]) {
     case 'health':
       return json({ ok: true });
+
+    case 'config': {
+      // Settings the admin can change without a redeploy: ability costs and prices, and an announcement.
+      const s = await readSettings(env.DB);
+      return json(s);
+    }
 
     case 'replays': {
       // Short replay links. Anyone can make or open one; making them is rate-limited.
@@ -461,6 +477,8 @@ export class RoomObject implements DurableObject {
   private sockets = new Map<string, WebSocket>();
   private buckets = new Map<string, MessageBucket>();
   private joined = new Set<string>();
+  /** Connections from muted accounts. */
+  private muted = new Set<string>();
   private nextConn = 1;
   private seatUid = new Map<string, string>();
   private lobbyPending: string | null = null;
@@ -570,7 +588,7 @@ export class RoomObject implements DurableObject {
       const row = await this.env.DB.prepare('SELECT profile FROM players WHERE uid = ?').bind(uid).first<{ profile: string | null }>();
       const saved = row?.profile ? (JSON.parse(row.profile) as { abilitiesOwned?: unknown }).abilitiesOwned : [];
       const owned = new Set(cleanAbilities(saved));
-      return cleanAbilities(claimed).filter((a) => owned.has(a));
+      return cleanLoadout(cleanAbilities(claimed).filter((a) => owned.has(a)));
     } catch {
       return cleanAbilities([]);
     }
@@ -591,6 +609,18 @@ export class RoomObject implements DurableObject {
     const url = new URL(req.url);
     // Reachable only from the matchmaker: public routes always use the host name "room".
     if (url.hostname === 'internal') {
+      if (url.pathname === '/close') {
+        // Closed by the admin: everyone is told and disconnected.
+        for (const [id, ws] of this.sockets) {
+          this.sendTo(id, { t: 'closed', message: 'This room was closed by a moderator.' });
+          try {
+            ws.close(4410, 'closed');
+          } catch {
+            /* Already closed. */
+          }
+        }
+        return new Response('ok');
+      }
       const pair = (await req.json()) as [string, string];
       await this.ctx.storage.put('pair', pair);
       if (this.core) this.core.setRankedPair(pair);
@@ -649,6 +679,15 @@ export class RoomObject implements DurableObject {
             server.close(4401, 'not allowed');
             return;
           }
+          // Banned accounts can't play or watch; muted ones can play but not chat.
+          const ban = await activeSanction(this.env.DB, who.uid, 'ban');
+          if (ban) {
+            this.sendTo(connId, { t: 'closed', message: sanctionText(ban) });
+            server.close(4403, 'banned');
+            return;
+          }
+          if (await activeSanction(this.env.DB, who.uid, 'mute')) this.muted.add(connId);
+          core.setEnergyCosts((await readSettings(this.env.DB)).energyCosts);
           // Ranked checks abilities against the account's saved progress, not just what the page says.
           const abilities = code.startsWith('R-') && who.uid ? await this.ownedAbilities(who.uid, msg.abilities) : msg.abilities;
           core.join(connId, who.identity, { ...msg, name: who.name, abilities });
@@ -658,6 +697,10 @@ export class RoomObject implements DurableObject {
           }
           return;
         }
+        if (msg.t === 'chat' && this.muted.has(connId)) {
+          this.sendTo(connId, { t: 'error', message: 'Your chat is muted.' });
+          return;
+        }
         core.handle(connId, msg);
       })().catch((e) => logError('Room message failed', e));
     });
@@ -665,6 +708,7 @@ export class RoomObject implements DurableObject {
       if (!this.sockets.delete(connId)) return;
       this.buckets.delete(connId);
       this.joined.delete(connId);
+      this.muted.delete(connId);
       core.disconnect(connId);
     };
     server.addEventListener('close', closed);
@@ -722,6 +766,11 @@ export class MatchmakerObject implements DurableObject {
           return;
         }
         if (!open) return;
+        const ban = await activeSanction(this.env.DB, claims.uid, 'ban');
+        if (ban) {
+          sendOk(server, { t: 'error', message: sanctionText(ban) });
+          return;
+        }
         const row = await this.env.DB.prepare('SELECT rating FROM players WHERE uid = ?').bind(claims.uid).first<{ rating: number }>();
         if (!open) return;
         this.queue = this.queue.filter((q) => q.uid !== claims.uid);

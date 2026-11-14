@@ -58,6 +58,7 @@ const REASON_TEXT: Record<EndReason | Exclude<ShotEnd, EndReason>, string> = {
   killed: 'Its shooter was knocked out, so it stopped.',
   collision: 'It met another shot head to head.',
   beamcut: 'A beam cut it off.',
+  line: 'It ran into a line that was already drawn. Lines are solid.',
 };
 
 const fmt = (n: number) => (Math.round(n * 10) / 10).toString();

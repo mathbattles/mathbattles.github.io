@@ -8,9 +8,10 @@ import { MapCodeBox } from './MapCode';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { authState, useAuth } from '../auth';
 import { NetSession } from '../game/session';
+import { holdRoom, releaseRoom, roomScreenClosed } from '../game/roomHolder';
 import { recordMatchHistory } from '../history';
 import { WS_URL, createRoom, listRooms, reportChat, serverReachable, type RoomInfo } from '../net/api';
-import { cosmeticValue, profile, recordMatch, ownedAbilities } from '../store';
+import { cosmeticValue, profile, recordMatch, matchLoadout } from '../store';
 import { go, modeName } from '../util';
 import { GameView } from './GameView';
 import { ResultCard } from './Local';
@@ -96,21 +97,27 @@ export function Room(props: { code: string; ranked?: boolean; watch?: boolean })
 
 function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; watch?: boolean }) {
   useProfile();
-  const session = useMemo(() => new NetSession(`${WS_URL}/room/${encodeURIComponent(code)}`, {
+  // The room stays open while you look at other pages before the match (see roomHolder).
+  const session = useMemo(() => holdRoom(code, { watch: !!watch, ranked: !!ranked }, () => new NetSession(`${WS_URL}/room/${encodeURIComponent(code)}`, {
     t: 'join',
     name: profile.name,
     token: profile.guestToken,
     idToken: authState.token,
     hat: cosmeticValue('hat'),
-    abilities: ownedAbilities(),
+    abilities: matchLoadout(),
     ...(watch ? { spectate: true } : {}),
-  }), [code, watch]);
+  })), [code, watch]);
   const [, force] = useState(0);
   const [finished, setOver] = useState<MatchState | null>(null);
   const [rewards, setRewards] = useState<ReturnType<typeof recordMatch> | null>(null);
   const [chatText, setChatText] = useState('');
   const [reported, setReported] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
+  // A rematch starts clean: no result card or rewards from the match before.
+  useEffect(() => {
+    setOver(null);
+    setRewards(null);
+  }, [session.matchNo]);
 
   useEffect(() => {
     const unsub = session.subscribe(() => force((n) => n + 1));
@@ -132,7 +139,7 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
     };
     return () => {
       unsub();
-      session.dispose();
+      roomScreenClosed(session);
     };
   }, [session]);
 
@@ -181,7 +188,7 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
         <div class="sheet">
           <h2>{ranked ? 'Ranked match unavailable' : "Can't join this room"}</h2>
           <p>{session.error}</p>
-          <a class="btn primary" href={ranked ? '#/ranked' : '#/online'}>{ranked ? 'Back to ranked' : 'Back to rooms'}</a>
+          <a class="btn primary" href={ranked ? '#/ranked' : '#/online'} onClick={() => releaseRoom()}>{ranked ? 'Back to ranked' : 'Back to rooms'}</a>
         </div>
       </div>
     );
@@ -193,10 +200,11 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
     const replay = over && !session.replayId ? replayCode(over, session.setups) : undefined;
     return (
       <GameView
+        key={session.matchNo}
         session={session}
         keepSession
         notice={session.error}
-        header={<span class="row"><a class="btn small" href={ranked ? '#/ranked' : '#/online'}>{t('ui.leave')}</a>{watch && <span class="watch-tag">{t('ui.watching')}</span>}{session.spectators > 0 && <span class="muted small-note">{session.spectators} watching</span>}</span>}
+        header={<span class="row"><a class="btn small" href={ranked ? '#/ranked' : '#/online'} onClick={() => releaseRoom()}>{t('ui.leave')}</a>{watch && <span class="watch-tag">{t('ui.watching')}</span>}{session.spectators > 0 && <span class="muted small-note">{session.spectators} watching</span>}</span>}
         hideOthersShots={!(session.settings?.showFunctions ?? false)}
         spectator={watch}
         extraSide={chatPanel}
@@ -251,7 +259,9 @@ function RoomInner({ code, ranked, watch }: { code: string; ranked?: boolean; wa
                     <button class={`team-${me.team}`} onClick={() => session.send({ t: 'team', team: me.team === 1 ? 2 : 1 })}>Switch to {me.team === 1 ? 'red' : 'blue'}</button>
                   )}
                   <button class={me?.ready ? 'on' : ''} onClick={() => session.send({ t: 'ready', ready: !me?.ready })}>{me?.ready ? 'Ready' : 'Mark ready'}</button>
+                  <button class="small leave-room" onClick={() => { releaseRoom(); go('/online'); }}><Icon name="door" /> {t('roombar.leave')}</button>
                 </div>
+                <p class="muted small-note">{t('roombar.browseNote')}</p>
                 {isHost && (
                   <div class="row" style={{ marginTop: 10 }}>
                     <button class="primary" onClick={() => session.send({ t: 'start' })}>{t('ui.startMatch')}</button>
