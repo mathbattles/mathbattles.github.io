@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@mathbattles/sim": "*",
-    "firebase": "^13.2.0",
+    "firebase": "^13.4.0",
     "katex": "^0.19.1",
     "preact": "^10.24.0",
     "qrcode-generator": "1.4.4"
